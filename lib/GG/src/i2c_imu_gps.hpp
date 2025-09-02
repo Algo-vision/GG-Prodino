@@ -16,12 +16,12 @@
 // Externally defined TinyGPSPlus object and buffer
 extern TinyGPSPlus gps;
 extern char gpsBuffer[GPS_BUFFER_LEN];
-
+extern bool gps_conncted;
 // IMU helper functions
 void imuWriteByte(uint8_t reg, uint8_t value);
-void imuReadBytes(uint8_t reg, uint8_t *data, uint8_t len);
-void readAccelerometer(float &ax, float &ay, float &az);
+bool imuReadBytes(uint8_t reg, uint8_t *data, uint8_t len);
+bool readAccelerometer(float &ax, float &ay, float &az);
 void initIMU();
 
 // GPS helper function
-bool readGPSCoords(double &lat, double &lng);
+bool readGPSCoords(double &lat, double &lng,double &alt);
