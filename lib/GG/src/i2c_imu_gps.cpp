@@ -55,12 +55,6 @@ bool readAccelerometer(float &ax, float &ay, float &az)
     int16_t ay_raw = (int16_t)(rawData[3] << 8 | rawData[2]);
     int16_t az_raw = (int16_t)(rawData[5] << 8 | rawData[4]);
 
-    Serial.print("Raw Accel: ");
-    Serial.print(ax_raw);
-    Serial.print(", ");
-    Serial.print(ay_raw);
-    Serial.print(", ");
-    Serial.println(az_raw);
 
     // Convert raw to g (±2g)
     ax = ax_raw * 0.000061;

@@ -6,6 +6,8 @@
 #include <WebSocketsServer.h>
 #include <i2c_imu_gps.hpp>
 #include "gg_hal.hpp"
+// OTA support
+#include <ArduinoOTA.h>
 TinyGPSPlus gps;
 char gpsBuffer[GPS_BUFFER_LEN];
 #define LED_IO_PIN 6
@@ -165,6 +167,9 @@ void setup()
   if (tech_button_held)
   {
     technician_mode = true;
+  // Initialize OTA only in technician mode
+  ArduinoOTA.begin(Ethernet.localIP(), "prodino", "", InternalStorage);
+  Serial.println("OTA update enabled. Use Arduino IDE or compatible tool to upload firmware over network.");
   }
   Serial.println(technician_mode ? "Technician mode enabled." : "Normal mode.");
   Serial.println("The example WebRelay is started.");
@@ -444,6 +449,10 @@ void status_led_blink()
 }
 void loop()
 {
+  if (technician_mode) {
+    // Handle OTA updates in technician mode
+    ArduinoOTA.handle();
+  }
   http_loop();
   update_hw_status();
   // write_status_to_serial();
@@ -451,6 +460,6 @@ void loop()
   {
     user_connected = false;
   }
-status_led_blink();
+  status_led_blink();
   // delay(1000);
 }
