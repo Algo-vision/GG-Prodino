@@ -95,7 +95,7 @@ Payloads are JSON objects. Responses are JSON.
 ```json
 {
   "type": "status",
-  "relays_status": [0,0,0,0],
+  "relays_status": [false,false,false,false],
   "imuX": 0.0,
   "imuY": 0.0,
   "imuZ": 0.0,
@@ -189,4 +189,3 @@ See `gg_api_tester.py` for example usage of the API from Python.
 - OTA only available in technician mode
 
 ---
-For more details, see code comments and `HTTP_API_README.md`.
