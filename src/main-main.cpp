@@ -304,6 +304,7 @@ void http_loop()
     IPAddress remote_ip = client.remoteIP();
     if (!is_ip_whitelisted(remote_ip)) {
       // Reject connection if not whitelisted
+      Serial.println("Unauthorized acces from wrong IP");
       String out = "{\"type\":\"error\",\"message\":\"IP not allowed\"}";
       sendResponse(client, 403, out);
       delay(1);
