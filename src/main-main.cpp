@@ -32,6 +32,20 @@ GG_HAL _gg_hal;
 // --- AUTH TOKEN ---
 String authToken = "";
 
+// --- IP WHITELIST ---
+const IPAddress WHITELIST[] = {
+  IPAddress(192,168,1,10),
+  IPAddress(192,168,1,15)
+};
+const size_t WHITELIST_SIZE = sizeof(WHITELIST)/sizeof(WHITELIST[0]);
+
+bool is_ip_whitelisted(const IPAddress& ip) {
+  for (size_t i = 0; i < WHITELIST_SIZE; ++i) {
+    if (ip == WHITELIST[i]) return true;
+  }
+  return false;
+}
+
 // --- DUMMY DATA ---
 
 struct DeviceStatus
@@ -287,6 +301,16 @@ void http_loop()
   EthernetClient client = _server.available();
   if (client)
   {
+    IPAddress remote_ip = client.remoteIP();
+    if (!is_ip_whitelisted(remote_ip)) {
+      // Reject connection if not whitelisted
+      String out = "{\"type\":\"error\",\"message\":\"IP not allowed\"}";
+      sendResponse(client, 403, out);
+      delay(1);
+      client.stop();
+      return;
+    }
+
     String req = client.readStringUntil('\r');
     client.flush();
 
