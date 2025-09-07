@@ -96,6 +96,7 @@ Payloads are JSON objects. Responses are JSON.
 {
   "type": "status",
   "relays_status": [false,false,false,false],
+  "optoin_status":  [false,false,false,false],
   "imuX": 0.0,
   "imuY": 0.0,
   "imuZ": 0.0,
@@ -162,6 +163,7 @@ The status response fields correspond to the following structure in firmware:
 ```cpp
 struct DeviceStatus {
   bool relays_status[4];
+  bool optoin_status[4];
   float imuX, imuY, imuZ;
   bool imuValid;
   double gpsLat, gpsLng, gpsAlt;

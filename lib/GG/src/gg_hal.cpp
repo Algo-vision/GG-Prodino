@@ -80,3 +80,8 @@ LED_STATES GG_HAL::get_indicator_led_state()
     else
         return OFF;
 }
+
+bool GG_HAL::get_optoin_state(int opto_id)
+{
+    return KMPProDinoMKRZero.GetOptoInState(opto_id);
+}

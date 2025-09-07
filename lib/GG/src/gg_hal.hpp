@@ -29,6 +29,7 @@ public:
     void status_led_on();
     void status_led_off();
     bool get_button1_state();
+    bool get_optoin_state(int opto_id);
 LED_STATES get_indicator_led_state();
 };
 
