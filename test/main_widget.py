@@ -94,7 +94,7 @@ class MainWidget(QWidget):
             # Enable firmware uploader if technician mode
             self.technician_mode = status.get("ledIo", "") == "ORANGE"
             self.fw_box.setEnabled(self.technician_mode)
-            self.fw_upload_btn.setEnabled(self.technician_mode and self.firmware_path)
+            self.fw_upload_btn.setEnabled(self.technician_mode and self.firmware_path is not None)
         else:
             for v in self.status_labels.values():
                 v.setText("-")
@@ -104,7 +104,8 @@ class MainWidget(QWidget):
         relays = self.status_labels["relays_status"].text().split(", ")
         if len(relays) > relay_id:
             current = relays[relay_id]
-            new_state = not bool(int(current))
+            corrent_bool = current == 'True'
+            new_state =  not corrent_bool
             self.api_client.set_relay(relay_id, new_state)
             self.update_status()
 

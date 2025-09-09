@@ -1,12 +1,14 @@
+import base64
 import requests
 import os
 
-def upload_firmware(ip, firmware_path, password="arduino"):
+def upload_firmware(ip, firmware_path, password=""):
     url = f"http://{ip}:65280/sketch"
     size = os.path.getsize(firmware_path)
     headers = {
         "Content-Type": "application/octet-stream",
-        "Content-Length": str(size)
+        "Content-Length": str(size),
+        "Authorization": f"Basic {base64.b64encode(f'arduino:{password}'.encode()).decode()}"
     }
     with open(firmware_path, "rb") as f:
         try:
