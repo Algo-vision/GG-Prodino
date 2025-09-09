@@ -51,6 +51,7 @@ bool is_ip_whitelisted(const IPAddress& ip) {
 struct DeviceStatus
 {
   bool relays_status[4] = {false, false, false, false};
+  bool optos_status[4] = {false, false, false, false};
   float imuX = 0;
   float imuY = 0;
   float imuZ = 0;
@@ -64,6 +65,7 @@ struct DeviceStatus
   bool ledInternal = false;
   LED_STATES ledIo = OFF;
   bool button1 = false;
+
 } status;
 
 // --- HARD-CODED LOGIN ---
@@ -139,6 +141,14 @@ void update_hw_status()
   status.button1 = _gg_hal.get_button1_state();
   status.ledIo = _gg_hal.get_indicator_led_state();
   all_devices_connected = gps_conncted && imu_valid;
+  for (uint8_t i = 0; i < RELAY_COUNT; i++)
+  {
+    status.relays_status[i] = KMPProDinoMKRZero.GetRelayState(i);
+  }
+  for (uint8_t i = 0; i < OPTOIN_COUNT; i++)
+  {
+    status.optos_status[i] = _gg_hal.get_optoin_state(i);
+  }
 }
 
 void setup()
@@ -244,6 +254,13 @@ JsonDocument generate_status_msg(JsonDocument &doc)
   resp["button1"] = status.button1;
   resp["imuValid"] = status.imuValid;
   resp["GPSConnected"] = status.gpsConnected;
+  JsonArray optoin_status = resp.createNestedArray("optoin_status");
+
+  for (uint8_t i = 0; i < OPTOIN_COUNT; i++)
+  {
+    optoin_status.add( status.optos_status[i]);
+  }
+  
   return resp;
 }
 
@@ -253,6 +270,13 @@ void write_status_to_serial()
   for (uint8_t i = 0; i < RELAY_COUNT; i++)
   {
     Serial.print(KMPProDinoMKRZero.GetRelayState(i) ? "1" : "0");
+    if (i < RELAY_COUNT - 1)
+      Serial.print(", ");
+  }
+  Serial.print("OptoIn: ");
+  for (uint8_t i = 0; i < RELAY_COUNT; i++)
+  {
+    Serial.print(status.optos_status[i] ? "1" : "0");
     if (i < RELAY_COUNT - 1)
       Serial.print(", ");
   }
@@ -429,6 +453,36 @@ void status_led_blink()
     return;
   }
 
+  // New logic for opto in 0
+  bool opto0 = false;
+  if (OPTOIN_COUNT > 0) {
+    opto0 = status.optos_status[0];
+  }
+
+  if (!opto0 && !user_connected) {
+    // Flashing orange: opto in 0 is false, no client connected
+    if ((millis() - led_last_change_time) > 500) {
+      if (_gg_hal.get_indicator_led_state() == OFF)
+        _gg_hal.set_indicator_led(ORANGE);
+      else
+        _gg_hal.set_indicator_led(OFF);
+      led_last_change_time = millis();
+    }
+    return;
+  }
+  if (!opto0 && user_connected) {
+    // Alternating orange-green: opto in 0 is false, client connected
+    if ((millis() -  led_last_change_time) > 500) {
+      LED_STATES current = _gg_hal.get_indicator_led_state();
+      if (current == ORANGE)
+        _gg_hal.set_indicator_led(GREEN);
+      else
+        _gg_hal.set_indicator_led(ORANGE);
+      led_last_change_time = millis();
+    }
+    return;
+  }
+
   if (all_devices_connected && user_connected)
   {
     // Solid green: client connected and all sensors OK
@@ -437,11 +491,11 @@ void status_led_blink()
   else if (all_devices_connected && !user_connected)
   {
     // Blinking green: all sensors OK, no client
-    Serial.println("Last change time: " + String(led_last_change_time));
-     Serial.println("Current time: " + String(millis()));
-     Serial.println("Time diff: " + String(millis() - led_last_change_time));
-     Serial.println("Current LED state: " + String(_gg_hal.get_indicator_led_state() == OFF ? "OFF" : "ON"));
-     Serial.println("In blinking green mode");
+    // Serial.println("Last change time: " + String(led_last_change_time));
+    // Serial.println("Current time: " + String(millis()));
+    // Serial.println("Time diff: " + String(millis() - led_last_change_time));
+    // Serial.println("Current LED state: " + String(_gg_hal.get_indicator_led_state() == OFF ? "OFF" : "ON"));
+    // Serial.println("In blinking green mode");
     if ((millis() - led_last_change_time) > 500)
     {
       Serial.println("Blinking green");
@@ -479,7 +533,7 @@ void loop()
   }
   http_loop();
   update_hw_status();
-  // write_status_to_serial();
+  write_status_to_serial();
   if (millis() - last_user_connected_time > 5000 )
   {
     user_connected = false;

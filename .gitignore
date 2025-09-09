@@ -4,3 +4,7 @@
 .vscode/launch.json
 .vscode/ipch
 .venv/
+*.pyc
+__pycache__/
+.pytest_cache/
+.ipynb_checkpoints/
