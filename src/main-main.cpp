@@ -148,8 +148,7 @@ void setup()
   bool tech_button_held = false;
   delay(3000);
   Serial.begin(115200);
-  while (!Serial)
-    ;
+  //while (!Serial);
 
   KMPProDinoMKRZero.init(ProDino_MKR_Zero_Ethernet);
 
