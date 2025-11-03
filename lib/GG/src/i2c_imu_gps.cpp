@@ -63,6 +63,32 @@ bool readAccelerometer(float &ax, float &ay, float &az)
     return true;
 }
 
+bool readGyroscope(float &gx, float &gy, float &gz)
+{
+    if (!imu_initialized)
+    {
+        initIMU();
+    }
+
+    uint8_t rawData[6]={0,0,0,0,0,0};
+    bool valid = imuReadBytes(LSM6DS3_OUTX_L_G, rawData, 6);
+    if (!valid) {
+        gx = gy = gz = 0.0;
+        imu_initialized = false;
+        return valid; // Error reading data
+    }
+    int16_t gx_raw = (int16_t)(rawData[1] << 8 | rawData[0]);
+    int16_t gy_raw = (int16_t)(rawData[3] << 8 | rawData[2]);
+    int16_t gz_raw = (int16_t)(rawData[5] << 8 | rawData[4]);
+
+    // Convert raw to dps (±245 dps)
+    // Sensitivity for ±245 dps is 8.75 mdps/LSB = 0.00875 dps/LSB
+    gx = gx_raw * 0.00875;
+    gy = gy_raw * 0.00875;
+    gz = gz_raw * 0.00875;
+    return true;
+}
+
 
 bool readGPSCoords(double &lat, double &lng, double &alt)
 {

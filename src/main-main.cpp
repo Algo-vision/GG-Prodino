@@ -55,6 +55,9 @@ struct DeviceStatus
   float imuX = 0;
   float imuY = 0;
   float imuZ = 0;
+  float imuGx = 0;
+  float imuGy = 0;
+  float imuGz = 0;
   bool imuValid = false;
   // float battery = 100;
   double gpsLat = 0;
@@ -125,7 +128,15 @@ void update_hw_status()
   status.imuX = ax;
   status.imuY = ay;
   status.imuZ = az;
-  status.imuValid = imu_valid;
+
+  // Read Gyroscope
+  float gx, gy, gz;
+  _gg_hal.get_gyro_data(gx, gy, gz);
+  status.imuGx = gx;
+  status.imuGy = gy;
+  status.imuGz = gz;
+
+  status.imuValid = imu_valid; // imuValid should also consider gyroscope data validity.
 
   // Read GPS
   double lat, lng, alt;

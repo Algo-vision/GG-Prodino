@@ -23,6 +23,10 @@ bool GG_HAL::get_accel_data(float &ax, float &ay, float &az)
 {
     return readAccelerometer(ax, ay, az);
 }
+bool GG_HAL::get_gyro_data(float &gx, float &gy, float &gz)
+{
+    return readGyroscope(gx, gy, gz);
+}
 void GG_HAL::get_relay_status(int relay_id)
 {
     KMPProDinoMKRZero.GetRelayState(relay_id);

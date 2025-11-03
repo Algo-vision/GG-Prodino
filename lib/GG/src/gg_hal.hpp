@@ -6,6 +6,12 @@ struct gps_data
     double latitude;
     double longitude;
     double altitude;
+    char time_str[20]; // YYYY-MM-DD hh:mm:ss
+    float speed_north; // km/hr
+    float speed_east;  // km/hr
+    float speed_down;  // km/hr
+    float ground_speed; // km/hr
+    float heading;     // degrees
     bool valid;
 };
 enum LED_STATES
@@ -23,6 +29,7 @@ public:
     void init();
     void get_gps_data(gps_data &data);
     bool get_accel_data(float &ax, float &ay, float &az);
+    bool get_gyro_data(float &gx, float &gy, float &gz);
     void get_relay_status(int relay_id);
     void set_relay(int relay_id, bool state);
     void set_indicator_led(LED_STATES state);

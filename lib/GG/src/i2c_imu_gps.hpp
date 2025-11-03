@@ -8,6 +8,7 @@
 #define LSM6DS3_CTRL1_XL 0x10
 #define LSM6DS3_CTRL2_G 0x11
 #define LSM6DS3_OUTX_L_XL 0x28
+#define LSM6DS3_OUTX_L_G 0x22
 
 // GPS (u-blox) I2C address
 #define GPS_ADDR 0x42
@@ -21,6 +22,7 @@ extern bool gps_conncted;
 void imuWriteByte(uint8_t reg, uint8_t value);
 bool imuReadBytes(uint8_t reg, uint8_t *data, uint8_t len);
 bool readAccelerometer(float &ax, float &ay, float &az);
+bool readGyroscope(float &gx, float &gy, float &gz);
 void initIMU();
 
 // GPS helper function
