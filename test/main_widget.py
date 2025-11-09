@@ -1,17 +1,24 @@
-from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QLabel, QPushButton, QHBoxLayout, QTableWidget, QTableWidgetItem, QComboBox, QFileDialog, QMessageBox, QGroupBox, QGridLayout)
-from PyQt5.QtCore import QTimer
+from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QLabel, QPushButton, QHBoxLayout, QTableWidget, QTableWidgetItem, QComboBox, QFileDialog, QMessageBox, QGroupBox, QGridLayout, QLineEdit, QCheckBox)
+from PyQt5.QtCore import QTimer, pyqtSignal
 from firmware_uploader import upload_firmware
 
 class MainWidget(QWidget):
+    reconnect_requested = pyqtSignal()
+
     def __init__(self, api_client, base_ip, parent=None):
         super().__init__(parent)
         self.api_client = api_client
         self.base_ip = base_ip
+        print(f"MainWidget.__init__: api_client.base_url is {self.api_client.base_url}") # Added print
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.update_status)
+        self.is_editing_ip = False
         self.init_ui()
         self.timer.start(1000)
         self.technician_mode = False
+
+    def on_ip_editing_started(self):
+        self.is_editing_ip = True
 
     def init_ui(self):
         layout = QVBoxLayout()
@@ -19,7 +26,8 @@ class MainWidget(QWidget):
         self.status_group = QGroupBox("Device Status")
         status_layout = QGridLayout()
         self.status_labels = {}
-        fields = ["relays_status", "imuX", "imuY", "imuZ", "gpsLat", "gpsLng", "gpsAlt", "ledInternal", "ledIo", "gpsValid", "button1", "imuValid", "GPSConnected", "optoin_status"]
+        # Add "controllerIp" and "whitelistIps" to the fields list
+        fields = ["firmwareVersion", "controllerIp", "whitelistIps", "relays_status", "imuX", "imuY", "imuZ", "imuGx", "imuGy", "imuGz", "pitch", "roll", "yaw", "gpsLat", "gpsLng", "gpsAlt", "gpsTime", "gpsSpeedNorth", "gpsSpeedEast", "imuSpeedDown", "gpsGroundSpeed", "gpsHeading", "ledInternal", "ledIo", "gpsValid", "button1", "imuValid", "GPSConnected", "optoin_status"]
         for i, field in enumerate(fields):
             label = QLabel("-")
             status_layout.addWidget(QLabel(field), i, 0)
@@ -27,6 +35,32 @@ class MainWidget(QWidget):
             self.status_labels[field] = label
         self.status_group.setLayout(status_layout)
         layout.addWidget(self.status_group)
+
+        # IP Configuration Group
+        ip_config_box = QGroupBox("IP Configuration")
+        ip_config_layout = QGridLayout()
+
+        self.controller_ip_edit = QLineEdit(self.base_ip)
+        self.whitelist_ip1_edit = QLineEdit()
+        self.whitelist_ip2_edit = QLineEdit()
+
+        self.controller_ip_edit.textChanged.connect(self.on_ip_editing_started)
+        self.whitelist_ip1_edit.textChanged.connect(self.on_ip_editing_started)
+        self.whitelist_ip2_edit.textChanged.connect(self.on_ip_editing_started)
+
+        ip_config_layout.addWidget(QLabel("Controller IP:"), 0, 0)
+        ip_config_layout.addWidget(self.controller_ip_edit, 0, 1)
+        ip_config_layout.addWidget(QLabel("Whitelist IP 1:"), 1, 0)
+        ip_config_layout.addWidget(self.whitelist_ip1_edit, 1, 1)
+        ip_config_layout.addWidget(QLabel("Whitelist IP 2:"), 2, 0)
+        ip_config_layout.addWidget(self.whitelist_ip2_edit, 2, 1)
+
+        self.save_ip_btn = QPushButton("Save IP Configuration")
+        self.save_ip_btn.clicked.connect(self.save_ip_configuration)
+        ip_config_layout.addWidget(self.save_ip_btn, 3, 0, 1, 2)
+
+        ip_config_box.setLayout(ip_config_layout)
+        layout.addWidget(ip_config_box)
 
         # Relay controls
         relay_box = QGroupBox("Relays")
@@ -49,6 +83,9 @@ class MainWidget(QWidget):
         self.led_btn.clicked.connect(self.set_led)
         led_layout.addWidget(self.led_combo)
         led_layout.addWidget(self.led_btn)
+        self.led_override_checkbox = QCheckBox("Manual LED Override")
+        self.led_override_checkbox.stateChanged.connect(self.toggle_led_controls)
+        led_layout.addWidget(self.led_override_checkbox)
         led_box.setLayout(led_layout)
         layout.addWidget(led_box)
 
@@ -95,9 +132,35 @@ class MainWidget(QWidget):
             self.technician_mode = status.get("ledIo", "") == "ORANGE"
             self.fw_box.setEnabled(self.technician_mode)
             self.fw_upload_btn.setEnabled(self.technician_mode and self.firmware_path is not None)
+
+            # Update IP configuration fields only if not editing
+            if not self.is_editing_ip:
+                self.controller_ip_edit.setText(status.get("controllerIp", self.base_ip))
+                whitelist = status.get("whitelistIps", [])
+                self.whitelist_ip1_edit.setText(whitelist[0] if len(whitelist) > 0 else "")
+                self.whitelist_ip2_edit.setText(whitelist[1] if len(whitelist) > 1 else "")
+
+            # If manual override is not active, update LED combo from status
+            if not self.led_override_checkbox.isChecked():
+                current_led_status = status.get("ledIo", "OFF") if status else "OFF"
+                index = self.led_combo.findText(current_led_status)
+                if index != -1:
+                    self.led_combo.setCurrentIndex(index)
+
         else:
+            # Communication lost, return to login screen
+            self.reconnect_requested.emit()
             for v in self.status_labels.values():
                 v.setText("-")
+    def toggle_led_controls(self, state):
+        # Enable/disable LED combo and button based on checkbox state
+        is_checked = bool(state)
+        self.led_combo.setEnabled(is_checked)
+        self.led_btn.setEnabled(is_checked)
+
+        # If override is turned off, immediately update LED status from device
+        if not is_checked:
+            self.update_status() # This will refresh the led_combo based on device status
 
     def toggle_relay(self, relay_id):
         # Get current relay state from status label
@@ -110,9 +173,12 @@ class MainWidget(QWidget):
             self.update_status()
 
     def set_led(self):
-        color = self.led_combo.currentText()
-        self.api_client.set_led(color)
-        self.update_status()
+        if self.led_override_checkbox.isChecked():
+            color = self.led_combo.currentText()
+            self.api_client.set_led(color)
+            self.update_status()
+        else:
+            QMessageBox.warning(self, "LED Control", "Manual LED override is not active. Check the 'Manual LED Override' box to control the LED.")
 
     def set_internal_led(self, state):
         self.api_client.set_internal_led(state)
@@ -134,3 +200,26 @@ class MainWidget(QWidget):
             QMessageBox.information(self, "Upload", "Firmware upload successful!")
         else:
             QMessageBox.critical(self, "Upload Failed", f"Upload failed: {msg}")
+
+    def save_ip_configuration(self):
+        print("save_ip_configuration: Initiated.")
+        self.is_editing_ip = False
+        controller_ip = self.controller_ip_edit.text()
+        whitelist_ips = [
+            self.whitelist_ip1_edit.text(),
+            self.whitelist_ip2_edit.text()
+        ]
+        # Filter out empty whitelist IPs
+        whitelist_ips = [ip for ip in whitelist_ips if ip]
+        print(f"save_ip_configuration: Attempting to set controller_ip={controller_ip}, whitelist_ips={whitelist_ips}")
+
+        ok, msg = self.api_client.set_ip_config(controller_ip, whitelist_ips)
+        if ok:
+            print(f"save_ip_configuration: IP configuration saved successfully. New IP: {controller_ip}")
+            self.base_ip = controller_ip
+            self.reconnect_requested.emit() # Emit signal first to clean up MainWidget
+            QMessageBox.information(self, "IP Configuration", f"IP configuration saved. Reconnection required. New IP: {controller_ip}")
+        else:
+            print(f"save_ip_configuration: Failed to save IP configuration: {msg}")
+            QMessageBox.critical(self, "IP Configuration Failed", f"Failed to save IP configuration: {msg}")
+            self.update_status() # Refresh to show the original IPs

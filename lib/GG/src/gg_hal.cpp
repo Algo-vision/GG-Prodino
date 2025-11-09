@@ -15,9 +15,7 @@ void GG_HAL::init()
 }
 void GG_HAL::get_gps_data(gps_data &data)
 {
-
-    bool valid = readGPSCoords(data.latitude, data.longitude, data.altitude);
-    data.valid = valid;
+    readGPSCoords(data);
 }
 bool GG_HAL::get_accel_data(float &ax, float &ay, float &az)
 {

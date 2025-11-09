@@ -6,23 +6,123 @@
 #include <WebSocketsServer.h>
 #include <i2c_imu_gps.hpp>
 #include "gg_hal.hpp"
+#include "calculations.hpp"
+#include <FlashStorage.h> // Include for FlashStorage
+#include <vector> // Include for std::vector
+#include <Arduino_DebugUtils.h> // Required for NVIC_SystemReset()
+
+// Define a struct to hold the configuration data
+struct Config {
+  byte controller_ip_bytes[4];
+  byte whitelist_ip_bytes[10][4]; // Assuming max 10 whitelist IPs
+  int whitelist_count;
+
+  // Constructor to initialize with default values
+  Config() : whitelist_count(0) {
+    // Default IP: 192.168.1.198
+    controller_ip_bytes[0] = 192;
+    controller_ip_bytes[1] = 168;
+    controller_ip_bytes[2] = 1;
+    controller_ip_bytes[3] = 198;
+
+    // Default whitelist IPs: 192.168.1.10, 192.168.1.15
+    whitelist_ip_bytes[0][0] = 192; whitelist_ip_bytes[0][1] = 168; whitelist_ip_bytes[0][2] = 1; whitelist_ip_bytes[0][3] = 10;
+    whitelist_ip_bytes[1][0] = 192; whitelist_ip_bytes[1][1] = 168; whitelist_ip_bytes[1][2] = 1; whitelist_ip_bytes[1][3] = 15;
+    whitelist_count = 2;
+  }
+};
+
+// Declare a FlashStorage object
+FlashStorage(config_store, Config);
+
+IPAddress current_ip; // Initialized by loadConfig()
+std::vector<IPAddress> current_whitelist; // Initialized by loadConfig()
+
+// --- IP CONFIGURATION PERSISTENCE ---
+void saveConfig() {
+  Config config_data;
+
+  // Save controller IP
+  config_data.controller_ip_bytes[0] = current_ip[0];
+  config_data.controller_ip_bytes[1] = current_ip[1];
+  config_data.controller_ip_bytes[2] = current_ip[2];
+  config_data.controller_ip_bytes[3] = current_ip[3];
+
+  // Save whitelist IPs
+  config_data.whitelist_count = 0;
+  for (size_t i = 0; i < current_whitelist.size() && i < 10; ++i) {
+    config_data.whitelist_ip_bytes[i][0] = current_whitelist[i][0];
+    config_data.whitelist_ip_bytes[i][1] = current_whitelist[i][1];
+    config_data.whitelist_ip_bytes[i][2] = current_whitelist[i][2];
+    config_data.whitelist_ip_bytes[i][3] = current_whitelist[i][3];
+    config_data.whitelist_count++;
+  }
+
+  config_store.write(config_data);
+  Serial.println("Configuration saved to FlashStorage.");
+}
+
+void loadConfig() {
+  Config config_data = config_store.read();
+
+  // Check if the loaded IP is all zeros OR if whitelist_count is 0 (indicating uninitialized/empty flash)
+  if ((config_data.controller_ip_bytes[0] == 0 &&
+       config_data.controller_ip_bytes[1] == 0 &&
+       config_data.controller_ip_bytes[2] == 0 &&
+       config_data.controller_ip_bytes[3] == 0) ||
+      config_data.whitelist_count == 0) { // Added check for empty whitelist
+    Serial.println("FlashStorage uninitialized, corrupted, or whitelist empty. Setting default configuration.");
+    // Re-initialize config_data with default values using its constructor
+    Config default_config; // This calls the constructor with default IPs and whitelist
+    config_data = default_config;
+    saveConfig(); // Save the default configuration to flash
+  }
+
+  // Load controller IP
+  current_ip = IPAddress(config_data.controller_ip_bytes[0],
+                         config_data.controller_ip_bytes[1],
+                         config_data.controller_ip_bytes[2],
+                         config_data.controller_ip_bytes[3]);
+
+  // Load whitelist IPs
+  current_whitelist.clear();
+  for (int i = 0; i < config_data.whitelist_count; ++i) {
+    current_whitelist.push_back(IPAddress(config_data.whitelist_ip_bytes[i][0],
+                                          config_data.whitelist_ip_bytes[i][1],
+                                          config_data.whitelist_ip_bytes[i][2],
+                                          config_data.whitelist_ip_bytes[i][3]));
+  }
+  Serial.println("Configuration loaded from FlashStorage.");
+}
+
 // OTA support
 #include <ArduinoOTA.h>
-TinyGPSPlus gps;
-char gpsBuffer[GPS_BUFFER_LEN];
+
 #define LED_IO_PIN 6
 unsigned long last_user_connected_time = 0;
 bool user_connected = false;
 bool all_devices_connected = false;
 unsigned long led_last_change_time = 0;
+unsigned long last_update_time = 0;
+float imuX_offset = 0.0;
+float imuY_offset = 0.0;
+float imuZ_offset = 0.0;
+float imuGx_offset = 0.0;
+float imuGy_offset = 0.0;
+float imuGz_offset = 0.0;
 bool technician_mode = false;
+const String FIRMWARE_VERSION = "1.0.0"; // Added firmware version constant
 // If in debug mode - print debug information in Serial. Comment in production code, this bring performance.
 // This method is good for development and verification of results. But increases the amount of code and decreases productivity.
 
 // Enter a MAC address and IP address for your controller below.
+
+
+
+// Enter a MAC address and IP address for your controller below.
 byte _mac[] = {0x00, 0x08, 0xDC, 0x53, 0x09, 0x72};
 // The IP address will be dependent on your local network.
-IPAddress _ip(192, 168, 1, 198);
+
 const uint16_t LOCAL_PORT = 80;
 
 EthernetServer _server(LOCAL_PORT);
@@ -33,18 +133,16 @@ GG_HAL _gg_hal;
 String authToken = "";
 
 // --- IP WHITELIST ---
-const IPAddress WHITELIST[] = {
-  IPAddress(192,168,1,10),
-  IPAddress(192,168,1,15)
-};
-const size_t WHITELIST_SIZE = sizeof(WHITELIST)/sizeof(WHITELIST[0]);
+// WHITELIST is now current_whitelist
 
 bool is_ip_whitelisted(const IPAddress& ip) {
-  for (size_t i = 0; i < WHITELIST_SIZE; ++i) {
-    if (ip == WHITELIST[i]) return true;
+  for (size_t i = 0; i < current_whitelist.size(); ++i) {
+    if (ip == current_whitelist[i]) return true;
   }
   return false;
 }
+
+
 
 // --- DUMMY DATA ---
 
@@ -58,11 +156,20 @@ struct DeviceStatus
   float imuGx = 0;
   float imuGy = 0;
   float imuGz = 0;
+  float pitch = 0;
+  float roll = 0;
+  float yaw = 0; // Added yaw
   bool imuValid = false;
   // float battery = 100;
   double gpsLat = 0;
   double gpsLng = 0;
   double gpsAlt = 0;
+  char gpsTime[20] = ""; // YYYY-MM-DD hh:mm:ss
+  float gpsSpeedNorth = 0; // km/hr
+  float gpsSpeedEast = 0;  // km/hr
+  float imuSpeedDown = 0;  // km/hr
+  float gpsGroundSpeed = 0; // km/hr
+  float gpsHeading = 0;     // degrees
   bool gpsValid = false;
   bool gpsConnected = false;
   bool ledInternal = false;
@@ -76,6 +183,7 @@ const char *USERNAME = "admin";
 const char *PASSWORD = "1234";
 
 String generateToken()
+
 {
   String t = "";
   for (int i = 0; i < 16; i++)
@@ -132,22 +240,62 @@ void update_hw_status()
   // Read Gyroscope
   float gx, gy, gz;
   _gg_hal.get_gyro_data(gx, gy, gz);
-  status.imuGx = gx;
-  status.imuGy = gy;
-  status.imuGz = gz;
+  status.imuGx = gx - imuGx_offset; // Apply gyroscope offset
+  status.imuGy = gy - imuGy_offset; // Apply gyroscope offset
+  status.imuGz = gz - imuGz_offset; // Apply gyroscope offset
 
   status.imuValid = imu_valid; // imuValid should also consider gyroscope data validity.
 
+  // Calculate vertical speed from IMU and Pitch/Roll
+  unsigned long current_time = millis();
+  float dt = (current_time - last_update_time) / 1000.0; // Time difference in seconds
+  last_update_time = current_time;
+
+  if (status.imuValid) {
+    calculatePitchRoll(status.pitch, status.roll, status.imuX, status.imuY, status.imuZ, status.imuGx, status.imuGy, dt, imuX_offset, imuY_offset);
+    calculateYaw(status.yaw, status.imuGz, dt); // Calculate yaw
+  }
+
+  if (dt > 0.0 && status.imuValid) {
+    // Calculate vertical speed by integrating accelerometer Z data
+    // 1. Remove gravity offset.
+    float real_az = status.imuZ - imuZ_offset; // in g's
+    // 2. Convert g's to m/s^2.
+    float real_az_ms2 = real_az * 9.80665; // Standard gravity
+    // 3. Get current speed in m/s from km/hr
+    float current_speed_down_ms = status.imuSpeedDown / 3.6;
+    // 4. Integrate: v = v0 + a*t
+    current_speed_down_ms += real_az_ms2 * dt;
+    // 5. Convert back to km/hr and store
+    status.imuSpeedDown = current_speed_down_ms * 3.6;
+  }
+
   // Read GPS
-  double lat, lng, alt;
-  bool gpsOk = readGPSCoords(lat, lng, alt);
-  status.gpsValid = gpsOk;
-  status.gpsConnected = gps_conncted;
-  if (gpsOk)
+  gps_data current_gps_data;
+  _gg_hal.get_gps_data(current_gps_data);
+  status.gpsValid = current_gps_data.valid;
+  status.gpsConnected = gps_conncted; // gps_conncted is a global from i2c_imu_gps.cpp
+  if (status.gpsValid)
   {
-    status.gpsLat = lat;
-    status.gpsLng = lng;
-    status.gpsAlt = alt;
+    status.gpsLat = current_gps_data.latitude;
+    status.gpsLng = current_gps_data.longitude;
+    status.gpsAlt = current_gps_data.altitude;
+    strcpy(status.gpsTime, current_gps_data.time_str);
+    status.gpsSpeedNorth = current_gps_data.speed_north;
+    status.gpsSpeedEast = current_gps_data.speed_east;
+    status.gpsGroundSpeed = current_gps_data.ground_speed;
+    status.gpsHeading = current_gps_data.heading;
+  } else {
+    // Clear GPS data if not valid
+    status.gpsLat = 0;
+    status.gpsLng = 0;
+    status.gpsAlt = 0;
+    strcpy(status.gpsTime, "");
+    status.gpsSpeedNorth = 0;
+    status.gpsSpeedEast = 0;
+    status.imuSpeedDown = 0; // Also reset vertical speed to counter drift
+    status.gpsGroundSpeed = 0;
+    status.gpsHeading = 0;
   }
   status.button1 = _gg_hal.get_button1_state();
   status.ledIo = _gg_hal.get_indicator_led_state();
@@ -169,16 +317,63 @@ void setup()
   bool tech_button_held = false;
   delay(3000);
   Serial.begin(115200);
-  while (!Serial)
-    ;
+  // while (!Serial);
+
+  loadConfig(); // Load configuration from LittleFS
 
   KMPProDinoMKRZero.init(ProDino_MKR_Zero_Ethernet);
 
   // Start the Ethernet connection and the server.
-  Ethernet.begin(_mac, _ip);
+  Ethernet.begin(_mac, current_ip);
   _server.begin();
 
   _gg_hal.init();
+
+  // Calibrate IMU by taking 100 readings and averaging them
+  Serial.println("Calibrating IMU... Keep the device flat and still.");
+  float ax_sum = 0.0;
+  float ay_sum = 0.0;
+  float az_sum = 0.0;
+  for (int i = 0; i < 100; i++) {
+    float ax, ay, az;
+    if (readAccelerometer(ax, ay, az)) {
+      ax_sum += ax;
+      ay_sum += ay;
+      az_sum += az;
+    }
+    delay(10);
+  }
+  imuX_offset = ax_sum / 100.0;
+  imuY_offset = ay_sum / 100.0;
+  imuZ_offset = az_sum / 100.0;
+  Serial.println("Accelerometer calibration complete.");
+  Serial.print("Accel Offsets: X="); Serial.print(imuX_offset);
+  Serial.print(", Y="); Serial.print(imuY_offset);
+  Serial.print(", Z="); Serial.println(imuZ_offset);
+
+  // Calibrate Gyroscope by taking 100 readings and averaging them
+  Serial.println("Calibrating Gyroscope... Keep the device flat and still.");
+  float gx_sum = 0.0;
+  float gy_sum = 0.0;
+  float gz_sum = 0.0;
+  for (int i = 0; i < 100; i++) {
+    float gx, gy, gz;
+    _gg_hal.get_gyro_data(gx, gy, gz); // Assuming this reads raw gyro data
+    gx_sum += gx;
+    gy_sum += gy;
+    gz_sum += gz;
+    delay(10);
+  }
+  imuGx_offset = gx_sum / 100.0;
+  imuGy_offset = gy_sum / 100.0;
+  imuGz_offset = gz_sum / 100.0;
+  Serial.println("Gyroscope calibration complete.");
+  Serial.print("Gyro Offsets: X="); Serial.print(imuGx_offset);
+  Serial.print(", Y="); Serial.print(imuGy_offset);
+  Serial.print(", Z="); Serial.println(imuGz_offset);
+
+  last_update_time = millis();
+
   Serial.println("Starting up...");
   Serial.println("Hold button 1 to enter technician mode...");
   Serial.println("Button state is: ");
@@ -219,7 +414,8 @@ JsonDocument handle_login_request(JsonDocument &doc)
   String user = doc["user"];
   String pass = doc["pass"];
   Serial.println();
-  Serial.println("User: " + user + ", Pass: " + pass);
+  Serial.println("handle_login_request: Received User: " + user + ", Pass: " + pass);
+  Serial.println("handle_login_request: Expected User: " + String(USERNAME) + ", Pass: " + String(PASSWORD));
   JsonDocument resp;
   resp["type"] = "login_result";
   if (user == USERNAME && pass == PASSWORD)
@@ -240,7 +436,8 @@ JsonDocument generate_status_msg(JsonDocument &doc)
   update_hw_status();
   JsonDocument resp;
   resp["type"] = "status";
-  JsonArray relays_status = resp.createNestedArray("relays_status");
+  resp["firmwareVersion"] = FIRMWARE_VERSION; // Include firmware version
+  JsonArray relays_status = resp["relays_status"].to<JsonArray>();
 
   for (uint8_t i = 0; i < RELAY_COUNT; i++)
   {
@@ -249,9 +446,21 @@ JsonDocument generate_status_msg(JsonDocument &doc)
   resp["imuX"] = status.imuX;
   resp["imuY"] = status.imuY;
   resp["imuZ"] = status.imuZ;
+  resp["imuGx"] = status.imuGx;
+  resp["imuGy"] = status.imuGy;
+  resp["imuGz"] = status.imuGz;
+  resp["pitch"] = status.pitch; // Include pitch
+  resp["roll"] = status.roll;   // Include roll
+  resp["yaw"] = status.yaw;     // Include yaw
   resp["gpsLat"] = status.gpsLat;
   resp["gpsLng"] = status.gpsLng;
   resp["gpsAlt"] = status.gpsAlt;
+  resp["gpsTime"] = status.gpsTime;
+  resp["gpsSpeedNorth"] = status.gpsSpeedNorth;
+  resp["gpsSpeedEast"] = status.gpsSpeedEast;
+  resp["imuSpeedDown"] = status.imuSpeedDown;
+  resp["gpsGroundSpeed"] = status.gpsGroundSpeed;
+  resp["gpsHeading"] = status.gpsHeading;
   resp["ledInternal"] = status.ledInternal;
   if (status.ledIo == OFF)
     resp["ledIo"] = "OFF";
@@ -265,13 +474,20 @@ JsonDocument generate_status_msg(JsonDocument &doc)
   resp["button1"] = status.button1;
   resp["imuValid"] = status.imuValid;
   resp["GPSConnected"] = status.gpsConnected;
-  JsonArray optoin_status = resp.createNestedArray("optoin_status");
+  JsonArray optoin_status = resp["optoin_status"].to<JsonArray>();
 
   for (uint8_t i = 0; i < OPTOIN_COUNT; i++)
   {
     optoin_status.add( status.optos_status[i]);
   }
   
+  // Add current IP configuration
+  resp["controllerIp"] = current_ip.toString();
+  JsonArray whitelist_ips_json = resp["whitelistIps"].to<JsonArray>();
+  for (size_t i = 0; i < current_whitelist.size(); ++i) {
+    whitelist_ips_json.add(current_whitelist[i].toString());
+  }
+
   return resp;
 }
 
@@ -291,12 +507,24 @@ void write_status_to_serial()
     if (i < RELAY_COUNT - 1)
       Serial.print(", ");
   }
-  Serial.print(" | IMU: ");
+  Serial.print(" | IMU Accel: ");
   Serial.print(status.imuX, 2);
   Serial.print(", ");
   Serial.print(status.imuY, 2);
   Serial.print(", ");
   Serial.print(status.imuZ, 2);
+  Serial.print(" | IMU Gyro: ");
+  Serial.print(status.imuGx, 2);
+  Serial.print(", ");
+  Serial.print(status.imuGy, 2);
+  Serial.print(", ");
+  Serial.print(status.imuGz, 2);
+  Serial.print(" | Pitch: ");
+  Serial.print(status.pitch, 2);
+  Serial.print(" | Roll: ");
+  Serial.print(status.roll, 2);
+  Serial.print(" | Yaw: ");
+  Serial.print(status.yaw, 2);
   Serial.print(" | IMU Valid: ");
   Serial.print(status.imuValid ? "Yes" : "No");
   Serial.print(" | GPS: ");
@@ -307,6 +535,18 @@ void write_status_to_serial()
     Serial.print(status.gpsLng, 6);
     Serial.print(", ");
     Serial.print(status.gpsAlt, 2);
+    Serial.print(" | Time: ");
+    Serial.print(status.gpsTime);
+    Serial.print(" | Spd N/E/D: ");
+    Serial.print(status.gpsSpeedNorth, 2);
+    Serial.print(", ");
+    Serial.print(status.gpsSpeedEast, 2);
+    Serial.print(", ");
+    Serial.print(status.imuSpeedDown, 2);
+    Serial.print(" | Gnd Spd: ");
+    Serial.print(status.gpsGroundSpeed, 2);
+    Serial.print(" | Heading: ");
+    Serial.print(status.gpsHeading, 2);
   }
   else
   {
@@ -357,7 +597,6 @@ void http_loop()
       String request = readHttpRequest(client);
       // Extract body only
       String body = extractHttpBody(request);
-      // String body = client.readString();
       Serial.println("Request body: " + body);
       JsonDocument doc;
       Serial.println("Json content: " + body);
@@ -366,80 +605,128 @@ void http_loop()
 
       String msg_type = doc["type"];
       JsonDocument resp;
+
       if (msg_type == "login")
       {
         Serial.println("Login type detected");
         resp = handle_login_request(doc);
       }
-      if (msg_type == "")
+      else // Not a login request, token is required
       {
-        resp["type"] = "error";
-        resp["message"] = "Unknown request type";
-      }
-      String tokenRecv = doc["token"];
-      bool valid_token = (tokenRecv == authToken);
-      if (msg_type != "login" && valid_token)
-      {
-        resp["type"] = "error";
-        resp["message"] = "Invalid token";
-      }
-      if (valid_token)
-      {
-        last_user_connected_time = millis();
-        user_connected = true;
-        if (msg_type == "get_status")
+        String tokenRecv = doc["token"];
+        bool valid_token = (tokenRecv == authToken && authToken != "");
+
+        if (!valid_token)
         {
-          resp = generate_status_msg(doc);
+          resp["type"] = "error";
+          resp["message"] = "Invalid token";
         }
-        else if (msg_type == "set_relay")
+        else // Token is valid
         {
-          uint8_t relay_id = doc["relay_id"];
-          bool state = doc["state"];
-          if (relay_id < RELAY_COUNT)
+          last_user_connected_time = millis();
+          user_connected = true;
+          if (msg_type == "get_status")
           {
-            KMPProDinoMKRZero.SetRelayState(relay_id, state);
             resp = generate_status_msg(doc);
           }
+          else if (msg_type == "set_relay")
+          {
+            uint8_t relay_id = doc["relay_id"];
+            bool state = doc["state"];
+            if (relay_id < RELAY_COUNT)
+            {
+              KMPProDinoMKRZero.SetRelayState(relay_id, state);
+              resp = generate_status_msg(doc);
+            }
+            else
+            {
+              resp["type"] = "error";
+              resp["message"] = "Invalid relay number";
+            }
+          }
+          else if (msg_type == "set_internal_led")
+          {
+            bool state = doc["state"];
+            KMPProDinoMKRZero.SetStatusLed(state);
+            status.ledInternal = state;
+            resp = generate_status_msg(doc);
+          }
+          else if (msg_type == "set_io_led")
+          {
+            String color = doc["color"];
+            LED_STATES color_val;
+            if (color == "OFF")
+            {
+              color_val = OFF;
+            }
+            else if (color == "GREEN")
+            {
+              color_val = GREEN;
+            }
+            else if (color == "RED")
+            {
+              color_val = RED;
+            }
+            else if (color == "ORANGE")
+            {
+              color_val = ORANGE;
+            }
+            else
+            {
+              resp["type"] = "error";
+              resp["message"] = "Invalid LED color";
+            }
+            _gg_hal.set_indicator_led(color_val);
+            resp = generate_status_msg(doc);
+          }
+          else if (msg_type == "set_ip_config")
+          {
+            String controller_ip_str = doc["controller_ip"];
+            IPAddress new_controller_ip; // Use a temporary variable
+            bool ip_valid = new_controller_ip.fromString(controller_ip_str);
+
+            JsonArray whitelist_ips_json = doc["whitelist_ips"];
+            std::vector<IPAddress> new_whitelist; // Use a temporary vector
+            bool whitelist_valid = true;
+            for (JsonVariant ip_str_variant : whitelist_ips_json) {
+              IPAddress whitelist_ip;
+              if (whitelist_ip.fromString(ip_str_variant.as<String>())) {
+                new_whitelist.push_back(whitelist_ip);
+              } else {
+                whitelist_valid = false;
+                break;
+              }
+            }
+
+            if (ip_valid && whitelist_valid) {
+              // Update global variables
+              current_ip = new_controller_ip;
+              current_whitelist = new_whitelist; // Assign the new vector
+
+              saveConfig(); // Save the new configuration to FlashStorage
+
+              resp["success"] = true;
+              resp["message"] = "IP configuration updated. Board will reboot.";
+              
+              // Send response immediately before rebooting
+              String out;
+              serializeJson(resp, out);
+              sendResponse(client, 200, out);
+              client.stop(); // Close the client connection
+
+              Serial.println("IP configuration saved. Initiating reboot in 2 seconds...");
+              delay(2000); // Give client time to receive response
+              NVIC_SystemReset(); // Perform software reset
+            } else {
+              resp["type"] = "error";
+              resp["message"] = "Invalid IP address or whitelist entry provided.";
+            }
+          }
           else
           {
             resp["type"] = "error";
-            resp["message"] = "Invalid relay number";
+            resp["message"] = "Unknown request type";
           }
-        }
-        else if (msg_type == "set_internal_led")
-        {
-          bool state = doc["state"];
-          KMPProDinoMKRZero.SetStatusLed(state);
-          status.ledInternal = state;
-          resp = generate_status_msg(doc);
-        }
-        else if (msg_type == "set_io_led")
-        {
-          String color = doc["color"];
-          LED_STATES color_val;
-          if (color == "OFF")
-          {
-            color_val = OFF;
-          }
-          else if (color == "GREEN")
-          {
-            color_val = GREEN;
-          }
-          else if (color == "RED")
-          {
-            color_val = RED;
-          }
-          else if (color == "ORANGE")
-          {
-            color_val = ORANGE;
-          }
-          else
-          {
-            resp["type"] = "error";
-            resp["message"] = "Invalid LED color";
-          }
-          _gg_hal.set_indicator_led(color_val);
-          resp = generate_status_msg(doc);
         }
       }
       String out;
@@ -456,83 +743,72 @@ void http_loop()
 
 void status_led_blink()
 {
-  // Technician mode (example: set by a global flag, here as a placeholder)
-  extern bool technician_mode;
+  bool is_safe_state = status.optos_status[0] && status.optos_status[1];
+  bool imu_connected = status.imuValid; // Assuming imuValid implies IMU connected
+  bool gps_connected = status.gpsConnected; // Assuming gpsConnected implies GPS connected
+  bool all_sensors_connected = imu_connected && gps_connected;
+
   if (technician_mode)
   {
-    _gg_hal.set_indicator_led(ORANGE);
-    return;
-  }
-
-  // New logic for opto in 0
-  bool opto0 = false;
-  if (OPTOIN_COUNT > 0) {
-    opto0 = status.optos_status[0];
-  }
-
-  if (!opto0 && !user_connected) {
-    // Flashing orange: opto in 0 is false, no client connected
-    if ((millis() - led_last_change_time) > 500) {
-      if (_gg_hal.get_indicator_led_state() == OFF)
-        _gg_hal.set_indicator_led(ORANGE);
-      else
-        _gg_hal.set_indicator_led(OFF);
-      led_last_change_time = millis();
-    }
-    return;
-  }
-  if (!opto0 && user_connected) {
-    // Alternating orange-green: opto in 0 is false, client connected
-    if ((millis() -  led_last_change_time) > 500) {
-      LED_STATES current = _gg_hal.get_indicator_led_state();
-      if (current == ORANGE)
-        _gg_hal.set_indicator_led(GREEN);
-      else
-        _gg_hal.set_indicator_led(ORANGE);
-      led_last_change_time = millis();
-    }
-    return;
-  }
-
-  if (all_devices_connected && user_connected)
-  {
-    // Solid green: client connected and all sensors OK
-    _gg_hal.set_indicator_led(GREEN);
-  }
-  else if (all_devices_connected && !user_connected)
-  {
-    // Blinking green: all sensors OK, no client
-    // Serial.println("Last change time: " + String(led_last_change_time));
-    // Serial.println("Current time: " + String(millis()));
-    // Serial.println("Time diff: " + String(millis() - led_last_change_time));
-    // Serial.println("Current LED state: " + String(_gg_hal.get_indicator_led_state() == OFF ? "OFF" : "ON"));
-    // Serial.println("In blinking green mode");
-    if ((millis() - led_last_change_time) > 500)
+    if (is_safe_state)
     {
-      Serial.println("Blinking green");
-      Serial.println(_gg_hal.get_indicator_led_state() == OFF ? "Currently OFF" : "Currently ON");
-      if (_gg_hal.get_indicator_led_state() == OFF)
-        _gg_hal.set_indicator_led(GREEN);
-      else
-        _gg_hal.set_indicator_led(OFF);
-      led_last_change_time = millis();
+      // Solid Orange: Technician mode, voltage to optocouplers (safe)
+      _gg_hal.set_indicator_led(ORANGE);
+    }
+    else
+    {
+      // Blinking Orange: Technician mode, no voltage to optocouplers (unsafe)
+      if ((millis() - led_last_change_time) > 500)
+      {
+        if (_gg_hal.get_indicator_led_state() == OFF)
+          _gg_hal.set_indicator_led(ORANGE);
+        else
+          _gg_hal.set_indicator_led(OFF);
+        led_last_change_time = millis();
+      }
     }
   }
-  else if (!all_devices_connected && user_connected)
+  else // Normal mode
   {
-    // Solid red: client connected, but at least one sensor not OK
-    _gg_hal.set_indicator_led(RED);
-  }
-  else
-  {
-    // Blinking red: no client, at least one sensor not OK
-    if ((millis() - led_last_change_time) > 500)
+    if (is_safe_state)
     {
-      if (_gg_hal.get_indicator_led_state() == OFF)
+      if (all_sensors_connected)
+      {
+        // Solid Green: GPS & IMU connected, voltage to optocouplers (safe)
+        _gg_hal.set_indicator_led(GREEN);
+      }
+      else
+      {
+        // Solid Red: IMU disconnected (or GPS), voltage to optocouplers (safe)
         _gg_hal.set_indicator_led(RED);
+      }
+    }
+    else // Unsafe state (no voltage to optocouplers)
+    {
+      if (all_sensors_connected)
+      {
+        // Blinking Green: GPS & IMU connected, no voltage to optocouplers (unsafe)
+        if ((millis() - led_last_change_time) > 500)
+        {
+          if (_gg_hal.get_indicator_led_state() == OFF)
+            _gg_hal.set_indicator_led(GREEN);
+          else
+            _gg_hal.set_indicator_led(OFF);
+          led_last_change_time = millis();
+        }
+      }
       else
-        _gg_hal.set_indicator_led(OFF);
-      led_last_change_time = millis();
+      {
+        // Blinking Red: IMU disconnected (or GPS), no voltage to optocouplers (unsafe)
+        if ((millis() - led_last_change_time) > 500)
+        {
+          if (_gg_hal.get_indicator_led_state() == OFF)
+            _gg_hal.set_indicator_led(RED);
+          else
+            _gg_hal.set_indicator_led(OFF);
+          led_last_change_time = millis();
+        }
+      }
     }
   }
 }

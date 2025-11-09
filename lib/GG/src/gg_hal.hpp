@@ -1,19 +1,10 @@
+#pragma once
+#include "i2c_imu_gps.hpp"
+
 #define LED_GREEN_LEG 26//gsm_TX - 7
 #define LED_RED_LEG   27//GSM_RX - 6
 #define BUTTON1_LEG  28// GSM_RTS - 5
-struct gps_data
-{
-    double latitude;
-    double longitude;
-    double altitude;
-    char time_str[20]; // YYYY-MM-DD hh:mm:ss
-    float speed_north; // km/hr
-    float speed_east;  // km/hr
-    float speed_down;  // km/hr
-    float ground_speed; // km/hr
-    float heading;     // degrees
-    bool valid;
-};
+
 enum LED_STATES
 {
     GREEN,

@@ -1,5 +1,11 @@
 
 #include "i2c_imu_gps.hpp"
+#include <cmath>
+#include <TinyGPSPlus.h> // Include TinyGPSPlus header
+
+TinyGPSPlus gps; // Declare the TinyGPSPlus object globally within this file
+char gpsBuffer[GPS_BUFFER_LEN]; // Declare gpsBuffer globally within this file
+
 bool imu_initialized = false;
 bool gps_conncted = false;
 // ---- Helper functions for IMU ----
@@ -58,8 +64,8 @@ bool readAccelerometer(float &ax, float &ay, float &az)
 
     // Convert raw to g (±2g)
     ax = ax_raw * 0.000061;
-    ay = ay_raw * 0.000061;
-    az = az_raw * 0.000061;
+ay = ay_raw * 0.000061;
+az = az_raw * 0.000061;
     return true;
 }
 
@@ -84,20 +90,29 @@ bool readGyroscope(float &gx, float &gy, float &gz)
     // Convert raw to dps (±245 dps)
     // Sensitivity for ±245 dps is 8.75 mdps/LSB = 0.00875 dps/LSB
     gx = gx_raw * 0.00875;
-    gy = gy_raw * 0.00875;
-    gz = gz_raw * 0.00875;
+gy = gy_raw * 0.00875;
+gz = gz_raw * 0.00875;
     return true;
 }
 
 
-bool readGPSCoords(double &lat, double &lng, double &alt)
+bool readGPSCoords(gps_data &data)
 {
     Wire.beginTransmission(GPS_ADDR);
     byte error = Wire.endTransmission();
     if (error != 0)
     {
         gps_conncted = false;
-        lat = lng = alt = 0.0;
+        data.latitude = 0.0;
+        data.longitude = 0.0;
+        data.altitude = 0.0;
+        data.time_str[0] = '\0'; // Clear time string
+        data.speed_north = 0.0;
+        data.speed_east = 0.0;
+        data.speed_down = 0.0;
+        data.ground_speed = 0.0;
+        data.heading = 0.0;
+        data.valid = false;
         return false; // GPS not connected
     }
     gps_conncted = true;
@@ -110,12 +125,39 @@ bool readGPSCoords(double &lat, double &lng, double &alt)
         gpsBuffer[i++] = c;
         gps.encode(c); // feed TinyGPSPlus parser
     }
-    if (gps.location.isUpdated())
-    {
-        lat = gps.location.lat();
-        lng = gps.location.lng();
-        alt = gps.altitude.meters();
-        return true;
+    gpsBuffer[i] = '\0'; // Null-terminate the buffer
+
+    // Directly use the parsed data from TinyGPSPlus
+    data.latitude = gps.location.lat();
+    data.longitude = gps.location.lng();
+    data.altitude = gps.altitude.meters();
+    
+    if (gps.date.isValid() && gps.time.isValid()) {
+        sprintf(data.time_str, "%04d-%02d-%02d %02d:%02d:%02d",
+                gps.date.year(), gps.date.month(), gps.date.day(),
+                gps.time.hour(), gps.time.minute(), gps.time.second());
+    } else {
+        data.time_str[0] = '\0';
     }
-    return false;
+
+    data.ground_speed = gps.speed.kmph(); // Ground speed in km/h
+    if (gps.course.isValid()) {
+        float heading_rad = gps.course.deg() * 3.314159265358979323846 / 180.0; // Corrected PI value
+        data.speed_north = data.ground_speed * cos(heading_rad);
+        data.speed_east = data.ground_speed * sin(heading_rad);
+    } else {
+        data.speed_north = 0.0;
+        data.speed_east = 0.0;
+    }
+    data.speed_down = 0.0;  // Placeholder
+
+    if (gps.course.isValid()) {
+        data.heading = gps.course.deg(); // Absolute heading in degrees
+    } else {
+        data.heading = 0.0; // Set to 0 if heading is not valid
+    }
+
+    // Set data.valid if any core data is valid
+    data.valid = gps.location.isValid() || gps.date.isValid() || gps.time.isValid() || gps.speed.isValid() || gps.course.isValid();
+    return data.valid;
 }

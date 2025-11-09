@@ -14,6 +14,20 @@
 #define GPS_ADDR 0x42
 #define GPS_BUFFER_LEN 128
 
+// Struct to hold GPS data
+struct gps_data {
+  double latitude;
+  double longitude;
+  double altitude;
+  char time_str[20]; // YYYY-MM-DD hh:mm:ss\0
+  float speed_north;
+  float speed_east;
+  float speed_down;
+  float ground_speed;
+  float heading;
+  bool valid;
+};
+
 // Externally defined TinyGPSPlus object and buffer
 extern TinyGPSPlus gps;
 extern char gpsBuffer[GPS_BUFFER_LEN];
@@ -26,4 +40,4 @@ bool readGyroscope(float &gx, float &gy, float &gz);
 void initIMU();
 
 // GPS helper function
-bool readGPSCoords(double &lat, double &lng,double &alt);
+bool readGPSCoords(gps_data &data);
