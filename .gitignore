@@ -9,5 +9,4 @@ __pycache__/
 .pytest_cache/
 .ipynb_checkpoints/
 build/
-dist/
 GG-Prodino-GUI.spec
