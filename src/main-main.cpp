@@ -1,5 +1,3 @@
-
-
 #include "KMPProDinoMKRZero.h"
 #include "KMPCommon.h"
 #include <ArduinoJson.h>
@@ -175,6 +173,7 @@ struct DeviceStatus
   bool ledInternal = false;
   LED_STATES ledIo = OFF;
   bool button1 = false;
+  bool technicianMode = false;
 
 } status;
 
@@ -308,26 +307,58 @@ void update_hw_status()
   {
     status.optos_status[i] = _gg_hal.get_optoin_state(i);
   }
+  Serial.println("Technician mode status in update_hw_status: " + String(technician_mode ? "true" : "false"));
+  if(technician_mode)
+  {
+    status.technicianMode = true;
+  }
 }
 
 void setup()
 {
-  // Check for technician mode: button1 held for 5 seconds during startup
-  unsigned long tech_start = millis();
-  bool tech_button_held = false;
-  delay(3000);
   Serial.begin(115200);
+  delay(3000);
+
   // while (!Serial);
 
   loadConfig(); // Load configuration from LittleFS
-
   KMPProDinoMKRZero.init(ProDino_MKR_Zero_Ethernet);
-
   // Start the Ethernet connection and the server.
   Ethernet.begin(_mac, current_ip);
   _server.begin();
-
   _gg_hal.init();
+  // Check for technician mode: button1 held for 5 seconds during startup
+  unsigned long tech_start = millis();
+  bool tech_button_held = false;
+  Serial.println("Hold button 1 to enter technician mode...");
+  Serial.println("Button state is: ");
+  Serial.println(_gg_hal.get_button1_state() ? "PRESSED" : "RELEASED");
+  while ((millis() - tech_start) < 5000)
+  {
+    bool button_state = _gg_hal.get_button1_state();
+    Serial.println("Button state is: ");
+    Serial.println(button_state ? "PRESSED" : "RELEASED");
+    if (button_state)
+    {
+      tech_button_held = true;
+    }
+    else
+    {
+      tech_button_held = false;
+      break;
+    }
+    delay(10);
+  }
+  if (tech_button_held)
+  {
+    technician_mode = true;
+    // Initialize OTA only in technician mode
+    ArduinoOTA.begin(Ethernet.localIP(), "prodino", "", InternalStorage);
+    Serial.println("OTA update enabled. Use Arduino IDE or compatible tool to upload firmware over network.");
+  }
+  Serial.println(technician_mode  ? "Technician mode enabled." : "Normal mode.");
+
+
 
   // Calibrate IMU by taking 100 readings and averaging them
   Serial.println("Calibrating IMU... Keep the device flat and still.");
@@ -375,33 +406,6 @@ void setup()
   last_update_time = millis();
 
   Serial.println("Starting up...");
-  Serial.println("Hold button 1 to enter technician mode...");
-  Serial.println("Button state is: ");
-  Serial.println(_gg_hal.get_button1_state() ? "PRESSED" : "RELEASED");
-  while ((millis() - tech_start) < 5000)
-  {
-    bool button_state = _gg_hal.get_button1_state();
-    Serial.println("Button state is: ");
-  Serial.println(button_state? "PRESSED" : "RELEASED");
-    if (button_state)
-    {
-      tech_button_held = true;
-    }
-    else
-    {
-      tech_button_held = false;
-      break;
-    }
-    delay(10);
-  }
-  if (tech_button_held)
-  {
-    technician_mode = true;
-  // Initialize OTA only in technician mode
-  ArduinoOTA.begin(Ethernet.localIP(), "prodino", "", InternalStorage);
-  Serial.println("OTA update enabled. Use Arduino IDE or compatible tool to upload firmware over network.");
-  }
-  Serial.println(technician_mode ? "Technician mode enabled." : "Normal mode.");
   Serial.println("The example WebRelay is started.");
   Serial.println("IPs:");
   Serial.println(Ethernet.localIP());
@@ -474,6 +478,7 @@ JsonDocument generate_status_msg(JsonDocument &doc)
   resp["button1"] = status.button1;
   resp["imuValid"] = status.imuValid;
   resp["GPSConnected"] = status.gpsConnected;
+  resp["technicianMode"] = status.technicianMode;
   JsonArray optoin_status = resp["optoin_status"].to<JsonArray>();
 
   for (uint8_t i = 0; i < OPTOIN_COUNT; i++)

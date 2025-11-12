@@ -129,7 +129,8 @@ class MainWidget(QWidget):
                     val = ", ".join(str(x) for x in val)
                 v.setText(str(val))
             # Enable firmware uploader if technician mode
-            self.technician_mode = status.get("ledIo", "") == "ORANGE"
+            print(f"technicianMode status from device: {status.get('technicianMode', False)}")  # Debug print
+            self.technician_mode = status.get("technicianMode", False)
             self.fw_box.setEnabled(self.technician_mode)
             self.fw_upload_btn.setEnabled(self.technician_mode and self.firmware_path is not None)
 
