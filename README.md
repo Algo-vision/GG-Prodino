@@ -1,8 +1,8 @@
-# GG-Prodino PlatformIO Project
+# GG-GRK - V1.2.1
 
 ## Overview
 
-This project provides firmware and API for the ProDino MKR Zero device, Key functionalities include:
+This project provides firmware and API for the G.G. Controller Key functionalities include:
 - **Advanced Sensor Data:** Retrieval of a wide range of IMU (accelerometer and gyroscope) and GPS data points.
 - **Real-time Calculated Parameters:** Derivation of Pitch, Roll, and Yaw from sensor inputs.
 - **LED Status Indication:** Detailed, color-coded LED feedback reflecting system safety, sensor connectivity, and operational modes.
@@ -14,7 +14,7 @@ This project provides firmware and API for the ProDino MKR Zero device, Key func
 - 4 controllable relays
 - IO LED (multi-color: OFF, GREEN, RED, ORANGE)
 - Internal LED
-- Button1 for technician mode toggling
+- Button for enabling technician mode
 - **IMU (LSM6DS3) Data:** Linear acceleration (X, Y, Z), Angular velocity (X, Y, Z).
 - **GPS (u-blox) Data:** Longitude, Latitude, Altitude, Time, Linear velocity (North, East, Down), Horizontal velocity (Ground speed), Absolute heading.
 - **Calculated Outputs:** Pitch, Roll, Yaw.
@@ -29,21 +29,21 @@ This project provides firmware and API for the ProDino MKR Zero device, Key func
 1. Clone this repository:
    ```sh
    git clone <repo-url>
-   cd GG-Prodino
+   cd GG-GRK
    ```
 2. Install PlatformIO dependencies:
    - Open the project in VSCode with PlatformIO extension.
    - PlatformIO will auto-install libraries from `platformio.ini`.
-3. Connect your ProDino MKR Zero device to the network.
+3. Connect your G.G. Controller to the network.
 4. Build and upload firmware:
    - For direct upload: Use USB and PlatformIO's upload button.
-   - For OTA: Hold Button1 during power-up to enter technician mode, then use the custom OTA uploader:
+   - For OTA: Hold the button during power-up to enter technician mode, then use the custom OTA uploader:
      ```sh
      pio run -t upload
      ```
 
 ## Technician Mode & OTA
-- Hold Button1 for 5 seconds during startup to enter technician mode.
+- Hold the button for 5 seconds during startup to enter technician mode.
 - In technician mode, OTA updates are enabled and the IO LED is set to ORANGE.
 
 
@@ -51,8 +51,8 @@ This project provides firmware and API for the ProDino MKR Zero device, Key func
 
 **Only clients from the following IP addresses can communicate with the device:**
 
-- `192.168.1.10`
-- `192.168.1.15`
+- `192.168.1.20`
+- `192.168.1.169`
 
 Any request from a non-whitelisted IP will be rejected with an error response:
 
@@ -97,36 +97,73 @@ Payloads are JSON objects. Responses are JSON.
 **Response (all values are examples):**
 ```json
 {
-  "type": "status",                   // Always "status"
-  "firmwareVersion": "1.0.0",         // Firmware version
-  "relays_status": [false, false, false, false], // Array of 0/1 (off/on) for each relay
-  "optoin_status": [false, false, false, false], // Array of 0/1 (off/on) for each optocoupler input
-  "imuX": 0.01,                       // float, IMU Linear acceleration X-axis (g)
-  "imuY": -0.02,                      // float, IMU Linear acceleration Y-axis (g)
-  "imuZ": 0.98,                       // float, IMU Linear acceleration Z-axis (g)
-  "imuGx": 1.5,                       // float, IMU Angular velocity X-axis (º/s)
-  "imuGy": -0.8,                      // float, IMU Angular velocity Y-axis (º/s)
-  "imuGz": 0.2,                       // float, IMU Angular velocity Z-axis (º/s)
-  "pitch": 5.2,                       // float, Calculated Pitch (º)
-  "roll": -3.1,                       // float, Calculated Roll (º)
-  "yaw": 45.7,                        // float, Calculated Yaw (º)
-  "imuValid": true,                   // boolean, true if IMU data is valid
-  "gpsLat": 32.0853,                  // float, GPS Latitude (º)
-  "gpsLng": 34.7818,                  // float, GPS Longitude (º)
-  "gpsAlt": 150.2,                    // float, GPS Altitude (meters)
-  "gpsTime": "2025-11-06 10:30:45",   // string, GPS Time (YYYY-MM-DD hh:mm:ss)
-  "gpsSpeedNorth": 10.5,              // float, Linear velocity North (km/hr)
-  "gpsSpeedEast": 2.7,              // float, Linear velocity East (km/hr)
-  "gpsSpeedDown": 0.1,                // float, Linear velocity Down (km/hr) - IMU derived
-  "gpsGroundSpeed": 10.8,             // float, Horizontal velocity (Ground speed) (km/hr)
-  "gpsHeading": 75.3,                 // float, Absolute heading (º)
-  "gpsValid": true,                   // boolean, true if GPS fix is valid
-  "GPSConnected": true,               // boolean, true if GPS module is communicating
-  "ledInternal": true,                // boolean, internal LED state
-  "ledIo": "GREEN",                   // string: "OFF", "GREEN", "RED", or "ORANGE"
-  "button1": false                    // boolean, true if button1 is pressed
+  "type": "status",                               // string
+  "firmwareVersion": "1.0.0",                     // string
+  "relays_status": [false, false, false, false],  // Array of booleans
+  "optoin_status": [false, false, false, false],  // Array of booleans
+  "imuX": 0.01,                                   // float
+  "imuY": -0.02,                                  // float
+  "imuZ": 0.98,                                   // float
+  "imuGx": 1.5,                                   // float
+  "imuGy": -0.8,                                  // float
+  "imuGz": 0.2,                                   // float
+  "pitch": 5.2,                                   // float
+  "roll": -3.1,                                   // float
+  "yaw": 45.7,                                    // float
+  "imuValid": true,                               // boolean
+  "gpsLat": 32.0853,                              // float
+  "gpsLng": 34.7818,                              // float
+  "gpsAlt": 150.2,                                // float
+  "gpsTime": "2025-11-06 10:30:45",               // string
+  "gpsSpeedNorth": 10.5,                          // float
+  "gpsSpeedEast": 2.7,                            // float
+  "gpsSpeedDown": 0.1,                            // float
+  "gpsGroundSpeed": 10.8,                         // float
+  "gpsHeading": 75.3,                             // float
+  "gpsValid": true,                               // boolean
+  "GPSConnected": true,                           // boolean
+  "ledInternal": true,                            // boolean
+  "ledIo": "GREEN",                               // string
+  "button1": false                                // boolean
 }
 ```
+
+**Description:**
+- **type:** Message type.
+- **firmwareVersion:** Firmeware version.
+- **relay_status[0]:** Cut-off power switch for the internal Ethernet switch. Used to hard-reset the Ethernet switch if needed. True to cut-off power.
+- **relay_status[1]:** Cut-off power switch for the internal Computer. Used to hard-reset the computer if needed. True to cut-off power.
+- **relay_status[2]:** Switch to enable or disable power (13.8V/GND) through J16, pin 1.
+- **relay_status[3]:** Switch to enable or disable power (13.8V/GND) through J16, pin 2.
+- **optoin_status[0]:** Indicates if the first channel of the EPC is in safety mode.
+- **optoin_status[1]:** Indicates if the first channel of the EPC is in safety mode.
+- **optoin_status[2]:** Reserved.
+- **optoin_status[3]:** Reserved.
+- **imuX:** IMU Linear acceleration in the X-axis [g].
+- **imuY:** IMU Linear acceleration in the Y-axis [g].
+- **imuZ:** IMU Linear acceleration in the Z-axis [g].
+- **imuGx:** IMU Angular velocity in the X-axis [º/s].
+- **imuGy:** IMU Angular velocity in the Y-axis [º/s].
+- **imuGz:** IMU Angular velocity in the Z-axis [º/s].
+- **pitch:** Calculated Pitch [º].
+- **roll:** Calculated Roll [º].
+- **yaw:** Calculated Yaw [º].
+- **imuValid:** True if IMU module is communicating.
+- **gpsLat:** GPS Latitude [º].
+- **gpsLng:** GPS Longitude [º].
+- **gpsAlt:** GPS Altitude [m].
+- **gpsTime:** GPS time [YYYY-MM-DD hh:mm:ss].
+- **gpsSpeedNorth:** GPS Linear velocity North [km/hr].
+- **gpsSpeedEast:** GPS Linear velocity East [km/hr].
+- **gpsSpeedDown:** GPS Linear velocity Down [km/hr].
+- **gpsGroundSpeed:** GPS Horizontal velocity ("Speedometer") [km/hr].
+- **gpsHeading:** GPS Absolute heading ("Azimuth") [º].
+- **gpsValid:** True if GPS fix is valid.
+- **gpsConnected:** True if GPS module is communicating
+- **ledInternal:** Status of the LED on the MCU.
+- **ledIo:** Status of the indication LED on the HLC.
+- **button1:** True if the button on the HLC is pressed.
+
 
 ### 3. Set Relay
 **Request:**
@@ -189,9 +226,9 @@ struct DeviceStatus {
   bool relays_status[4];
   bool optos_status[4];
   float imuX, imuY, imuZ;             // Linear Accelerations
-  float imuGx, imuGy, imuGz;           // Angular Velocities
+  float imuGx, imuGy, imuGz;          // Angular Velocities
   float pitch, roll, yaw;             // Calculated Orientations
-  bool imuValid;
+  bool imuValid;                      // True if IMU module is communicating
   double gpsLat, gpsLng, gpsAlt;      // GPS Coordinates & Altitude
   char gpsTime[20];                   // "YYYY-MM-DD hh:mm:ss"
   float gpsSpeedNorth;                // Linear Velocity North
@@ -199,11 +236,11 @@ struct DeviceStatus {
   float gpsSpeedDown;                 // Linear Velocity Down (IMU derived)
   float gpsGroundSpeed;               // Horizontal Velocity (Ground Speed)
   float gpsHeading;                   // Absolute Heading
-  bool gpsValid;
-  bool gpsConnected;
+  bool gpsValid;                      // True if GPS fix is valid
+  bool gpsConnected;                  // True if GPS module is communicating
   bool ledInternal;
   LED_STATES ledIo;                   // "OFF", "GREEN", "RED", "ORANGE"
-  bool button1;
+  bool button1;                       // True if the button on the HLC is pressed
 };
 ```
 
@@ -257,7 +294,7 @@ It includes the following enhancements:
     See `gg_api_tester.py` for example usage of the API from Python.
 
 ## GUI Version
-The GUI version is displayed on the Login screen.''' + '''
+The GUI version is displayed on the Login screen.
 ## OTA Firmware Updates
 Firmware can be updated Over-The-Air (OTA) through the GUI in Technician Mode. Select a `.bin` file and initiate upload.
 
