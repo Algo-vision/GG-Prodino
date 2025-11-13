@@ -22,7 +22,7 @@ struct Config {
     controller_ip_bytes[2] = 1;
     controller_ip_bytes[3] = 198;
 
-    // Default whitelist IPs: 192.168.1.10, 192.168.1.15
+    // Default whitelist IPs: 192.168.1.20, 192.168.1.169
     whitelist_ip_bytes[0][0] = 192; whitelist_ip_bytes[0][1] = 168; whitelist_ip_bytes[0][2] = 1; whitelist_ip_bytes[0][3] = 20;
     whitelist_ip_bytes[1][0] = 192; whitelist_ip_bytes[1][1] = 168; whitelist_ip_bytes[1][2] = 1; whitelist_ip_bytes[1][3] = 169;
     whitelist_count = 2;
@@ -115,7 +115,7 @@ float imuGy_offset = 0.0;
 float imuGz_offset = 0.0;
 bool technician_mode = false;
 bool ota_in_progress = false; // Flag to indicate OTA update is running
-const String FIRMWARE_VERSION = "1.1.0"; // Added firmware version constant
+const String FIRMWARE_VERSION = "1.2.1"; // Added firmware version constant
 // If in debug mode - print debug information in Serial. Comment in production code, this bring performance.
 // This method is good for development and verification of results. But increases the amount of code and decreases productivity.
 
@@ -334,7 +334,7 @@ void update_hw_status()
 void setup()
 {
   Serial.begin(115200);
-  delay(3000);
+  delay(60000);
 
   // while (!Serial);
 
