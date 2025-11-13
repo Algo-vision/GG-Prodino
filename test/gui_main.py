@@ -32,7 +32,7 @@ def main():
     login_widget = LoginWidget(api_client, on_login_success, BASE_IP) # Pass BASE_IP as initial_ip
     stack.addWidget(login_widget)
     stack.setCurrentWidget(login_widget)
-    stack.setWindowTitle("GG-Prodino Tester GUI")
+    stack.setWindowTitle("GG-GRK Tester GUI")
     stack.resize(600, 600)
     stack.show()
     sys.exit(app.exec_())
