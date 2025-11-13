@@ -107,7 +107,7 @@ for i in range(20):
   "gpsTime": "YYYY-MM-DD hh:mm:ss",   # string, GPS Time
   "gpsSpeedNorth": 0.0,               # float, Linear velocity North (km/hr)
   "gpsSpeedEast": 0.0,                # float, Linear velocity East (km/hr)
-  "imuSpeedDown": 0.0,                # float, Linear velocity Down (km/hr) - IMU derived
+  "gpsSpeedDown": 0.0,                # float, Linear velocity Down (km/hr) - IMU derived
   "gpsGroundSpeed": 0.0,              # float, Horizontal velocity (Ground speed) (km/hr)
   "gpsHeading": 0.0,                  # float, Absolute heading (º)
   "gpsValid": "<True|False>",         # boolean, true if GPS fix is valid

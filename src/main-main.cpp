@@ -6,7 +6,6 @@
 #include "gg_hal.hpp"
 #include "calculations.hpp"
 #include <FlashStorage.h> // Include for FlashStorage
-#include <vector> // Include for std::vector
 #include <Arduino_DebugUtils.h> // Required for NVIC_SystemReset()
 
 // Define a struct to hold the configuration data
@@ -34,7 +33,8 @@ struct Config {
 FlashStorage(config_store, Config);
 
 IPAddress current_ip; // Initialized by loadConfig()
-std::vector<IPAddress> current_whitelist; // Initialized by loadConfig()
+IPAddress current_whitelist[10]; // C-style array for whitelist
+int current_whitelist_count = 0; // Number of IPs in the whitelist
 
 // --- IP CONFIGURATION PERSISTENCE ---
 void saveConfig() {
@@ -47,13 +47,12 @@ void saveConfig() {
   config_data.controller_ip_bytes[3] = current_ip[3];
 
   // Save whitelist IPs
-  config_data.whitelist_count = 0;
-  for (size_t i = 0; i < current_whitelist.size() && i < 10; ++i) {
+  config_data.whitelist_count = current_whitelist_count;
+  for (int i = 0; i < current_whitelist_count; ++i) {
     config_data.whitelist_ip_bytes[i][0] = current_whitelist[i][0];
     config_data.whitelist_ip_bytes[i][1] = current_whitelist[i][1];
     config_data.whitelist_ip_bytes[i][2] = current_whitelist[i][2];
     config_data.whitelist_ip_bytes[i][3] = current_whitelist[i][3];
-    config_data.whitelist_count++;
   }
 
   config_store.write(config_data);
@@ -73,22 +72,28 @@ void loadConfig() {
     // Re-initialize config_data with default values using its constructor
     Config default_config; // This calls the constructor with default IPs and whitelist
     config_data = default_config;
+    // We need to manually populate the global variables from the default config
+    current_ip = IPAddress(default_config.controller_ip_bytes[0], default_config.controller_ip_bytes[1], default_config.controller_ip_bytes[2], default_config.controller_ip_bytes[3]);
+    current_whitelist_count = default_config.whitelist_count;
+    for (int i = 0; i < current_whitelist_count; ++i) {
+        current_whitelist[i] = IPAddress(default_config.whitelist_ip_bytes[i][0], default_config.whitelist_ip_bytes[i][1], default_config.whitelist_ip_bytes[i][2], default_config.whitelist_ip_bytes[i][3]);
+    }
     saveConfig(); // Save the default configuration to flash
-  }
+  } else {
+    // Load controller IP
+    current_ip = IPAddress(config_data.controller_ip_bytes[0],
+                           config_data.controller_ip_bytes[1],
+                           config_data.controller_ip_bytes[2],
+                           config_data.controller_ip_bytes[3]);
 
-  // Load controller IP
-  current_ip = IPAddress(config_data.controller_ip_bytes[0],
-                         config_data.controller_ip_bytes[1],
-                         config_data.controller_ip_bytes[2],
-                         config_data.controller_ip_bytes[3]);
-
-  // Load whitelist IPs
-  current_whitelist.clear();
-  for (int i = 0; i < config_data.whitelist_count; ++i) {
-    current_whitelist.push_back(IPAddress(config_data.whitelist_ip_bytes[i][0],
-                                          config_data.whitelist_ip_bytes[i][1],
-                                          config_data.whitelist_ip_bytes[i][2],
-                                          config_data.whitelist_ip_bytes[i][3]));
+    // Load whitelist IPs
+    current_whitelist_count = config_data.whitelist_count;
+    for (int i = 0; i < current_whitelist_count; ++i) {
+      current_whitelist[i] = IPAddress(config_data.whitelist_ip_bytes[i][0],
+                                            config_data.whitelist_ip_bytes[i][1],
+                                            config_data.whitelist_ip_bytes[i][2],
+                                            config_data.whitelist_ip_bytes[i][3]);
+    }
   }
   Serial.println("Configuration loaded from FlashStorage.");
 }
@@ -109,7 +114,8 @@ float imuGx_offset = 0.0;
 float imuGy_offset = 0.0;
 float imuGz_offset = 0.0;
 bool technician_mode = false;
-const String FIRMWARE_VERSION = "1.0.0"; // Added firmware version constant
+bool ota_in_progress = false; // Flag to indicate OTA update is running
+const String FIRMWARE_VERSION = "1.1.0"; // Added firmware version constant
 // If in debug mode - print debug information in Serial. Comment in production code, this bring performance.
 // This method is good for development and verification of results. But increases the amount of code and decreases productivity.
 
@@ -127,6 +133,8 @@ EthernetServer _server(LOCAL_PORT);
 
 EthernetClient _client;
 GG_HAL _gg_hal;
+LED_STATES manual_led_state = OFF; // Stores the manually set LED state
+bool manual_led_control_active = false; // Flag to indicate if manual LED control is active
 // --- AUTH TOKEN ---
 String authToken = "";
 
@@ -134,7 +142,7 @@ String authToken = "";
 // WHITELIST is now current_whitelist
 
 bool is_ip_whitelisted(const IPAddress& ip) {
-  for (size_t i = 0; i < current_whitelist.size(); ++i) {
+  for (int i = 0; i < current_whitelist_count; ++i) {
     if (ip == current_whitelist[i]) return true;
   }
   return false;
@@ -165,7 +173,7 @@ struct DeviceStatus
   char gpsTime[20] = ""; // YYYY-MM-DD hh:mm:ss
   float gpsSpeedNorth = 0; // km/hr
   float gpsSpeedEast = 0;  // km/hr
-  float imuSpeedDown = 0;  // km/hr
+  float gpsSpeedDown = 0;  // km/hr
   float gpsGroundSpeed = 0; // km/hr
   float gpsHeading = 0;     // degrees
   bool gpsValid = false;
@@ -177,6 +185,11 @@ struct DeviceStatus
 
 } status;
 
+// Variables for GPS-derived vertical speed
+double previous_gps_altitude = 0.0;
+unsigned long previous_gps_time = 0;
+float filtered_gpsSpeedDown = 0.0; // New variable for filtered speed_down
+const float SPEED_DOWN_FILTER_ALPHA = 0.2; // Smoothing factor for low-pass filter (0.0 to 1.0, smaller is more smooth)
 // --- HARD-CODED LOGIN ---
 const char *USERNAME = "admin";
 const char *PASSWORD = "1234";
@@ -255,20 +268,6 @@ void update_hw_status()
     calculateYaw(status.yaw, status.imuGz, dt); // Calculate yaw
   }
 
-  if (dt > 0.0 && status.imuValid) {
-    // Calculate vertical speed by integrating accelerometer Z data
-    // 1. Remove gravity offset.
-    float real_az = status.imuZ - imuZ_offset; // in g's
-    // 2. Convert g's to m/s^2.
-    float real_az_ms2 = real_az * 9.80665; // Standard gravity
-    // 3. Get current speed in m/s from km/hr
-    float current_speed_down_ms = status.imuSpeedDown / 3.6;
-    // 4. Integrate: v = v0 + a*t
-    current_speed_down_ms += real_az_ms2 * dt;
-    // 5. Convert back to km/hr and store
-    status.imuSpeedDown = current_speed_down_ms * 3.6;
-  }
-
   // Read GPS
   gps_data current_gps_data;
   _gg_hal.get_gps_data(current_gps_data);
@@ -278,7 +277,23 @@ void update_hw_status()
   {
     status.gpsLat = current_gps_data.latitude;
     status.gpsLng = current_gps_data.longitude;
-    status.gpsAlt = current_gps_data.altitude;
+    status.gpsAlt = current_gps_data.altitude; // Use raw GPS altitude
+
+    // Calculate vertical speed from GPS altitude changes
+    if (previous_gps_time > 0 && dt > 0.0) {
+        // speed_down is positive when going down, so (previous_altitude - current_altitude)
+        float vertical_speed_ms = (previous_gps_altitude - current_gps_data.altitude) / dt;
+        float current_gpsSpeedDown = vertical_speed_ms * 3.6; // Convert m/s to km/hr
+        // Apply EMA filter
+        filtered_gpsSpeedDown = (SPEED_DOWN_FILTER_ALPHA * current_gpsSpeedDown) + ((1.0 - SPEED_DOWN_FILTER_ALPHA) * filtered_gpsSpeedDown);
+        status.gpsSpeedDown = filtered_gpsSpeedDown;
+    } else {
+        status.gpsSpeedDown = 0.0; // No previous data or dt is zero
+        filtered_gpsSpeedDown = 0.0; // Reset filter if no valid data
+    }
+    previous_gps_altitude = current_gps_data.altitude;
+    previous_gps_time = current_time;
+
     strcpy(status.gpsTime, current_gps_data.time_str);
     status.gpsSpeedNorth = current_gps_data.speed_north;
     status.gpsSpeedEast = current_gps_data.speed_east;
@@ -288,13 +303,15 @@ void update_hw_status()
     // Clear GPS data if not valid
     status.gpsLat = 0;
     status.gpsLng = 0;
-    status.gpsAlt = 0;
+    status.gpsAlt = 0; // Clear altitude if GPS is not valid
     strcpy(status.gpsTime, "");
     status.gpsSpeedNorth = 0;
     status.gpsSpeedEast = 0;
-    status.imuSpeedDown = 0; // Also reset vertical speed to counter drift
+    status.gpsSpeedDown = 0; // Reset vertical speed if GPS is not valid
     status.gpsGroundSpeed = 0;
     status.gpsHeading = 0;
+    previous_gps_altitude = 0.0; // Reset previous altitude
+    previous_gps_time = 0;       // Reset previous time
   }
   status.button1 = _gg_hal.get_button1_state();
   status.ledIo = _gg_hal.get_indicator_led_state();
@@ -353,6 +370,18 @@ void setup()
   {
     technician_mode = true;
     // Initialize OTA only in technician mode
+    ArduinoOTA.onStart([]() {
+      ota_in_progress = true;
+      Serial.println("OTA update started.");
+    });
+    // Note: onEnd is not supported by this library version, but the process reboots on success anyway.
+    ArduinoOTA.onError([](int error, const char* msg) {
+      ota_in_progress = false;
+      Serial.print("OTA Error[");
+      Serial.print(error);
+      Serial.print("]: ");
+      Serial.println(msg);
+    });
     ArduinoOTA.begin(Ethernet.localIP(), "prodino", "", InternalStorage);
     Serial.println("OTA update enabled. Use Arduino IDE or compatible tool to upload firmware over network.");
   }
@@ -404,6 +433,8 @@ void setup()
   Serial.print(", Z="); Serial.println(imuGz_offset);
 
   last_update_time = millis();
+  filtered_gpsSpeedDown = 0.0; // Initialize filtered vertical speed
+
 
   Serial.println("Starting up...");
   Serial.println("The example WebRelay is started.");
@@ -462,7 +493,7 @@ JsonDocument generate_status_msg(JsonDocument &doc)
   resp["gpsTime"] = status.gpsTime;
   resp["gpsSpeedNorth"] = status.gpsSpeedNorth;
   resp["gpsSpeedEast"] = status.gpsSpeedEast;
-  resp["imuSpeedDown"] = status.imuSpeedDown;
+  resp["gpsSpeedDown"] = status.gpsSpeedDown;
   resp["gpsGroundSpeed"] = status.gpsGroundSpeed;
   resp["gpsHeading"] = status.gpsHeading;
   resp["ledInternal"] = status.ledInternal;
@@ -489,7 +520,7 @@ JsonDocument generate_status_msg(JsonDocument &doc)
   // Add current IP configuration
   resp["controllerIp"] = current_ip.toString();
   JsonArray whitelist_ips_json = resp["whitelistIps"].to<JsonArray>();
-  for (size_t i = 0; i < current_whitelist.size(); ++i) {
+  for (int i = 0; i < current_whitelist_count; ++i) {
     whitelist_ips_json.add(current_whitelist[i].toString());
   }
 
@@ -547,7 +578,7 @@ void write_status_to_serial()
     Serial.print(", ");
     Serial.print(status.gpsSpeedEast, 2);
     Serial.print(", ");
-    Serial.print(status.imuSpeedDown, 2);
+    Serial.print(status.gpsSpeedDown, 2);
     Serial.print(" | Gnd Spd: ");
     Serial.print(status.gpsGroundSpeed, 2);
     Serial.print(" | Heading: ");
@@ -572,6 +603,9 @@ void write_status_to_serial()
     Serial.print("RED");
   else if (status.ledIo == ORANGE)
     Serial.print("ORANGE");
+
+  Serial.print(" | IP: ");
+  Serial.println(Ethernet.localIP());
 
   Serial.println();
 }
@@ -681,7 +715,9 @@ void http_loop()
               resp["type"] = "error";
               resp["message"] = "Invalid LED color";
             }
-            _gg_hal.set_indicator_led(color_val);
+            manual_led_control_active = true; // Activate manual control
+            manual_led_state = color_val;     // Store the desired state
+            _gg_hal.set_indicator_led(manual_led_state); // Apply the manual setting
             resp = generate_status_msg(doc);
           }
           else if (msg_type == "set_ip_config")
@@ -691,12 +727,13 @@ void http_loop()
             bool ip_valid = new_controller_ip.fromString(controller_ip_str);
 
             JsonArray whitelist_ips_json = doc["whitelist_ips"];
-            std::vector<IPAddress> new_whitelist; // Use a temporary vector
+            IPAddress new_whitelist[10];
+            int new_whitelist_count = 0;
             bool whitelist_valid = true;
             for (JsonVariant ip_str_variant : whitelist_ips_json) {
               IPAddress whitelist_ip;
-              if (whitelist_ip.fromString(ip_str_variant.as<String>())) {
-                new_whitelist.push_back(whitelist_ip);
+              if (new_whitelist_count < 10 && whitelist_ip.fromString(ip_str_variant.as<String>())) {
+                new_whitelist[new_whitelist_count++] = whitelist_ip;
               } else {
                 whitelist_valid = false;
                 break;
@@ -706,7 +743,10 @@ void http_loop()
             if (ip_valid && whitelist_valid) {
               // Update global variables
               current_ip = new_controller_ip;
-              current_whitelist = new_whitelist; // Assign the new vector
+              current_whitelist_count = new_whitelist_count;
+              for(int i=0; i < new_whitelist_count; ++i) {
+                current_whitelist[i] = new_whitelist[i];
+              }
 
               saveConfig(); // Save the new configuration to FlashStorage
 
@@ -726,6 +766,12 @@ void http_loop()
               resp["type"] = "error";
               resp["message"] = "Invalid IP address or whitelist entry provided.";
             }
+          }
+          else if (msg_type == "reset_led_control")
+          {
+            manual_led_control_active = false; // Deactivate manual control
+            _gg_hal.set_indicator_led(OFF); // Turn off LED immediately or revert to last auto state
+            resp = generate_status_msg(doc);
           }
           else
           {
@@ -748,70 +794,72 @@ void http_loop()
 
 void status_led_blink()
 {
-  bool is_safe_state = status.optos_status[0] && status.optos_status[1];
-  bool imu_connected = status.imuValid; // Assuming imuValid implies IMU connected
-  bool gps_connected = status.gpsConnected; // Assuming gpsConnected implies GPS connected
-  bool all_sensors_connected = imu_connected && gps_connected;
+  if (!manual_led_control_active) { // Only run automatic blinking if manual control is not active
+    bool is_safe_state = status.optos_status[0] && status.optos_status[1];
+    bool imu_connected = status.imuValid; // Assuming imuValid implies IMU connected
+    bool gps_connected = status.gpsConnected; // Assuming gpsConnected implies GPS connected
+    bool all_sensors_connected = imu_connected && gps_connected;
 
-  if (technician_mode)
-  {
-    if (is_safe_state)
+    if (technician_mode)
     {
-      // Solid Orange: Technician mode, voltage to optocouplers (safe)
-      _gg_hal.set_indicator_led(ORANGE);
-    }
-    else
-    {
-      // Blinking Orange: Technician mode, no voltage to optocouplers (unsafe)
-      if ((millis() - led_last_change_time) > 500)
+      if (is_safe_state)
       {
-        if (_gg_hal.get_indicator_led_state() == OFF)
-          _gg_hal.set_indicator_led(ORANGE);
-        else
-          _gg_hal.set_indicator_led(OFF);
-        led_last_change_time = millis();
-      }
-    }
-  }
-  else // Normal mode
-  {
-    if (is_safe_state)
-    {
-      if (all_sensors_connected)
-      {
-        // Solid Green: GPS & IMU connected, voltage to optocouplers (safe)
-        _gg_hal.set_indicator_led(GREEN);
+        // Solid Orange: Technician mode, voltage to optocouplers (safe)
+        _gg_hal.set_indicator_led(ORANGE);
       }
       else
       {
-        // Solid Red: IMU disconnected (or GPS), voltage to optocouplers (safe)
-        _gg_hal.set_indicator_led(RED);
-      }
-    }
-    else // Unsafe state (no voltage to optocouplers)
-    {
-      if (all_sensors_connected)
-      {
-        // Blinking Green: GPS & IMU connected, no voltage to optocouplers (unsafe)
+        // Blinking Orange: Technician mode, no voltage to optocouplers (unsafe)
         if ((millis() - led_last_change_time) > 500)
         {
           if (_gg_hal.get_indicator_led_state() == OFF)
-            _gg_hal.set_indicator_led(GREEN);
+            _gg_hal.set_indicator_led(ORANGE);
           else
             _gg_hal.set_indicator_led(OFF);
           led_last_change_time = millis();
         }
       }
-      else
+    }
+    else // Normal mode
+    {
+      if (is_safe_state)
       {
-        // Blinking Red: IMU disconnected (or GPS), no voltage to optocouplers (unsafe)
-        if ((millis() - led_last_change_time) > 500)
+        if (all_sensors_connected)
         {
-          if (_gg_hal.get_indicator_led_state() == OFF)
-            _gg_hal.set_indicator_led(RED);
-          else
-            _gg_hal.set_indicator_led(OFF);
-          led_last_change_time = millis();
+          // Solid Green: GPS & IMU connected, voltage to optocouplers (safe)
+          _gg_hal.set_indicator_led(GREEN);
+        }
+        else
+        {
+          // Solid Red: IMU disconnected (or GPS), voltage to optocouplers (safe)
+          _gg_hal.set_indicator_led(RED);
+        }
+      }
+      else // Unsafe state (no voltage to optocouplers)
+      {
+        if (all_sensors_connected)
+        {
+          // Blinking Green: GPS & IMU connected, no voltage to optocouplers (unsafe)
+          if ((millis() - led_last_change_time) > 500)
+          {
+            if (_gg_hal.get_indicator_led_state() == OFF)
+              _gg_hal.set_indicator_led(GREEN);
+            else
+              _gg_hal.set_indicator_led(OFF);
+            led_last_change_time = millis();
+          }
+        }
+        else
+        {
+          // Blinking Red: IMU disconnected (or GPS), no voltage to optocouplers (unsafe)
+          if ((millis() - led_last_change_time) > 500)
+          {
+            if (_gg_hal.get_indicator_led_state() == OFF)
+              _gg_hal.set_indicator_led(RED);
+            else
+              _gg_hal.set_indicator_led(OFF);
+            led_last_change_time = millis();
+          }
         }
       }
     }

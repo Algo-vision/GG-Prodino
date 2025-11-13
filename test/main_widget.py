@@ -1,21 +1,24 @@
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QLabel, QPushButton, QHBoxLayout, QTableWidget, QTableWidgetItem, QComboBox, QFileDialog, QMessageBox, QGroupBox, QGridLayout, QLineEdit, QCheckBox)
 from PyQt5.QtCore import QTimer, pyqtSignal
 from firmware_uploader import upload_firmware
+import time
 
 class MainWidget(QWidget):
     reconnect_requested = pyqtSignal()
+    upload_finished_signal = pyqtSignal(bool, str)
 
     def __init__(self, api_client, base_ip, parent=None):
         super().__init__(parent)
         self.api_client = api_client
         self.base_ip = base_ip
-        print(f"MainWidget.__init__: api_client.base_url is {self.api_client.base_url}") # Added print
+        print(f"MainWidget.__init__: api_client.base_url is {self.api_client.base_url}")
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.update_status)
         self.is_editing_ip = False
         self.init_ui()
         self.timer.start(1000)
         self.technician_mode = False
+        self.upload_finished_signal.connect(self.show_upload_result)
 
     def on_ip_editing_started(self):
         self.is_editing_ip = True
@@ -27,7 +30,7 @@ class MainWidget(QWidget):
         status_layout = QGridLayout()
         self.status_labels = {}
         # Add "controllerIp" and "whitelistIps" to the fields list
-        fields = ["firmwareVersion", "controllerIp", "whitelistIps", "relays_status", "imuX", "imuY", "imuZ", "imuGx", "imuGy", "imuGz", "pitch", "roll", "yaw", "gpsLat", "gpsLng", "gpsAlt", "gpsTime", "gpsSpeedNorth", "gpsSpeedEast", "imuSpeedDown", "gpsGroundSpeed", "gpsHeading", "ledInternal", "ledIo", "gpsValid", "button1", "imuValid", "GPSConnected", "optoin_status"]
+        fields = ["firmwareVersion", "controllerIp", "whitelistIps", "relays_status", "imuX", "imuY", "imuZ", "imuGx", "imuGy", "imuGz", "pitch", "roll", "yaw", "gpsLat", "gpsLng", "gpsAlt", "gpsTime", "gpsSpeedNorth", "gpsSpeedEast", "gpsSpeedDown", "gpsGroundSpeed", "gpsHeading", "ledInternal", "ledIo", "gpsValid", "button1", "imuValid", "GPSConnected", "optoin_status"]
         for i, field in enumerate(fields):
             label = QLabel("-")
             status_layout.addWidget(QLabel(field), i, 0)
@@ -129,7 +132,6 @@ class MainWidget(QWidget):
                     val = ", ".join(str(x) for x in val)
                 v.setText(str(val))
             # Enable firmware uploader if technician mode
-            print(f"technicianMode status from device: {status.get('technicianMode', False)}")  # Debug print
             self.technician_mode = status.get("technicianMode", False)
             self.fw_box.setEnabled(self.technician_mode)
             self.fw_upload_btn.setEnabled(self.technician_mode and self.firmware_path is not None)
@@ -193,14 +195,31 @@ class MainWidget(QWidget):
             self.fw_upload_btn.setEnabled(self.technician_mode)
 
     def upload_firmware(self):
+        print("upload_firmware: Initiated.")
         if not self.firmware_path:
             QMessageBox.warning(self, "No file", "Please select a firmware file.")
+            print("upload_firmware: No firmware file selected.")
             return
+        
+        self.timer.stop()
+        print("upload_firmware: Status timer stopped.")
+
+        print(f"upload_firmware: Attempting to upload firmware from {self.firmware_path} to {self.base_ip}")
         ok, msg = upload_firmware(self.base_ip, self.firmware_path)
+        self.upload_finished_signal.emit(ok, msg)
+
+    def show_upload_result(self, ok, msg):
+        print(f"show_upload_result: Received signal. ok={ok}, msg={msg}")
         if ok:
-            QMessageBox.information(self, "Upload", "Firmware upload successful!")
+            print("show_upload_result: Upload was successful. Preparing to show success message.")
+            QMessageBox.information(self, "Upload", "Firmware upload successful! The device is rebooting. Please reconnect manually after a few seconds.")
+            print("show_upload_result: Success message box closed. Emitting reconnect_requested after 3 seconds.")
+            QTimer.singleShot(3000, self.reconnect_requested.emit)
         else:
+            print(f"show_upload_result: Upload failed. Preparing to show error message: {msg}")
             QMessageBox.critical(self, "Upload Failed", f"Upload failed: {msg}")
+            print("show_upload_result: Error message box closed. Restarting status timer.")
+            self.timer.start(1000)
 
     def save_ip_configuration(self):
         print("save_ip_configuration: Initiated.")

@@ -116,8 +116,8 @@ Payloads are JSON objects. Responses are JSON.
   "gpsAlt": 150.2,                    // float, GPS Altitude (meters)
   "gpsTime": "2025-11-06 10:30:45",   // string, GPS Time (YYYY-MM-DD hh:mm:ss)
   "gpsSpeedNorth": 10.5,              // float, Linear velocity North (km/hr)
-  "gpsSpeedEast": 2.  7,              // float, Linear velocity East (km/hr)
-  "imuSpeedDown": 0.1,                // float, Linear velocity Down (km/hr) - IMU derived
+  "gpsSpeedEast": 2.7,              // float, Linear velocity East (km/hr)
+  "gpsSpeedDown": 0.1,                // float, Linear velocity Down (km/hr) - IMU derived
   "gpsGroundSpeed": 10.8,             // float, Horizontal velocity (Ground speed) (km/hr)
   "gpsHeading": 75.3,                 // float, Absolute heading (º)
   "gpsValid": true,                   // boolean, true if GPS fix is valid
@@ -196,7 +196,7 @@ struct DeviceStatus {
   char gpsTime[20];                   // "YYYY-MM-DD hh:mm:ss"
   float gpsSpeedNorth;                // Linear Velocity North
   float gpsSpeedEast;                 // Linear Velocity East
-  float imuSpeedDown;                 // Linear Velocity Down (IMU derived)
+  float gpsSpeedDown;                 // Linear Velocity Down (IMU derived)
   float gpsGroundSpeed;               // Horizontal Velocity (Ground Speed)
   float gpsHeading;                   // Absolute Heading
   bool gpsValid;
