@@ -264,7 +264,7 @@ Firmware can be updated Over-The-Air (OTA) through the GUI in Technician Mode. S
 ## Notes
 - **Default Login:** User `admin`, password `1234`.
 - **Default Device IP:** `192.168.1.198` (configurable via GUI and API).
-- **Default Whitelist IPs:** `192.168.1.10`, `192.168.1.15` (configurable via GUI and API).
+- **Default Whitelist IPs:** `192.168.1.20`, `192.168.1.169` (configurable via GUI and API).
 - **OTA Updates:** Only available in technician mode (hold Button1 for 5 seconds during startup), and can be initiated via the GUI or a separate uploader tool.
 - **IMU Calibration:** The IMU performs a self-calibration on startup; keep the device still and flat during this process.
 

@@ -23,8 +23,8 @@ struct Config {
     controller_ip_bytes[3] = 198;
 
     // Default whitelist IPs: 192.168.1.10, 192.168.1.15
-    whitelist_ip_bytes[0][0] = 192; whitelist_ip_bytes[0][1] = 168; whitelist_ip_bytes[0][2] = 1; whitelist_ip_bytes[0][3] = 10;
-    whitelist_ip_bytes[1][0] = 192; whitelist_ip_bytes[1][1] = 168; whitelist_ip_bytes[1][2] = 1; whitelist_ip_bytes[1][3] = 15;
+    whitelist_ip_bytes[0][0] = 192; whitelist_ip_bytes[0][1] = 168; whitelist_ip_bytes[0][2] = 1; whitelist_ip_bytes[0][3] = 20;
+    whitelist_ip_bytes[1][0] = 192; whitelist_ip_bytes[1][1] = 168; whitelist_ip_bytes[1][2] = 1; whitelist_ip_bytes[1][3] = 169;
     whitelist_count = 2;
   }
 };
