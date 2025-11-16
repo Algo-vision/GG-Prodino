@@ -114,5 +114,5 @@ for i in range(20):
   "GPSConnected": "<True|False>",     # boolean, true if GPS module is communicating
   "ledInternal": "<True|False>",      # boolean, internal LED state
   "ledIo": "OFF",                     # string: "OFF", "GREEN", "RED", or "ORANGE"
-  "button1": "<True|False>"           # boolean, true if button1 is pressed
+  "button_tech": "<True|False>"           # boolean, true if button_tech is pressed
 }

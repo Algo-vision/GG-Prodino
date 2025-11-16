@@ -3,7 +3,7 @@
 
 #define LED_GREEN_LEG 26//gsm_TX - 7
 #define LED_RED_LEG   27//GSM_RX - 6
-#define BUTTON1_LEG  28// GSM_RTS - 5
+#define button_tech_LEG  28// GSM_RTS - 5
 
 enum LED_STATES
 {
@@ -26,7 +26,7 @@ public:
     void set_indicator_led(LED_STATES state);
     void status_led_on();
     void status_led_off();
-    bool get_button1_state();
+    bool get_button_tech_state();
     bool get_optoin_state(int opto_id);
 LED_STATES get_indicator_led_state();
 };

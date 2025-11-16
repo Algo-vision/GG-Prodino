@@ -30,7 +30,7 @@ class MainWidget(QWidget):
         status_layout = QGridLayout()
         self.status_labels = {}
         # Add "controllerIp" and "whitelistIps" to the fields list
-        fields = ["firmwareVersion", "controllerIp", "whitelistIps", "relays_status", "imuX", "imuY", "imuZ", "imuGx", "imuGy", "imuGz", "pitch", "roll", "yaw", "gpsLat", "gpsLng", "gpsAlt", "gpsTime", "gpsSpeedNorth", "gpsSpeedEast", "gpsSpeedDown", "gpsGroundSpeed", "gpsHeading", "ledInternal", "ledIo", "gpsValid", "button1", "imuValid", "GPSConnected", "optoin_status"]
+        fields = ["firmwareVersion", "controllerIp", "whitelistIps", "relays_status", "imuX", "imuY", "imuZ", "imuGx", "imuGy", "imuGz", "pitch", "roll", "yaw", "gpsLat", "gpsLng", "gpsAlt", "gpsTime", "gpsSpeedNorth", "gpsSpeedEast", "gpsSpeedDown", "gpsGroundSpeed", "gpsHeading", "ledInternal", "ledIo", "gpsValid", "button_tech", "imuValid", "GPSConnected", "optoin_status"]
         for i, field in enumerate(fields):
             label = QLabel("-")
             status_layout.addWidget(QLabel(field), i, 0)
@@ -125,7 +125,11 @@ class MainWidget(QWidget):
 
     def update_status(self):
         status = self.api_client.get_status()
-        if status:
+        if status and status.get("error") == "AUTH_ERROR":
+            self.timer.stop()
+            QMessageBox.warning(self, "Authentication Error", "Invalid session token. Please log in again.")
+            self.reconnect_requested.emit()
+        elif status:
             for k, v in self.status_labels.items():
                 val = status.get(k, "-")
                 if isinstance(val, list):
@@ -152,9 +156,11 @@ class MainWidget(QWidget):
 
         else:
             # Communication lost, return to login screen
+            self.timer.stop()
             self.reconnect_requested.emit()
             for v in self.status_labels.values():
                 v.setText("-")
+
     def toggle_led_controls(self, state):
         # Enable/disable LED combo and button based on checkbox state
         is_checked = bool(state)
@@ -240,6 +246,11 @@ class MainWidget(QWidget):
             self.reconnect_requested.emit() # Emit signal first to clean up MainWidget
             QMessageBox.information(self, "IP Configuration", f"IP configuration saved. Reconnection required. New IP: {controller_ip}")
         else:
-            print(f"save_ip_configuration: Failed to save IP configuration: {msg}")
-            QMessageBox.critical(self, "IP Configuration Failed", f"Failed to save IP configuration: {msg}")
-            self.update_status() # Refresh to show the original IPs
+            if msg == "Authentication Error":
+                self.timer.stop()
+                QMessageBox.warning(self, "Authentication Error", "Invalid session token. Please log in again.")
+                self.reconnect_requested.emit()
+            else:
+                print(f"save_ip_configuration: Failed to save IP configuration: {msg}")
+                QMessageBox.critical(self, "IP Configuration Failed", f"Failed to save IP configuration: {msg}")
+                self.update_status() # Refresh to show the original IPs

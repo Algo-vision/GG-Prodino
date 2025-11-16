@@ -9,18 +9,19 @@ class ApiClient:
 
     def login(self, username, password):
         payload = {"type": "login", "user": username, "pass": password}
-        print(f"ApiClient.login: Sending payload: {json.dumps(payload)} to {self.base_url}") # Added print
+        print(f"ApiClient.login: Sending payload: {json.dumps(payload)} to {self.base_url}")
         try:
-            response = requests.post(self.base_url, data=json.dumps(payload), timeout=5) # Added timeout
-            print(f"ApiClient.login: Received response status: {response.status_code}") # Added print
+            response = requests.post(self.base_url, data=json.dumps(payload), timeout=5)
+            print(f"ApiClient.login: Received response status: {response.status_code}")
             if response.status_code == 200:
                 data = response.json()
-                print(f"ApiClient.login: Received response JSON: {data}") # Added print
+                print(f"ApiClient.login: Received response JSON: {data}")
                 if data.get("success"):
                     self.token = data.get("token")
                     return True, data.get("token")
                 else:
-                    return False, data.get("token") # This will be an error message from the server
+                    # Assuming the server sends a 'message' on failed login
+                    return False, data.get("message", "Invalid credentials")
             else:
                 return False, f"HTTP Error: {response.status_code}"
         except requests.exceptions.ConnectionError:
@@ -36,6 +37,8 @@ class ApiClient:
             response = requests.post(self.base_url, data=json.dumps(payload), timeout=5)
             if response.status_code == 200:
                 return response.json()
+            if response.status_code == 401:
+                return {"error": "AUTH_ERROR"}
             return None
         except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
             return None # Indicate communication loss
@@ -47,7 +50,11 @@ class ApiClient:
         payload = {"type": "set_relay", "token": self.token, "relay_id": relay_id, "state": state}
         try:
             response = requests.post(self.base_url, data=json.dumps(payload), timeout=5)
-            return response.json() if response.status_code == 200 else None
+            if response.status_code == 200:
+                return response.json()
+            if response.status_code == 401:
+                return {"error": "AUTH_ERROR"}
+            return None
         except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
             return None
         except Exception as e:
@@ -58,7 +65,11 @@ class ApiClient:
         payload = {"type": "set_io_led", "token": self.token, "color": color}
         try:
             response = requests.post(self.base_url, data=json.dumps(payload), timeout=5)
-            return response.json() if response.status_code == 200 else None
+            if response.status_code == 200:
+                return response.json()
+            if response.status_code == 401:
+                return {"error": "AUTH_ERROR"}
+            return None
         except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
             return None
         except Exception as e:
@@ -69,7 +80,11 @@ class ApiClient:
         payload = {"type": "set_internal_led", "token": self.token, "state": state}
         try:
             response = requests.post(self.base_url, data=json.dumps(payload), timeout=5)
-            return response.json() if response.status_code == 200 else None
+            if response.status_code == 200:
+                return response.json()
+            if response.status_code == 401:
+                return {"error": "AUTH_ERROR"}
+            return None
         except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
             return None
         except Exception as e:
@@ -93,6 +108,8 @@ class ApiClient:
                 else:
                     print(f"ApiClient.set_ip_config: Server reported error: {data.get('message', 'Unknown error')}")
                     return False, data.get("message", "Unknown error")
+            elif response.status_code == 401:
+                return False, "Authentication Error"
             else:
                 print(f"ApiClient.set_ip_config: HTTP Error: {response.status_code}")
                 return False, f"HTTP Error: {response.status_code}"

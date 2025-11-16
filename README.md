@@ -124,7 +124,7 @@ Payloads are JSON objects. Responses are JSON.
   "GPSConnected": true,                           // boolean
   "ledInternal": true,                            // boolean
   "ledIo": "GREEN",                               // string
-  "button1": false                                // boolean
+  "button_tech": false                                // boolean
 }
 ```
 
@@ -162,7 +162,7 @@ Payloads are JSON objects. Responses are JSON.
 - **gpsConnected:** True if GPS module is communicating
 - **ledInternal:** Status of the LED on the MCU.
 - **ledIo:** Status of the indication LED on the HLC.
-- **button1:** True if the button on the HLC is pressed.
+- **button_tech:** True if the button on the HLC is pressed.
 
 
 ### 3. Set Relay
@@ -210,6 +210,76 @@ Payloads are JSON objects. Responses are JSON.
 }
 ```
 
+## Error Reference
+
+The GRK board device communicates errors through a combination of HTTP status codes and specific messages within the JSON response payload.
+
+### HTTP Status Code Errors
+
+*   **HTTP 401 Unauthorized**: Returned when an API request (other than `login`) is made with an invalid or missing authentication token.
+    *   **JSON Payload**:
+        ```json
+        {
+          "type": "error",
+          "message": "Invalid token"
+        }
+        ```
+
+*   **HTTP 403 Forbidden**: This status code is returned when a client attempts to connect from an IP address that is not present in the device's whitelist.
+    *   **JSON Payload**:
+        ```json
+        {
+          "type": "error",
+          "message": "IP not allowed"
+        }
+        ```
+
+### JSON Payload Errors (with HTTP 200 OK)
+
+For some application-level errors, the device will return an HTTP 200 OK status, but the JSON response body will contain an error object with a `type` of "error" and a descriptive `message`.
+
+*   **Invalid Relay Number**: Returned when a `set_relay` request specifies a `relay_id` that is outside the valid range (0-3).
+    *   **JSON Payload**:
+        ```json
+        {
+          "type": "error",
+          "message": "Invalid relay number"
+        }
+        ```
+
+*   **Invalid LED Color**: Occurs when a `set_io_led` request provides a `color` value that is not one of the accepted options ("OFF", "GREEN", "RED", "ORANGE").
+    *   **JSON Payload**:
+        ```json
+        {
+          "type": "error",
+          "message": "Invalid LED color"
+        }
+        ```
+
+*   **Invalid IP Address or Whitelist Entry**: Returned when a `set_ip_config` request contains an incorrectly formatted IP address for either the controller or any entry in the whitelist.
+    *   **JSON Payload**:
+        ```json
+        {
+          "type": "error",
+          "message": "Invalid IP address or whitelist entry provided."
+        }
+        ```
+
+*   **Unknown Request Type**: Occurs when the `type` field in a JSON request does not correspond to any recognized API command.
+    *   **JSON Payload**:
+        ```json
+        {
+          "type": "error",
+          "message": "Unknown request type"
+        }
+        ```
+
+### OTA Update Errors
+
+Errors during Over-the-Air (OTA) firmware updates (only available in technician mode) are printed to the device's serial console and are not transmitted over the network as HTTP responses. These messages typically follow the format:
+
+*   `OTA Error[<error_code>]: <error_message>`
+
 ## DeviceStatus Structure
 
 The status response fields correspond to the following structure in firmware. Units are as follows:
@@ -240,7 +310,7 @@ struct DeviceStatus {
   bool gpsConnected;                  // True if GPS module is communicating
   bool ledInternal;
   LED_STATES ledIo;                   // "OFF", "GREEN", "RED", "ORANGE"
-  bool button1;                       // True if the button on the HLC is pressed
+  bool button_tech;                       // True if the button on the HLC is pressed
 };
 ```
 
@@ -259,7 +329,7 @@ The IO LED provides critical system status feedback based on the following logic
 
 ## GUI Features (Python PyQt5)
 
-A desktop GUI application (`test/gui_main.py`) is provided for easy interaction with the Prodino device.
+A desktop GUI application (`test/gui_main.py`) is provided for easy interaction with the GRK board device.
 It includes the following enhancements:
 
 -   **LED Override Checkbox:** Allows manual control of the IO LED color directly from the GUI, bypassing automatic firmware logic for testing purposes.
@@ -284,11 +354,11 @@ It includes the following enhancements:
         ```
     3.  **Build the executable:**
         ```sh
-        pyinstaller --onefile --name "GG-Prodino-GUI" gui_main.py
+        pyinstaller --onefile --name "GG-GRK-GUI-<version>" test/gui_main.py
         ```
         (Note: The `--distpath` argument can be used to specify an output directory, e.g., `--distpath ../dist` to place it in the project's root `dist` folder.)
     4.  **Find the executable:**
-        The executable will be located in the `dist/` directory (e.g., `dist/GG-Prodino-GUI` on Linux or `dist/GG-Prodino-GUI.exe` on Windows).
+        The executable will be located in the `dist/` directory (e.g., `dist/GG-GRK-GUI` on Linux or `dist/GG-GRK-GUI.exe` on Windows).
     
     ## Python API Tester
     See `gg_api_tester.py` for example usage of the API from Python.
@@ -302,7 +372,7 @@ Firmware can be updated Over-The-Air (OTA) through the GUI in Technician Mode. S
 - **Default Login:** User `admin`, password `1234`.
 - **Default Device IP:** `192.168.1.198` (configurable via GUI and API).
 - **Default Whitelist IPs:** `192.168.1.20`, `192.168.1.169` (configurable via GUI and API).
-- **OTA Updates:** Only available in technician mode (hold Button1 for 5 seconds during startup), and can be initiated via the GUI or a separate uploader tool.
+- **OTA Updates:** Only available in technician mode (hold button_tech for 5 seconds during startup), and can be initiated via the GUI or a separate uploader tool.
 - **IMU Calibration:** The IMU performs a self-calibration on startup; keep the device still and flat during this process.
 
 ---

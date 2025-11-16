@@ -10,7 +10,7 @@ void GG_HAL::init()
     Wire.begin();
     pinMode(LED_GREEN_LEG, OUTPUT);
     pinMode(LED_RED_LEG, OUTPUT);
-    pinMode(BUTTON1_LEG, INPUT);
+    pinMode(button_tech_LEG, INPUT);
     initIMU();
 }
 void GG_HAL::get_gps_data(gps_data &data)
@@ -66,9 +66,9 @@ void GG_HAL::status_led_off()
     KMPProDinoMKRZero.OffStatusLed();
 }
 
-bool GG_HAL::get_button1_state()
+bool GG_HAL::get_button_tech_state()
 {
-    return digitalRead(BUTTON1_LEG);
+    return digitalRead(button_tech_LEG);
 }
 
 LED_STATES GG_HAL::get_indicator_led_state()

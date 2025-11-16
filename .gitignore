@@ -9,4 +9,4 @@ __pycache__/
 .pytest_cache/
 .ipynb_checkpoints/
 build/
-GG-Prodino-GUI.spec
+GG-GRK-GUI-*.spec

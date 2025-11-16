@@ -6,7 +6,7 @@ const String htmlPage = R"rawliteral(
 <html>
 <head>
 <meta charset="UTF-8">
-<title>Prodino Dashboard</title>
+<title>GRK Dashboard</title>
 <style>
 body { font-family: Arial; padding: 20px; }
 #dashboard { display: none; }
@@ -25,7 +25,7 @@ button { margin-left: 10px; }
   <button onclick="login()">Login</button>
 </div>
 <div id="dashboard">
-  <h2>Prodino Dashboard</h2>
+  <h2>GRK Dashboard</h2>
    <table id="relayTable">
     <thead>
       <tr><th>Relay</th><th>Status</th><th>Action</th></tr>
