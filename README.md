@@ -1,4 +1,4 @@
-# GG-GRK - V1.2.1
+# GG-GRK - V1.3
 
 ## Overview
 
@@ -142,7 +142,7 @@ or
   "GPSConnected": true,                           // boolean
   "ledInternal": true,                            // boolean
   "ledIo": "GREEN",                               // string
-  "button_tech": false                                // boolean
+  "button_tech": false                            // boolean
 }
 ```
 
@@ -369,7 +369,7 @@ It includes the following enhancements:
         ```
     3.  **Build the executable:**
         ```sh
-        pyinstaller --onefile --name "GG-GRK-GUI-<version>" test/gui_main.py
+        pyinstaller --onefile --name "GGC-HLC-<version>" gui_main.py
         ```
         (Note: The `--distpath` argument can be used to specify an output directory, e.g., `--distpath ../dist` to place it in the project's root `dist` folder.)
     4.  **Find the executable:**
