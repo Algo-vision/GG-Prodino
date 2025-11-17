@@ -115,7 +115,7 @@ float imuGy_offset = 0.0;
 float imuGz_offset = 0.0;
 bool technician_mode = false;
 bool ota_in_progress = false; // Flag to indicate OTA update is running
-const String FIRMWARE_VERSION = "1.2.2"; // Added firmware version constant
+const String FIRMWARE_VERSION = "1.3"; // Added firmware version constant
 // If in debug mode - print debug information in Serial. Comment in production code, this bring performance.
 // This method is good for development and verification of results. But increases the amount of code and decreases productivity.
 
@@ -334,7 +334,11 @@ void update_hw_status()
 void setup()
 {
   Serial.begin(115200);
+  pinMode(LED_GREEN_LEG, OUTPUT);
+  pinMode(LED_RED_LEG, OUTPUT);
+  _gg_hal.set_indicator_led(ORANGE);
   delay(60000);
+  _gg_hal.set_indicator_led(OFF);
 
   // while (!Serial);
 
