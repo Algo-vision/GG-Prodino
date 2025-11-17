@@ -86,6 +86,24 @@ Payloads are JSON objects. Responses are JSON.
 }
 ```
 
+**Failed Login Response:**
+If the login fails, `success` will be `false` and a `message` field will describe the error.
+```json
+{
+  "type": "login_result",
+  "success": false,
+  "message": "Invalid username"
+}
+```
+or
+```json
+{
+  "type": "login_result",
+  "success": false,
+  "message": "Invalid password"
+}
+```
+
 ### 2. Get Status
 **Request:**
 ```json
@@ -216,14 +234,11 @@ The GRK board device communicates errors through a combination of HTTP status co
 
 ### HTTP Status Code Errors
 
-*   **HTTP 401 Unauthorized**: Returned when an API request (other than `login`) is made with an invalid or missing authentication token.
-    *   **JSON Payload**:
-        ```json
-        {
-          "type": "error",
-          "message": "Invalid token"
-        }
-        ```
+*   **HTTP 401 Unauthorized**: Returned when an API request (other than `login`) fails authentication. The `message` field will provide more details.
+    *   **JSON Payloads**:
+        *   `{"type": "error", "message": "Authentication required. Please login first."}`: No user is currently logged in.
+        *   `{"type": "error", "message": "Token required."}`: The `token` field is missing from the request.
+        *   `{"type": "error", "message": "Invalid or expired token."}`: The provided token is incorrect or no longer valid.
 
 *   **HTTP 403 Forbidden**: This status code is returned when a client attempts to connect from an IP address that is not present in the device's whitelist.
     *   **JSON Payload**:

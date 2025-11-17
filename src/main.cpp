@@ -115,7 +115,7 @@ float imuGy_offset = 0.0;
 float imuGz_offset = 0.0;
 bool technician_mode = false;
 bool ota_in_progress = false; // Flag to indicate OTA update is running
-const String FIRMWARE_VERSION = "1.2.1"; // Added firmware version constant
+const String FIRMWARE_VERSION = "1.2.2"; // Added firmware version constant
 // If in debug mode - print debug information in Serial. Comment in production code, this bring performance.
 // This method is good for development and verification of results. But increases the amount of code and decreases productivity.
 
@@ -453,16 +453,22 @@ JsonDocument handle_login_request(JsonDocument &doc)
   Serial.println("handle_login_request: Expected User: " + String(USERNAME) + ", Pass: " + String(PASSWORD));
   JsonDocument resp;
   resp["type"] = "login_result";
-  if (user == USERNAME && pass == PASSWORD)
+
+  if (user != USERNAME)
+  {
+    resp["success"] = false;
+    resp["message"] = "Invalid username";
+  }
+  else if (pass != PASSWORD)
+  {
+    resp["success"] = false;
+    resp["message"] = "Invalid password";
+  }
+  else
   {
     authToken = generateToken();
     resp["success"] = true;
     resp["token"] = authToken;
-  }
-  else
-  {
-    resp["success"] = false;
-    resp["token"] = "";
   }
   return resp;
 }
@@ -653,16 +659,35 @@ void http_loop()
       }
       else // Not a login request, token is required
       {
-        String tokenRecv = doc["token"];
-        bool valid_token = (tokenRecv == authToken && authToken != "");
-
-        if (!valid_token)
+        bool token_is_valid = false;
+        if (authToken == "")
         {
           resp["type"] = "error";
-          resp["message"] = "Invalid token";
-          http_status_code = 401; // Set status to 401 Unauthorized
+          resp["message"] = "Authentication required. Please login first.";
+          http_status_code = 401;
         }
-        else // Token is valid
+        else if (!doc.containsKey("token"))
+        {
+          resp["type"] = "error";
+          resp["message"] = "Token required.";
+          http_status_code = 401;
+        }
+        else
+        {
+          String tokenRecv = doc["token"];
+          if (tokenRecv != authToken)
+          {
+            resp["type"] = "error";
+            resp["message"] = "Invalid or expired token.";
+            http_status_code = 401;
+          }
+          else
+          {
+            token_is_valid = true;
+          }
+        }
+        
+        if (token_is_valid) // Token is valid
         {
           last_user_connected_time = millis();
           user_connected = true;
