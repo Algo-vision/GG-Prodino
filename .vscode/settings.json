@@ -11,6 +11,7 @@
         "random": "cpp",
         "cmath": "cpp",
         "istream": "cpp",
-        "ostream": "cpp"
+        "ostream": "cpp",
+        "sstream": "cpp"
     }
 }
