@@ -1,4 +1,4 @@
-# GG-GRK - V1.2.1
+# GG-GRK - V1.4
 
 ## Overview
 
@@ -12,7 +12,9 @@ This project provides firmware and API for the G.G. Controller Key functionaliti
 
 ## Device Features
 - 4 controllable relays
-- IO LED (multi-color: OFF, GREEN, RED, ORANGE)
+  - **Relays 0 & 1:** Auto-reset to OFF after 5 seconds when turned ON (safety feature)
+  - **Relays 2 & 3:** Standard operation (remain in set state)
+- IO LED (multi-color: OFF, GREEN, RED, ORANGE, AUTO)
 - Internal LED
 - Button for enabling technician mode
 - **IMU (LSM6DS3) Data:** Linear acceleration (X, Y, Z), Angular velocity (X, Y, Z).
@@ -148,9 +150,9 @@ or
 
 **Description:**
 - **type:** Message type.
-- **firmwareVersion:** Firmeware version.
-- **relay_status[0]:** Cut-off power switch for the internal Ethernet switch. Used to hard-reset the Ethernet switch if needed. True to cut-off power.
-- **relay_status[1]:** Cut-off power switch for the internal Computer. Used to hard-reset the computer if needed. True to cut-off power.
+- **firmwareVersion:** Firmware version.
+- **relay_status[0]:** Cut-off power switch for the internal Ethernet switch. Used to hard-reset the Ethernet switch if needed. True to cut-off power. **Auto-resets to OFF after 5 seconds.**
+- **relay_status[1]:** Cut-off power switch for the internal Computer. Used to hard-reset the computer if needed. True to cut-off power. **Auto-resets to OFF after 5 seconds.**
 - **relay_status[2]:** Switch to enable or disable power (13.8V/GND) through J16, pin 1.
 - **relay_status[3]:** Switch to enable or disable power (13.8V/GND) through J16, pin 2.
 - **optoin_status[0]:** Indicates if the first channel of the EPC is in safety mode.
@@ -196,17 +198,25 @@ or
 **Response:**
 - Returns updated status (see Get Status)
 
+**Auto-Reset Feature:**
+- **Relays 0 & 1:** When set to `true`, these relays will automatically reset to `false` after 5 seconds. This is a safety feature to prevent accidental prolonged power cuts.
+- **Relays 2 & 3:** Standard operation - remain in the set state until manually changed.
+
 ### 4. Set IO LED
 **Request:**
 ```json
 {
   "type": "set_io_led",
   "token": "<token>",
-  "color": "OFF"|"GREEN"|"RED"|"ORANGE"
+  "color": "OFF"|"GREEN"|"RED"|"ORANGE"|"AUTO"
 }
 ```
 **Response:**
 - Returns updated status
+
+**LED Control Modes:**
+- **Manual Colors (OFF/GREEN/RED/ORANGE):** Sets the LED to a specific color and activates manual control mode, overriding automatic LED logic.
+- **AUTO:** Deactivates manual control and returns the LED to automatic mode, where it reflects system status based on sensor connectivity and safety state (see LED Status Indication section).
 
 ### 5. Set Internal LED
 **Request:**
@@ -262,7 +272,7 @@ For some application-level errors, the device will return an HTTP 200 OK status,
         }
         ```
 
-*   **Invalid LED Color**: Occurs when a `set_io_led` request provides a `color` value that is not one of the accepted options ("OFF", "GREEN", "RED", "ORANGE").
+*   **Invalid LED Color**: Occurs when a `set_io_led` request provides a `color` value that is not one of the accepted options ("OFF", "GREEN", "RED", "ORANGE", "AUTO").
     *   **JSON Payload**:
         ```json
         {
@@ -347,13 +357,15 @@ The IO LED provides critical system status feedback based on the following logic
 A desktop GUI application (`test/gui_main.py`) is provided for easy interaction with the GRK board device.
 It includes the following enhancements:
 
--   **LED Override Checkbox:** Allows manual control of the IO LED color directly from the GUI, bypassing automatic firmware logic for testing purposes.
+-   **Responsive Layout:** The GUI window starts maximized and adapts to any screen size. All content is scrollable, ensuring accessibility on different displays.
+-   **LED Override Checkbox:** Allows manual control of the IO LED color directly from the GUI. When unchecked, the LED automatically returns to AUTO mode, resuming automatic firmware logic based on system status.
 -   **IP Configuration Fields:** Dedicated fields to modify the controller's IP address and two whitelisted IP addresses.
     -   Changing the controller's IP will trigger a popup notification and redirect to the Login screen, requiring reconnection at the new IP.
 -   **Firmware and GUI Version Display:** Displays the firmware version from the controller on the main screen and the GUI application version on the login screen.
 -   **Communication Loss Handling:**
         - If communication with the controller is lost while on the main screen, the GUI automatically returns to the Login screen.
         - Attempting to log in without controller communication will display a popup notification.
+-   **Relay Auto-Reset Indication:** Relays 0 and 1 automatically turn OFF after 5 seconds when activated, providing visual feedback in the GUI.
     
     ### Building the GUI Executable
     

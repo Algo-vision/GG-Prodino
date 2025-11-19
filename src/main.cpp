@@ -115,7 +115,14 @@ float imuGy_offset = 0.0;
 float imuGz_offset = 0.0;
 bool technician_mode = false;
 bool ota_in_progress = false; // Flag to indicate OTA update is running
-const String FIRMWARE_VERSION = "1.2.2"; // Added firmware version constant
+const String FIRMWARE_VERSION = "1.4"; // Added firmware version constant
+
+// Auto-reset relay timers (for relays 0 and 1)
+unsigned long relay_0_auto_reset_time = 0;
+unsigned long relay_1_auto_reset_time = 0;
+bool relay_0_auto_reset_active = false;
+bool relay_1_auto_reset_active = false;
+const unsigned long RELAY_AUTO_RESET_DURATION = 5000; // 5 seconds in milliseconds
 // If in debug mode - print debug information in Serial. Comment in production code, this bring performance.
 // This method is good for development and verification of results. But increases the amount of code and decreases productivity.
 
@@ -702,6 +709,26 @@ void http_loop()
             if (relay_id < RELAY_COUNT)
             {
               KMPProDinoMKRZero.SetRelayState(relay_id, state);
+              
+              // Auto-reset logic for relays 0 and 1
+              if (relay_id == 0 && state == true) {
+                relay_0_auto_reset_time = millis() + RELAY_AUTO_RESET_DURATION;
+                relay_0_auto_reset_active = true;
+                Serial.println("Relay 0 auto-reset timer started (5 seconds)");
+              } else if (relay_id == 0 && state == false) {
+                relay_0_auto_reset_active = false; // Cancel auto-reset if manually turned off
+                Serial.println("Relay 0 auto-reset timer cancelled");
+              }
+              
+              if (relay_id == 1 && state == true) {
+                relay_1_auto_reset_time = millis() + RELAY_AUTO_RESET_DURATION;
+                relay_1_auto_reset_active = true;
+                Serial.println("Relay 1 auto-reset timer started (5 seconds)");
+              } else if (relay_id == 1 && state == false) {
+                relay_1_auto_reset_active = false; // Cancel auto-reset if manually turned off
+                Serial.println("Relay 1 auto-reset timer cancelled");
+              }
+              
               resp = generate_status_msg(doc);
             }
             else
@@ -720,32 +747,48 @@ void http_loop()
           else if (msg_type == "set_io_led")
           {
             String color = doc["color"];
-            LED_STATES color_val;
-            if (color == "OFF")
+            
+            // Check if AUTO mode is requested (to deactivate manual control)
+            if (color == "AUTO")
             {
-              color_val = OFF;
-            }
-            else if (color == "GREEN")
-            {
-              color_val = GREEN;
-            }
-            else if (color == "RED")
-            {
-              color_val = RED;
-            }
-            else if (color == "ORANGE")
-            {
-              color_val = ORANGE;
+              manual_led_control_active = false; // Deactivate manual control
+              Serial.println("LED control returned to AUTO mode");
+              resp = generate_status_msg(doc);
             }
             else
             {
-              resp["type"] = "error";
-              resp["message"] = "Invalid LED color";
+              LED_STATES color_val;
+              if (color == "OFF")
+              {
+                color_val = OFF;
+              }
+              else if (color == "GREEN")
+              {
+                color_val = GREEN;
+              }
+              else if (color == "RED")
+              {
+                color_val = RED;
+              }
+              else if (color == "ORANGE")
+              {
+                color_val = ORANGE;
+              }
+              else
+              {
+                resp["type"] = "error";
+                resp["message"] = "Invalid LED color";
+              }
+              
+              // Only activate manual control if color was valid
+              if (resp["type"] != "error")
+              {
+                manual_led_control_active = true; // Activate manual control
+                manual_led_state = color_val;     // Store the desired state
+                _gg_hal.set_indicator_led(manual_led_state); // Apply the manual setting
+                resp = generate_status_msg(doc);
+              }
             }
-            manual_led_control_active = true; // Activate manual control
-            manual_led_state = color_val;     // Store the desired state
-            _gg_hal.set_indicator_led(manual_led_state); // Apply the manual setting
-            resp = generate_status_msg(doc);
           }
           else if (msg_type == "set_ip_config")
           {
@@ -894,6 +937,22 @@ void status_led_blink()
     }
   }
 }
+void check_relay_auto_reset() {
+  // Check relay 0
+  if (relay_0_auto_reset_active && millis() >= relay_0_auto_reset_time) {
+    KMPProDinoMKRZero.SetRelayState(0, false);
+    relay_0_auto_reset_active = false;
+    Serial.println("Relay 0 auto-reset to OFF");
+  }
+  
+  // Check relay 1
+  if (relay_1_auto_reset_active && millis() >= relay_1_auto_reset_time) {
+    KMPProDinoMKRZero.SetRelayState(1, false);
+    relay_1_auto_reset_active = false;
+    Serial.println("Relay 1 auto-reset to OFF");
+  }
+}
+
 void loop()
 {
   if (technician_mode) {
@@ -903,6 +962,7 @@ void loop()
   http_loop();
   update_hw_status();
   write_status_to_serial();
+  check_relay_auto_reset(); // Check and execute relay auto-reset
   if (millis() - last_user_connected_time > 5000 )
   {
     user_connected = false;

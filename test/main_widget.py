@@ -1,4 +1,4 @@
-from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QLabel, QPushButton, QHBoxLayout, QTableWidget, QTableWidgetItem, QComboBox, QFileDialog, QMessageBox, QGroupBox, QGridLayout, QLineEdit, QCheckBox)
+from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QLabel, QPushButton, QHBoxLayout, QTableWidget, QTableWidgetItem, QComboBox, QFileDialog, QMessageBox, QGroupBox, QGridLayout, QLineEdit, QCheckBox, QScrollArea)
 from PyQt5.QtCore import QTimer, pyqtSignal
 from firmware_uploader import upload_firmware
 import time
@@ -24,6 +24,8 @@ class MainWidget(QWidget):
         self.is_editing_ip = True
 
     def init_ui(self):
+        # Create a container widget for all content
+        container = QWidget()
         layout = QVBoxLayout()
         # Status group
         self.status_group = QGroupBox("Device Status")
@@ -81,7 +83,7 @@ class MainWidget(QWidget):
         led_box = QGroupBox("IO LED")
         led_layout = QHBoxLayout()
         self.led_combo = QComboBox()
-        self.led_combo.addItems(["OFF", "GREEN", "RED", "ORANGE"])
+        self.led_combo.addItems(["AUTO", "OFF", "GREEN", "RED", "ORANGE"])
         self.led_btn = QPushButton("Set IO LED")
         self.led_btn.clicked.connect(self.set_led)
         led_layout.addWidget(self.led_combo)
@@ -120,7 +122,19 @@ class MainWidget(QWidget):
         layout.addWidget(self.fw_box)
         self.fw_box.setEnabled(False)
 
-        self.setLayout(layout)
+        # Set layout on container
+        container.setLayout(layout)
+        
+        # Create scroll area and make it resizable
+        scroll = QScrollArea()
+        scroll.setWidget(container)
+        scroll.setWidgetResizable(True)  # KEY: allows content to resize with window
+        
+        # Set scroll area as the main layout
+        main_layout = QVBoxLayout()
+        main_layout.addWidget(scroll)
+        self.setLayout(main_layout)
+        
         self.firmware_path = None
 
     def update_status(self):
@@ -167,8 +181,12 @@ class MainWidget(QWidget):
         self.led_combo.setEnabled(is_checked)
         self.led_btn.setEnabled(is_checked)
 
-        # If override is turned off, immediately update LED status from device
+        # If override is turned off, send AUTO command to resume automatic LED control
         if not is_checked:
+            # Send AUTO command to device to resume automatic LED logic
+            self.api_client.set_led("AUTO")
+            # Set combo to AUTO and update status
+            self.led_combo.setCurrentText("AUTO")
             self.update_status() # This will refresh the led_combo based on device status
 
     def toggle_relay(self, relay_id):

@@ -33,8 +33,10 @@ def main():
     stack.addWidget(login_widget)
     stack.setCurrentWidget(login_widget)
     stack.setWindowTitle("GG-GRK Tester GUI")
-    stack.resize(600, 600)
-    stack.show()
+    # Set minimum size but allow resizing to fit any screen
+    stack.setMinimumSize(700, 600)
+    # Start maximized to fit the screen
+    stack.showMaximized()
     sys.exit(app.exec_())
 
 if __name__ == "__main__":
