@@ -123,6 +123,7 @@ unsigned long relay_1_auto_reset_time = 0;
 bool relay_0_auto_reset_active = false;
 bool relay_1_auto_reset_active = false;
 const unsigned long RELAY_AUTO_RESET_DURATION = 5000; // 5 seconds in milliseconds
+
 // If in debug mode - print debug information in Serial. Comment in production code, this bring performance.
 // This method is good for development and verification of results. But increases the amount of code and decreases productivity.
 
