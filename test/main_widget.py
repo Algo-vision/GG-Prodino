@@ -72,7 +72,10 @@ class MainWidget(QWidget):
         relay_layout = QHBoxLayout()
         self.relay_buttons = []
         for i in range(4):
-            btn = QPushButton(f"Toggle Relay {i}")
+            if (i==0 or i==1):
+                btn = QPushButton(f"Toggle Relay {i} (5 sec)")
+            else:
+                btn = QPushButton(f"Toggle Relay {i}")
             btn.clicked.connect(lambda _, idx=i: self.toggle_relay(idx))
             relay_layout.addWidget(btn)
             self.relay_buttons.append(btn)

@@ -1,4 +1,4 @@
-# GG-GRK - V1.4
+# GG-GRK - V1.3.1
 
 ## Overview
 
@@ -151,8 +151,10 @@ or
 **Description:**
 - **type:** Message type.
 - **firmwareVersion:** Firmware version.
-- **relay_status[0]:** Cut-off power switch for the internal Ethernet switch. Used to hard-reset the Ethernet switch if needed. True to cut-off power. **Auto-resets to OFF after 5 seconds.**
-- **relay_status[1]:** Cut-off power switch for the internal Computer. Used to hard-reset the computer if needed. True to cut-off power. **Auto-resets to OFF after 5 seconds.**
+- **relay_status[0]:** Cut-off power switch for the internal Ethernet switch. Used to hard-reset the Ethernet switch if needed. True to cut-off power. 
+**Automatically returns to False after 5 seconds.**
+- **relay_status[1]:** Cut-off power switch for the internal Computer. Used to hard-reset the computer if needed. True to cut-off power. 
+**Automatically returns to False after 5 seconds.**
 - **relay_status[2]:** Switch to enable or disable power (13.8V/GND) through J16, pin 1.
 - **relay_status[3]:** Switch to enable or disable power (13.8V/GND) through J16, pin 2.
 - **optoin_status[0]:** Indicates if the first channel of the EPC is in safety mode.

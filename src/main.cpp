@@ -115,7 +115,7 @@ float imuGy_offset = 0.0;
 float imuGz_offset = 0.0;
 bool technician_mode = false;
 bool ota_in_progress = false; // Flag to indicate OTA update is running
-const String FIRMWARE_VERSION = "1.4"; // Added firmware version constant
+const String FIRMWARE_VERSION = "1.3.1"; // Added firmware version constant
 
 // Auto-reset relay timers (for relays 0 and 1)
 unsigned long relay_0_auto_reset_time = 0;
