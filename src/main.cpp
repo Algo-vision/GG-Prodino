@@ -341,7 +341,11 @@ void update_hw_status()
 void setup()
 {
   Serial.begin(115200);
+  pinMode(LED_GREEN_LEG, OUTPUT);
+  pinMode(LED_RED_LEG, OUTPUT);
+  _gg_hal.set_indicator_led(ORANGE);
   delay(60000);
+  _gg_hal.set_indicator_led(OFF);
 
   // while (!Serial);
 
