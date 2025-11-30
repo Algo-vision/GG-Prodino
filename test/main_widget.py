@@ -1,24 +1,128 @@
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QLabel, QPushButton, QHBoxLayout, QTableWidget, QTableWidgetItem, QComboBox, QFileDialog, QMessageBox, QGroupBox, QGridLayout, QLineEdit, QCheckBox, QScrollArea)
 from PyQt5.QtCore import QTimer, pyqtSignal
 from firmware_uploader import upload_firmware
+from firmware_uploader import upload_firmware
 import time
+import random
+import socket
+import threading
+import json
 
 class MainWidget(QWidget):
     reconnect_requested = pyqtSignal()
     upload_finished_signal = pyqtSignal(bool, str)
-
-    def __init__(self, api_client, base_ip, parent=None):
+    status_update_signal = pyqtSignal(dict) # New signal for UDP updates
+    
+    def __init__(self, api_client, base_ip, parent=None, client_offset_ms=0, polling_interval_ms=10000): # Slow poll for fallback
         super().__init__(parent)
         self.api_client = api_client
         self.base_ip = base_ip
+        self.client_offset_ms = client_offset_ms
+        self.polling_interval_ms = polling_interval_ms
         print(f"MainWidget.__init__: api_client.base_url is {self.api_client.base_url}")
+        print(f"MainWidget.__init__: client_offset={client_offset_ms}ms, polling_interval={polling_interval_ms}ms")
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.update_status)
         self.is_editing_ip = False
         self.init_ui()
-        self.timer.start(1000)
+        # Start polling with offset (if specified) for multi-client scenarios
+        if self.client_offset_ms > 0:
+            print(f"MainWidget: Starting polling with {self.client_offset_ms}ms offset...")
+            QTimer.singleShot(self.client_offset_ms, self.start_polling)
+        else:
+            self.start_polling()
         self.technician_mode = False
         self.upload_finished_signal.connect(self.show_upload_result)
+        self.status_update_signal.connect(self.handle_udp_status)
+        
+        # UDP Listener
+        self.udp_socket = None
+        self.udp_thread = None
+        self.udp_running = False
+        self.start_udp_listener()
+    
+    def start_polling(self):
+        """Start the status polling timer (Fallback / Auth check)"""
+        # We now use UDP for main data, but keep a slow poll for auth check
+        print(f"MainWidget: Status polling started (interval={self.polling_interval_ms}ms)")
+        self.timer.start(self.polling_interval_ms)
+        # self.update_status()  # Don't force immediate HTTP update, wait for UDP
+
+    def start_udp_listener(self):
+        self.udp_running = True
+        self.udp_thread = threading.Thread(target=self.udp_listen_loop)
+        self.udp_thread.daemon = True
+        self.udp_thread.start()
+
+    def stop_udp_listener(self):
+        self.udp_running = False
+        if self.udp_socket:
+            self.udp_socket.close()
+
+    def udp_listen_loop(self):
+        UDP_PORT = 5000
+        try:
+            self.udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self.udp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self.udp_socket.bind(('', UDP_PORT))
+            print(f"UDP Listener started on port {UDP_PORT}")
+            
+            while self.udp_running:
+                try:
+                    data, addr = self.udp_socket.recvfrom(1024)
+                    status = json.loads(data.decode())
+                    # Update UI on main thread (using QTimer.singleShot as a hack or signal)
+                    # Since we are in a thread, we should use signals. 
+                    # But for simplicity in this existing structure, let's just update the internal state
+                    # and trigger a UI update safely.
+                    # Actually, PyQt widgets must be updated from main thread.
+                    # Let's use a signal.
+                    # Wait, I can't easily add a signal to the class definition dynamically.
+                    # I'll add a signal to the class in a separate edit or use QMetaObject.invokeMethod
+                    # For now, let's just use the existing timer to process the LAST received UDP packet?
+                    # No, that defeats the purpose.
+                    
+                    # I will add a signal to the class definition in the next chunk.
+                    self.status_update_signal.emit(status)
+                    
+                except socket.timeout:
+                    continue
+                except Exception as e:
+                    print(f"UDP Error: {e}")
+                    if not self.udp_running: break
+                    time.sleep(1)
+        except Exception as e:
+            print(f"UDP Setup Error: {e}")
+
+    def handle_udp_status(self, status):
+        """Update UI from UDP status packet"""
+        if not status: return
+        
+        for k, v in self.status_labels.items():
+            val = status.get(k, "-")
+            if isinstance(val, list):
+                val = ", ".join(str(x) for x in val)
+            v.setText(str(val))
+            
+        # Enable firmware uploader if technician mode
+        self.technician_mode = status.get("technicianMode", False)
+        self.fw_box.setEnabled(self.technician_mode)
+        self.fw_upload_btn.setEnabled(self.technician_mode and self.firmware_path is not None)
+
+        # Update IP configuration fields only if not editing
+        if not self.is_editing_ip:
+            self.controller_ip_edit.setText(status.get("controllerIp", self.base_ip))
+            whitelist = status.get("whitelistIps", [])
+            self.whitelist_ip1_edit.setText(whitelist[0] if len(whitelist) > 0 else "")
+            self.whitelist_ip2_edit.setText(whitelist[1] if len(whitelist) > 1 else "")
+            self.whitelist_ip3_edit.setText(whitelist[2] if len(whitelist) > 2 else "192.168.1.33")
+
+        # If manual override is not active, update LED combo from status
+        if not self.led_override_checkbox.isChecked():
+            current_led_status = status.get("ledIo", "OFF") if status else "OFF"
+            index = self.led_combo.findText(current_led_status)
+            if index != -1:
+                self.led_combo.setCurrentIndex(index)
 
     def on_ip_editing_started(self):
         self.is_editing_ip = True
@@ -48,10 +152,12 @@ class MainWidget(QWidget):
         self.controller_ip_edit = QLineEdit(self.base_ip)
         self.whitelist_ip1_edit = QLineEdit()
         self.whitelist_ip2_edit = QLineEdit()
+        self.whitelist_ip3_edit = QLineEdit("192.168.1.33")  # Default third IP
 
         self.controller_ip_edit.textChanged.connect(self.on_ip_editing_started)
         self.whitelist_ip1_edit.textChanged.connect(self.on_ip_editing_started)
         self.whitelist_ip2_edit.textChanged.connect(self.on_ip_editing_started)
+        self.whitelist_ip3_edit.textChanged.connect(self.on_ip_editing_started)
 
         ip_config_layout.addWidget(QLabel("Controller IP:"), 0, 0)
         ip_config_layout.addWidget(self.controller_ip_edit, 0, 1)
@@ -59,10 +165,12 @@ class MainWidget(QWidget):
         ip_config_layout.addWidget(self.whitelist_ip1_edit, 1, 1)
         ip_config_layout.addWidget(QLabel("Whitelist IP 2:"), 2, 0)
         ip_config_layout.addWidget(self.whitelist_ip2_edit, 2, 1)
+        ip_config_layout.addWidget(QLabel("Whitelist IP 3:"), 3, 0)
+        ip_config_layout.addWidget(self.whitelist_ip3_edit, 3, 1)
 
         self.save_ip_btn = QPushButton("Save IP Configuration")
         self.save_ip_btn.clicked.connect(self.save_ip_configuration)
-        ip_config_layout.addWidget(self.save_ip_btn, 3, 0, 1, 2)
+        ip_config_layout.addWidget(self.save_ip_btn, 4, 0, 1, 2)
 
         ip_config_box.setLayout(ip_config_layout)
         layout.addWidget(ip_config_box)
@@ -170,6 +278,15 @@ class MainWidget(QWidget):
                 index = self.led_combo.findText(current_led_status)
                 if index != -1:
                     self.led_combo.setCurrentIndex(index)
+            
+            # Add jitter to prevent collision with other clients
+            # Random jitter of ±500ms around the base interval
+            # This prevents uncoordinated clients from polling at the same time
+            jitter = random.randint(-500, 500)
+            next_interval = self.polling_interval_ms + jitter
+            # Ensure interval stays within reasonable bounds (2-4 seconds)
+            next_interval = max(2000, min(4000, next_interval))
+            self.timer.setInterval(next_interval)
 
         else:
             # Communication lost, return to login screen
@@ -246,7 +363,8 @@ class MainWidget(QWidget):
             print(f"show_upload_result: Upload failed. Preparing to show error message: {msg}")
             QMessageBox.critical(self, "Upload Failed", f"Upload failed: {msg}")
             print("show_upload_result: Error message box closed. Restarting status timer.")
-            self.timer.start(1000)
+            self.timer.start(self.polling_interval_ms)
+
 
     def save_ip_configuration(self):
         print("save_ip_configuration: Initiated.")
@@ -254,7 +372,8 @@ class MainWidget(QWidget):
         controller_ip = self.controller_ip_edit.text()
         whitelist_ips = [
             self.whitelist_ip1_edit.text(),
-            self.whitelist_ip2_edit.text()
+            self.whitelist_ip2_edit.text(),
+            self.whitelist_ip3_edit.text()
         ]
         # Filter out empty whitelist IPs
         whitelist_ips = [ip for ip in whitelist_ips if ip]

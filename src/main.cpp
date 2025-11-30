@@ -7,6 +7,9 @@
 #include "calculations.hpp"
 #include <FlashStorage.h> // Include for FlashStorage
 #include <Arduino_DebugUtils.h> // Required for NVIC_SystemReset()
+#include <ArduinoOTA.h>
+#include <EthernetUdp.h> // UDP support for broadcasting
+
 
 // Define a struct to hold the configuration data
 struct Config {
@@ -22,10 +25,11 @@ struct Config {
     controller_ip_bytes[2] = 1;
     controller_ip_bytes[3] = 198;
 
-    // Default whitelist IPs: 192.168.1.20, 192.168.1.169
+    // Default whitelist IPs: 192.168.1.20, 192.168.1.169, 192.168.1.33
     whitelist_ip_bytes[0][0] = 192; whitelist_ip_bytes[0][1] = 168; whitelist_ip_bytes[0][2] = 1; whitelist_ip_bytes[0][3] = 20;
     whitelist_ip_bytes[1][0] = 192; whitelist_ip_bytes[1][1] = 168; whitelist_ip_bytes[1][2] = 1; whitelist_ip_bytes[1][3] = 169;
-    whitelist_count = 2;
+    whitelist_ip_bytes[2][0] = 192; whitelist_ip_bytes[2][1] = 168; whitelist_ip_bytes[2][2] = 1; whitelist_ip_bytes[2][3] = 33;
+    whitelist_count = 3;
   }
 };
 
@@ -99,7 +103,6 @@ void loadConfig() {
 }
 
 // OTA support
-#include <ArduinoOTA.h>
 
 #define LED_IO_PIN 6
 unsigned long last_user_connected_time = 0;
@@ -115,7 +118,7 @@ float imuGy_offset = 0.0;
 float imuGz_offset = 0.0;
 bool technician_mode = false;
 bool ota_in_progress = false; // Flag to indicate OTA update is running
-const String FIRMWARE_VERSION = "1.3.1"; // Added firmware version constant
+const String FIRMWARE_VERSION = "1.4"; // Added firmware version constant
 
 // Auto-reset relay timers (for relays 0 and 1)
 unsigned long relay_0_auto_reset_time = 0;
@@ -123,7 +126,6 @@ unsigned long relay_1_auto_reset_time = 0;
 bool relay_0_auto_reset_active = false;
 bool relay_1_auto_reset_active = false;
 const unsigned long RELAY_AUTO_RESET_DURATION = 5000; // 5 seconds in milliseconds
-
 // If in debug mode - print debug information in Serial. Comment in production code, this bring performance.
 // This method is good for development and verification of results. But increases the amount of code and decreases productivity.
 
@@ -139,12 +141,27 @@ const uint16_t LOCAL_PORT = 80;
 
 EthernetServer _server(LOCAL_PORT);
 
+// UDP Broadcast settings
+EthernetUDP udp;
+const unsigned int UDP_PORT = 5000;
+const unsigned long UDP_BROADCAST_INTERVAL = 200; // Broadcast every 200ms
+
 EthernetClient _client;
 GG_HAL _gg_hal;
 LED_STATES manual_led_state = OFF; // Stores the manually set LED state
 bool manual_led_control_active = false; // Flag to indicate if manual LED control is active
-// --- AUTH TOKEN ---
-String authToken = "";
+// --- AUTH TOKEN MANAGEMENT ---
+const int MAX_SESSIONS = 5;
+String authTokens[MAX_SESSIONS];
+unsigned long tokenLastUse[MAX_SESSIONS];
+
+// Initialize tokens
+void initTokens() {
+  for (int i = 0; i < MAX_SESSIONS; i++) {
+    authTokens[i] = "";
+    tokenLastUse[i] = 0;
+  }
+}
 
 // --- IP WHITELIST ---
 // WHITELIST is now current_whitelist
@@ -454,6 +471,12 @@ void setup()
   Serial.println(Ethernet.localIP());
   Serial.println(Ethernet.gatewayIP());
   Serial.println(Ethernet.subnetMask());
+  
+  initTokens(); // Initialize token storage
+  
+  // Start UDP
+  udp.begin(UDP_PORT);
+  Serial.println("UDP Broadcast started on port " + String(UDP_PORT));
 }
 
 JsonDocument handle_login_request(JsonDocument &doc)
@@ -478,12 +501,39 @@ JsonDocument handle_login_request(JsonDocument &doc)
   }
   else
   {
-    authToken = generateToken();
+    String newToken = generateToken();
+    
+    // Find a free slot or the oldest one to overwrite
+    int slotIndex = -1;
+    unsigned long oldestTime = millis();
+    int oldestSlot = 0;
+    
+    for (int i = 0; i < MAX_SESSIONS; i++) {
+      if (authTokens[i] == "") {
+        slotIndex = i;
+        break;
+      }
+      if (tokenLastUse[i] < oldestTime) {
+        oldestTime = tokenLastUse[i];
+        oldestSlot = i;
+      }
+    }
+    
+    if (slotIndex == -1) {
+      slotIndex = oldestSlot; // Overwrite oldest session
+      Serial.println("Overwriting oldest session at slot " + String(slotIndex));
+    }
+    
+    authTokens[slotIndex] = newToken;
+    tokenLastUse[slotIndex] = millis();
+    
     resp["success"] = true;
-    resp["token"] = authToken;
+    resp["token"] = newToken;
+    Serial.println("Login successful. Token assigned to slot " + String(slotIndex));
   }
   return resp;
 }
+
 JsonDocument generate_status_msg(JsonDocument &doc)
 {
   update_hw_status();
@@ -543,6 +593,12 @@ JsonDocument generate_status_msg(JsonDocument &doc)
   }
 
   return resp;
+}
+
+// Overload for UDP broadcast (no request doc needed)
+JsonDocument generate_status_msg() {
+  JsonDocument doc; // Empty doc
+  return generate_status_msg(doc);
 }
 
 void write_status_to_serial()
@@ -672,13 +728,7 @@ void http_loop()
       else // Not a login request, token is required
       {
         bool token_is_valid = false;
-        if (authToken == "")
-        {
-          resp["type"] = "error";
-          resp["message"] = "Authentication required. Please login first.";
-          http_status_code = 401;
-        }
-        else if (!doc.containsKey("token"))
+        if (!doc.containsKey("token"))
         {
           resp["type"] = "error";
           resp["message"] = "Token required.";
@@ -687,15 +737,18 @@ void http_loop()
         else
         {
           String tokenRecv = doc["token"];
-          if (tokenRecv != authToken)
-          {
+          // Check if token exists in any slot
+          for (int i = 0; i < MAX_SESSIONS; i++) {
+            if (authTokens[i] != "" && authTokens[i] == tokenRecv) {
+              token_is_valid = true;
+              tokenLastUse[i] = millis(); // Update activity time
+              break;
+            }
+          }
+          if (!token_is_valid) { // If after checking all slots, no valid token was found
             resp["type"] = "error";
             resp["message"] = "Invalid or expired token.";
             http_status_code = 401;
-          }
-          else
-          {
-            token_is_valid = true;
           }
         }
         
@@ -964,14 +1017,39 @@ void loop()
     // Handle OTA updates in technician mode
     ArduinoOTA.handle();
   }
+  
+  // 1. Handle HTTP requests (Commands & Login)
   http_loop();
+  
+  // 2. Broadcast Status via UDP (Monitoring)
+  static unsigned long lastBroadcast = 0;
+  if (millis() - lastBroadcast > UDP_BROADCAST_INTERVAL) {
+    // Generate status JSON
+    JsonDocument status_doc = generate_status_msg();
+    String json;
+    serializeJson(status_doc, json);
+    
+    // Broadcast to local subnet
+    // Assuming 192.168.1.x network - broadcast to .255
+    IPAddress broadcastIP = Ethernet.localIP();
+    broadcastIP[3] = 255; 
+    
+    udp.beginPacket(broadcastIP, UDP_PORT);
+    udp.write((const uint8_t*)json.c_str(), json.length());
+    udp.endPacket();
+    
+    lastBroadcast = millis();
+  }
+  
+  // 3. Regular maintenance tasks
   update_hw_status();
   write_status_to_serial();
-  check_relay_auto_reset(); // Check and execute relay auto-reset
+  check_relay_auto_reset();
+  
   if (millis() - last_user_connected_time > 5000 )
   {
     user_connected = false;
   }
+  
   status_led_blink();
-  // delay(1000);
 }
