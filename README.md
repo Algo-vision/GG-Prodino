@@ -1,4 +1,4 @@
-# GG-GRK - V1.3.1
+# GG-GRK - V1.4
 
 ## Overview
 
@@ -9,6 +9,8 @@ This project provides firmware and API for the G.G. Controller Key functionaliti
 - **Over-the-Air (OTA) Firmware Updates:** Available in a dedicated technician mode for convenient maintenance.
 - **REST API:** For controlling relays, managing LEDs, retrieving detailed device status, and configuring network settings.
 - **Enhanced GUI:** User-friendly interface with features like manual LED override, dynamic IP configuration, and robust error handling for communication loss.
+- **UDP Status Broadcast:** Real-time status updates broadcast to all clients for efficient multi-client monitoring.
+- **Multi-Session Support:** Up to 5 simultaneous authenticated sessions for multiple concurrent users.
 
 ## Device Features
 - 4 controllable relays
@@ -48,6 +50,31 @@ This project provides firmware and API for the G.G. Controller Key functionaliti
 - Hold the button for 5 seconds during startup to enter technician mode.
 - In technician mode, OTA updates are enabled and the IO LED is set to ORANGE.
 
+## UDP Status Broadcast
+
+**New in v1.4:** The device now broadcasts real-time status updates via UDP for efficient multi-client monitoring.
+
+### How It Works
+- **Broadcast Address:** `192.168.1.255:5000` (local subnet broadcast)
+- **Frequency:** 5 Hz (every 200ms)
+- **Protocol:** UDP (connectionless, low overhead)
+- **Format:** JSON (same structure as HTTP `get_status` response)
+
+### Benefits
+- **Unlimited Monitoring Clients:** Any number of clients can listen simultaneously without additional load on the board
+- **Real-time Updates:** 5 updates per second for near-instant responsiveness
+- **Zero Collision:** Unlike HTTP polling, UDP broadcast has no collision issues
+- **Reduced Network Load:** Board sends one packet regardless of how many clients are listening
+
+**Note:** UDP is unreliable - occasional packet loss is normal and expected. The GUI handles this gracefully with a fallback HTTP poll every 10 seconds.
+
+## Multi-Session Support
+
+The device supports up to **5 concurrent authenticated sessions**, allowing multiple users to connect simultaneously:
+- Each successful login receives a unique session token
+- Tokens are valid until overwritten by newer sessions (oldest-first replacement)
+- All sessions can retrieve status and send commands independently
+- Ideal for multi-user environments (e.g., 3 monitoring stations)
 
 ## IP Whitelist
 
@@ -55,6 +82,7 @@ This project provides firmware and API for the G.G. Controller Key functionaliti
 
 - `192.168.1.20`
 - `192.168.1.169`
+- `192.168.1.33`
 
 Any request from a non-whitelisted IP will be rejected with an error response:
 
