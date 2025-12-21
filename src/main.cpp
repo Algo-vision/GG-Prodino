@@ -9,6 +9,8 @@
 #include <Arduino_DebugUtils.h> // Required for NVIC_SystemReset()
 #include <ArduinoOTA.h>
 #include <EthernetUdp.h> // UDP support for broadcasting
+#include "mqtt_handler.hpp" // MQTT support
+
 
 
 // Define a struct to hold the configuration data
@@ -150,6 +152,10 @@ EthernetClient _client;
 GG_HAL _gg_hal;
 LED_STATES manual_led_state = OFF; // Stores the manually set LED state
 bool manual_led_control_active = false; // Flag to indicate if manual LED control is active
+
+// MQTT Handler
+MQTTHandler mqttHandler;
+
 // --- AUTH TOKEN MANAGEMENT ---
 const int MAX_SESSIONS = 5;
 String authTokens[MAX_SESSIONS];
@@ -477,6 +483,10 @@ void setup()
   // Start UDP
   udp.begin(UDP_PORT);
   Serial.println("UDP Broadcast started on port " + String(UDP_PORT));
+  
+  // Initialize MQTT Handler
+  mqttHandler.begin();
+  Serial.println("MQTT handler initialized. Will attempt connection in loop()...");
 }
 
 JsonDocument handle_login_request(JsonDocument &doc)
@@ -1018,10 +1028,63 @@ void loop()
     ArduinoOTA.handle();
   }
   
-  // 1. Handle HTTP requests (Commands & Login)
+  // 1. Handle MQTT connection maintenance
+  mqttHandler.loop();
+  
+  // 2. Handle HTTP requests (Commands & Login)
   http_loop();
   
-  // 2. Broadcast Status via UDP (Monitoring)
+  // 3. Publish MQTT data (1Hz)
+  static unsigned long lastMQTTPublish = 0;
+  if (millis() - lastMQTTPublish > MQTT_PUBLISH_INTERVAL) {
+    if (mqttHandler.isConnected()) {
+      // Update hardware status first
+      update_hw_status();
+      
+      // Publish complete status
+      JsonDocument statusDoc = generate_status_msg();
+      mqttHandler.publishStatus(statusDoc);
+      
+      // Publish GPS data
+      mqttHandler.publishGPS(
+        status.gpsLat, status.gpsLng, status.gpsAlt,
+        status.gpsSpeedNorth, status.gpsSpeedEast, status.gpsSpeedDown, status.gpsGroundSpeed,
+        status.gpsHeading,
+        status.gpsValid, status.gpsConnected
+      );
+      
+      // Publish IMU data
+      mqttHandler.publishIMU(
+        status.imuX, status.imuY, status.imuZ,
+        status.imuGx, status.imuGy, status.imuGz,
+        status.pitch, status.roll, status.yaw,
+        status.imuValid
+      );
+      
+      // Publish relay states
+      mqttHandler.publishRelays(
+        status.relays_status[0], status.relays_status[1],
+        status.relays_status[2], status.relays_status[3]
+      );
+      
+      // Publish LED states
+      const char* ledIoStr = "OFF";
+      if (status.ledIo == GREEN) ledIoStr = "GREEN";
+      else if (status.ledIo == RED) ledIoStr = "RED";
+      else if (status.ledIo == ORANGE) ledIoStr = "ORANGE";
+      mqttHandler.publishLEDs(status.ledInternal, ledIoStr);
+      
+      // Publish sensor states
+      mqttHandler.publishSensors(
+        status.optos_status[0], status.optos_status[1],
+        status.optos_status[2], status.optos_status[3],
+        status.button_tech
+      );
+    }
+    lastMQTTPublish = millis();
+  }
+  
+  // 4. Broadcast Status via UDP (Monitoring)
   static unsigned long lastBroadcast = 0;
   if (millis() - lastBroadcast > UDP_BROADCAST_INTERVAL) {
     // Generate status JSON
@@ -1041,8 +1104,7 @@ void loop()
     lastBroadcast = millis();
   }
   
-  // 3. Regular maintenance tasks
-  update_hw_status();
+  // 5. Regular maintenance tasks
   write_status_to_serial();
   check_relay_auto_reset();
   
