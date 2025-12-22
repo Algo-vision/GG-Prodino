@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Prodino IoT Dashboard</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-content">
+                <h1 class="title">
+                    <span class="icon">📡</span>
+                    Prodino IoT Dashboard
+                </h1>
+                <div class="status-indicator" id="connectionStatus">
+                    <div class="status-dot offline"></div>
+                    <span>Connecting...</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <main class="dashboard">
+            <!-- GPS Section -->
+            <section class="card gps-card">
+                <div class="card-header">
+                    <h2>🌍 GPS Location</h2>
+                    <span class="badge" id="gpsValidBadge">No Fix</span>
+                </div>
+                <div class="card-body">
+                    <div class="gps-grid">
+                        <div class="gps-item">
+                            <span class="label">Latitude</span>
+                            <span class="value" id="gpsLat">--</span>
+                        </div>
+                        <div class="gps-item">
+                            <span class="label">Longitude</span>
+                            <span class="value" id="gpsLng">--</span>
+                        </div>
+                        <div class="gps-item">
+                            <span class="label">Altitude</span>
+                            <span class="value" id="gpsAlt">--</span>
+                        </div>
+                        <div class="gps-item">
+                            <span class="label">Ground Speed</span>
+                            <span class="value" id="gpsGroundSpeed">--</span>
+                        </div>
+                        <div class="gps-item">
+                            <span class="label">Heading</span>
+                            <span class="value" id="gpsHeading">--</span>
+                        </div>
+                        <div class="gps-item">
+                            <span class="label">Connected</span>
+                            <span class="value" id="gpsConnected">--</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- IMU Orientation -->
+            <section class="card imu-card">
+                <div class="card-header">
+                    <h2>🎯 IMU Orientation</h2>
+                    <span class="badge valid" id="imuValidBadge">Valid</span>
+                </div>
+                <div class="card-body">
+                    <div class="orientation-visual">
+                        <div class="orientation-item">
+                            <div class="orientation-label">Pitch</div>
+                            <div class="orientation-value" id="pitch">0.0°</div>
+                            <div class="orientation-bar">
+                                <div class="orientation-fill" id="pitchBar" style="width: 50%"></div>
+                            </div>
+                        </div>
+                        <div class="orientation-item">
+                            <div class="orientation-label">Roll</div>
+                            <div class="orientation-value" id="roll">0.0°</div>
+                            <div class="orientation-bar">
+                                <div class="orientation-fill" id="rollBar" style="width: 50%"></div>
+                            </div>
+                        </div>
+                        <div class="orientation-item">
+                            <div class="orientation-label">Yaw</div>
+                            <div class="orientation-value" id="yaw">0.0°</div>
+                            <div class="orientation-bar">
+                                <div class="orientation-fill yaw" id="yawBar" style="width: 50%"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- IMU Sensors -->
+            <section class="card sensor-card">
+                <div class="card-header">
+                    <h2>📊 IMU Sensors</h2>
+                </div>
+                <div class="card-body">
+                    <div class="sensor-grid">
+                        <div class="sensor-group">
+                            <h3>Accelerometer (g)</h3>
+                            <div class="sensor-values">
+                                <div class="sensor-item">
+                                    <span class="axis">X</span>
+                                    <span class="sensor-value" id="accelX">0.00</span>
+                                </div>
+                                <div class="sensor-item">
+                                    <span class="axis">Y</span>
+                                    <span class="sensor-value" id="accelY">0.00</span>
+                                </div>
+                                <div class="sensor-item">
+                                    <span class="axis">Z</span>
+                                    <span class="sensor-value" id="accelZ">0.00</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="sensor-group">
+                            <h3>Gyroscope (°/s)</h3>
+                            <div class="sensor-values">
+                                <div class="sensor-item">
+                                    <span class="axis">X</span>
+                                    <span class="sensor-value" id="gyroX">0.00</span>
+                                </div>
+                                <div class="sensor-item">
+                                    <span class="axis">Y</span>
+                                    <span class="sensor-value" id="gyroY">0.00</span>
+                                </div>
+                                <div class="sensor-item">
+                                    <span class="axis">Z</span>
+                                    <span class="sensor-value" id="gyroZ">0.00</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Relays & LEDs -->
+            <section class="card controls-card">
+                <div class="card-header">
+                    <h2>🔌 Relays & LEDs</h2>
+                </div>
+                <div class="card-body">
+                    <div class="controls-grid">
+                        <div class="control-group">
+                            <h3>Relays</h3>
+                            <div class="relays">
+                                <div class="relay" id="relay0">
+                                    <div class="relay-indicator off"></div>
+                                    <span>Relay 0</span>
+                                </div>
+                                <div class="relay" id="relay1">
+                                    <div class="relay-indicator off"></div>
+                                    <span>Relay 1</span>
+                                </div>
+                                <div class="relay" id="relay2">
+                                    <div class="relay-indicator off"></div>
+                                    <span>Relay 2</span>
+                                </div>
+                                <div class="relay" id="relay3">
+                                    <div class="relay-indicator off"></div>
+                                    <span>Relay 3</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="control-group">
+                            <h3>LEDs</h3>
+                            <div class="leds">
+                                <div class="led-item">
+                                    <span>Internal</span>
+                                    <div class="led-indicator off" id="ledInternal"></div>
+                                </div>
+                                <div class="led-item">
+                                    <span>IO LED</span>
+                                    <div class="led-indicator off" id="ledIO"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Sensors Status -->
+            <section class="card status-card">
+                <div class="card-header">
+                    <h2>⚡ Sensor Status</h2>
+                </div>
+                <div class="card-body">
+                    <div class="status-grid">
+                        <div class="status-item">
+                            <span class="label">Opto 0</span>
+                            <span class="status-value" id="opto0">OFF</span>
+                        </div>
+                        <div class="status-item">
+                            <span class="label">Opto 1</span>
+                            <span class="status-value" id="opto1">OFF</span>
+                        </div>
+                        <div class="status-item">
+                            <span class="label">Opto 2</span>
+                            <span class="status-value" id="opto2">OFF</span>
+                        </div>
+                        <div class="status-item">
+                            <span class="label">Opto 3</span>
+                            <span class="status-value" id="opto3">OFF</span>
+                        </div>
+                        <div class="status-item">
+                            <span class="label">Tech Button</span>
+                            <span class="status-value" id="buttonTech">Released</span>
+                        </div>
+                        <div class="status-item">
+                            <span class="label">Last Update</span>
+                            <span class="status-value" id="lastUpdate">--</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <p>Real-time MQTT data stream • Updates every second</p>
+        </footer>
+    </div>
+
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>

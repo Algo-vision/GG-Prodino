@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GRK | MISSION CONTROL</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+</head>
+
+<body>
+    <div class="app-container">
+        <header>
+            <div class="logo-section">
+                <div class="logo-mark">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"
+                        stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
+                    </svg>
+                </div>
+                <h1>GRK Mission Control</h1>
+            </div>
+            <div class="system-status">
+                <div class="status-item">
+                    <div id="mqtt-status" class="status-indicator"></div>
+                    <span>MQTT LINK</span>
+                </div>
+                <div class="status-item">
+                    <div id="device-status" class="status-indicator"></div>
+                    <span>DEVICE LINK</span>
+                </div>
+                <div class="status-item">
+                    <span id="last-seen">LAST SEEN: NEVER</span>
+                </div>
+            </div>
+        </header>
+
+        <main class="dashboard-grid">
+            <!-- GPS & NAVIGATION -->
+            <section class="card gps-card">
+                <div class="card-title">
+                    <span>GPS & Navigation</span>
+                    <span id="gps-valid" class="status-pill">NO FIX</span>
+                </div>
+                <div class="data-row">
+                    <span class="data-label">Latitude</span>
+                    <span id="gps-lat" class="data-value">0.000000</span>
+                </div>
+                <div class="data-row">
+                    <span class="data-label">Longitude</span>
+                    <span id="gps-lng" class="data-value">0.000000</span>
+                </div>
+                <div class="data-row">
+                    <span class="data-label">Altitude</span>
+                    <span id="gps-alt" class="data-value">0.0 m</span>
+                </div>
+                <div class="data-row">
+                    <span class="data-label">Ground Speed</span>
+                    <span id="gps-speed" class="data-value highlight">0.0 km/h</span>
+                </div>
+                <div class="data-row">
+                    <span class="data-label">Heading</span>
+                    <span id="gps-heading" class="data-value">0.0°</span>
+                </div>
+            </section>
+
+            <!-- IMU ORIENTATION -->
+            <section class="card imu-card">
+                <div class="card-title">
+                    <span>IMU Orientation</span>
+                    <span id="imu-valid" class="status-pill">INVALID</span>
+                </div>
+                <div class="imu-visual">
+                    <div class="imu-item">
+                        <div class="data-row">
+                            <span class="data-label">Pitch</span>
+                            <span id="pitch-val" class="data-value">0.0°</span>
+                        </div>
+                    </div>
+                    <div class="imu-item">
+                        <div class="data-row">
+                            <span class="data-label">Roll</span>
+                            <span id="roll-val" class="data-value">0.0°</span>
+                        </div>
+                    </div>
+                    <div class="imu-item">
+                        <div class="data-row">
+                            <span class="data-label">Yaw</span>
+                            <span id="yaw-val" class="data-value">0.0°</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- RAW SENSORS -->
+            <section class="card sensor-card">
+                <div class="card-title">Raw Telemetry</div>
+                <div class="data-row">
+                    <span class="data-label">Accel X/Y/Z</span>
+                    <span id="accel-raw" class="data-value">0.00 / 0.00 / 0.00</span>
+                </div>
+                <div class="data-row">
+                    <span class="data-label">Gyro X/Y/Z</span>
+                    <span id="gyro-raw" class="data-value">0.00 / 0.00 / 0.00</span>
+                </div>
+                <div class="data-row">
+                    <span class="data-label">Opto Inputs</span>
+                    <div style="display: flex; gap: 0.5rem;">
+                        <span id="opto-0" class="status-pill">O1</span>
+                        <span id="opto-1" class="status-pill">O2</span>
+                        <span id="opto-2" class="status-pill">O3</span>
+                        <span id="opto-3" class="status-pill">O4</span>
+                    </div>
+                </div>
+                <div class="data-row">
+                    <span class="data-label">Tech Button</span>
+                    <span id="btn-tech" class="status-pill">RELEASED</span>
+                </div>
+            </section>
+
+            <!-- HARDWARE CONTROLS -->
+            <section class="card control-card">
+                <div class="card-title">Hardware Status</div>
+                <div class="controls-grid">
+                    <div class="control-item">
+                        <span class="data-label">Relay 1</span>
+                        <span id="relay-0" class="status-pill">OFF</span>
+                    </div>
+                    <div class="control-item">
+                        <span class="data-label">Relay 2</span>
+                        <span id="relay-1" class="status-pill">OFF</span>
+                    </div>
+                    <div class="control-item">
+                        <span class="data-label">Relay 3</span>
+                        <span id="relay-2" class="status-pill">OFF</span>
+                    </div>
+                    <div class="control-item">
+                        <span class="data-label">Relay 4</span>
+                        <span id="relay-3" class="status-pill">OFF</span>
+                    </div>
+                    <div class="control-item">
+                        <span class="data-label">Internal LED</span>
+                        <span id="led-int" class="status-pill">OFF</span>
+                    </div>
+                    <div class="control-item">
+                        <span class="data-label">IO Status LED</span>
+                        <span id="led-io" class="status-pill">OFF</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- SYSTEM LOGS -->
+            <section class="card telemetry-card">
+                <div class="card-title">Live Telemetry Stream</div>
+                <div id="log-container"
+                    style="height: 200px; overflow-y: auto; font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; color: var(--text-dim);">
+                    <div style="color: var(--accent-secondary)">[SYSTEM] Initializing stream...</div>
+                </div>
+            </section>
+
+            <!-- WORLD MAP -->
+            <section class="card map-card">
+                <div class="card-title">
+                    <span>Live Mission Map</span>
+                    <span id="map-status" class="status-pill">INITIALIZING</span>
+                </div>
+                <div id="map" style="width: 100%; border-radius: 8px; overflow: hidden;"></div>
+            </section>
+        </main>
+    </div>
+
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="app.js"></script>
+</body>
+
+</html>

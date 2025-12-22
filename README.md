@@ -68,6 +68,45 @@ This project provides firmware and API for the G.G. Controller Key functionaliti
 
 **Note:** UDP is unreliable - occasional packet loss is normal and expected. The GUI handles this gracefully with a fallback HTTP poll every 10 seconds.
 
+## MQTT Integration
+
+**New in v1.5:** The device now supports MQTT for robust, asynchronous telemetry and cloud integration.
+- **Broker:** Configurable in `include/mqtt_handler.hpp` (default: RUTX12 or local broker).
+- **Topics:**
+  - `prodino/gps/position`: Latitude and Longitude.
+  - `prodino/gps/velocity`: Ground speed.
+  - `prodino/gps/heading`: Absolute heading.
+  - `prodino/imu/accel`: Raw accelerometer data.
+  - `prodino/imu/gyro`: Raw gyroscope data.
+  - `prodino/imu/orientation`: Pitch, Roll, and Yaw.
+  - `prodino/sensors/optos`: Optocoupler states.
+  - `prodino/sensors/button_tech`: Technician button state.
+  - `prodino/relays/state`: Current relay states.
+
+## GRK Mission Control (Web UI)
+
+A modern, real-time web dashboard located in `prodino_web_ui/`.
+- **Real-time Data:** Powered by Socket.io for sub-second latency.
+- **World Map:** Integrated Leaflet map for live GPS tracking and historical path plotting.
+- **Responsive Design:** Optimized for both desktop and mobile monitoring.
+- **Tech Stack:** Node.js, Express, Socket.io, Leaflet.js.
+
+## MQTT Debug Server
+
+Located in `mqtt_server/`, this Python-based utility provides:
+- **Live Subscription:** Monitors all `prodino/#` topics.
+- **Data Logging:** Useful for debugging telemetry streams without the full Web UI.
+- **Bridge Capabilities:** Can be extended to bridge local MQTT data to other services.
+
+## Documentation
+
+Detailed setup guides are available in the `docs/` directory:
+- **[Local Development Setup](docs/local_setup/LOCAL_DEVELOPMENT_SETUP.md):** How to set up the local environment, compilers, and dependencies.
+- **[Cloud Setup Guide](docs/cloud_setup/):** Comprehensive guides for AWS IoT Core, EC2, and RUTX12 bridge configuration.
+  - [AWS IoT Console Setup](docs/cloud_setup/AWS_IOT_CONSOLE_SETUP.md)
+  - [AWS EC2 Dashboard Setup](docs/cloud_setup/AWS_EC2_DASHBOARD_SETUP.md)
+  - [RUTX12 AWS Bridge Setup](docs/cloud_setup/RUTX12_AWS_BRIDGE_SETUP.md)
+
 ## Multi-Session Support
 
 The device supports up to **5 concurrent authenticated sessions**, allowing multiple users to connect simultaneously:

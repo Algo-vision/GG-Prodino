@@ -10,3 +10,6 @@ __pycache__/
 .ipynb_checkpoints/
 build/
 GG-GRK-GUI-*.spec
+prodino_web_ui/node_modules
+prodino_web_ui/certs
+keys/
