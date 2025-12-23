@@ -54,3 +54,24 @@ This guide describes how to set up AWS IoT Core to receive data from the Prodino
 1.  In the AWS IoT Core menu, go to **Settings** (at the bottom of the left sidebar).
 2.  Copy the **Device data endpoint** (e.g., `aa0ttgw7natni-ats.iot.eu-north-1.amazonaws.com`).
 3.  This endpoint is used by both the RUTX12 and the Node.js backend.
+
+## 7. Backend (Dashboard) Certificates
+The Node.js backend needs its own set of certificates to connect to AWS IoT Core. You have two options:
+
+### Option A: Create a new "Thing" (Recommended for organization)
+1.  Repeat **Steps 1-4** to create another "Thing" named `GRK_Dashboard_Backend`.
+2.  Download the certificates and keys.
+
+### Option B: Create only a Certificate (Simpler)
+1.  In the AWS IoT Core menu, go to **Security -> Certificates**.
+2.  Click **Create certificate**.
+3.  Select **Auto-generate a new certificate** and click **Create**.
+4.  Download the **Device certificate**, **Private key**, and **Amazon Root CA 1**.
+5.  Click **Activate**.
+6.  Go to the **Policies** tab of the new certificate and click **Attach policy**.
+7.  Select `GRK_FullAccess` and click **Attach**.
+
+### Final Step: Rename and Upload
+1.  Rename the downloaded files for clarity (e.g., `backend-private.pem.key`, `backend-cert.pem.crt`, `AmazonRootCA1.pem`).
+2.  These files will be placed in the `prodino_web_ui/certs/` directory on your server.
+3. please update the .env file with the new paths.

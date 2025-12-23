@@ -28,6 +28,28 @@ Open a terminal on your laptop and SSH into the instance:
 ssh -i "path/to/your-key.pem" ubuntu@<YOUR_PUBLIC_IP>
 ```
 
+if there is an error like this:
+```bash
+ssh -i "path/to/your-key.pem" ubuntu@<YOUR_PUBLIC_IP>
+The authenticity of host '<YOUR_PUBLIC_IP> (<YOUR_PUBLIC_IP>)' can't be established.
+ED25519 key fingerprint is SHA256:zIw1zbA94CoWQ29q/c5w89GWhN2uv1hzpkXnQpXR9v8.
+This key is not known by any other names.
+Are you sure you want to continue connecting (yes/no/[fingerprint])? yes
+Warning: Permanently added '<YOUR_PUBLIC_IP>' (ED25519) to the list of known hosts.
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+@         WARNING: UNPROTECTED PRIVATE KEY FILE!          @
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+Permissions 0664 for 'path/to/your-key.pem' are too open.
+It is required that your private key files are NOT accessible by others.
+This private key will be ignored.
+Load key "path/to/your-key.pem": bad permissions
+ubuntu@<YOUR_PUBLIC_IP>: Permission denied (publickey).
+```
+please do this:
+```bash
+chmod 600 path/to/your-key.pem
+```
+
 Once connected, run:
 ```bash
 # Update system
@@ -57,6 +79,36 @@ On the **VPS terminal**:
 1.  Navigate to the folder: `cd prodino_web_ui`
 2.  Install dependencies: `npm install`
 3.  Update the `.env` file with your AWS IoT Endpoint and certificate paths.
+
+### Detailed `.env` Configuration
+Create or edit the `.env` file in the `prodino_web_ui` directory:
+```bash
+nano .env
+```
+
+Paste and customize the following configuration:
+```env
+# AWS IoT Core Endpoint (from IoT Core Settings)
+MQTT_BROKER=mqtts://aa0ttgw7natni-ats.iot.eu-north-1.amazonaws.com
+
+# Paths to the certificates uploaded in Step 4
+MQTT_KEY_PATH=./certs/backend-private.pem.key
+MQTT_CERT_PATH=./certs/backend-cert.pem.crt
+MQTT_CA_PATH=./certs/AmazonRootCA1.pem
+
+# Port configuration
+BACKEND_PORT=5555
+UI_PORT=5556
+```
+
+**Variable Descriptions:**
+*   **MQTT_BROKER:** Your unique AWS IoT Data Endpoint. Must start with `mqtts://`.
+*   **MQTT_KEY_PATH:** Path to your private key file (e.g., `...-private.pem.key`).
+*   **MQTT_CERT_PATH:** Path to your device certificate (e.g., `...-certificate.pem.crt`).
+*   **MQTT_CA_PATH:** Path to the `AmazonRootCA1.pem` certificate.
+*   **BACKEND_PORT:** The port the Socket.io server will listen on (default: 5555).
+*   **UI_PORT:** The port the Web UI server will listen on (default: 5556).
+
 4.  Start the applications:
     ```bash
     pm2 start server.js --name "grk-backend"
