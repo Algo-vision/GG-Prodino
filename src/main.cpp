@@ -375,8 +375,11 @@ void setup()
 
   loadConfig(); // Load configuration from LittleFS
   KMPProDinoMKRZero.init(ProDino_MKR_Zero_Ethernet);
+  IPAddress subnet(255, 255, 0, 0);
+  IPAddress gateway(192, 168, 100, 1); 
+  IPAddress dns(8, 8, 8, 8);
   // Start the Ethernet connection and the server.
-  Ethernet.begin(_mac, current_ip);
+  Ethernet.begin(_mac, current_ip, dns, gateway, subnet);
   _server.begin();
   _gg_hal.init();
   // Check for technician mode: button_tech held for 5 seconds during startup

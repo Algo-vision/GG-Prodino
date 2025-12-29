@@ -14,7 +14,7 @@
 #include <ArduinoJson.h>
 
 // MQTT Broker Configuration
-#define MQTT_BROKER_IP "192.168.1.50"  // Your PC IP (change to "192.168.1.1" for RUTX12)
+#define MQTT_BROKER_IP "192.168.100.131"  // Your PC IP (change to "192.168.1.1" for RUTX12)
 #define MQTT_BROKER_PORT 1883
 #define MQTT_CLIENT_ID "prodino_001"
 #define MQTT_USERNAME ""  // Empty for anonymous, set when authentication enabled
