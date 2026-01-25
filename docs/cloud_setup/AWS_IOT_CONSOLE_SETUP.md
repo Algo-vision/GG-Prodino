@@ -74,4 +74,51 @@ The Node.js backend needs its own set of certificates to connect to AWS IoT Core
 ### Final Step: Rename and Upload
 1.  Rename the downloaded files for clarity (e.g., `backend-private.pem.key`, `backend-cert.pem.crt`, `AmazonRootCA1.pem`).
 2.  These files will be placed in the `prodino_web_ui/certs/` directory on your server.
-3. please update the .env file with the new paths.
+3.  Update the `.env` file with the new paths.
+
+---
+
+## 8. Multi-Device Support
+
+When deploying multiple Prodino devices, each device can share the same AWS IoT policy or have individual Things.
+
+### MQTT Topic Structure
+Each device publishes to topics prefixed with its serial number:
+```
+prodino/{serial_number}/gps/position
+prodino/{serial_number}/imu/orientation
+prodino/{serial_number}/sensors/optos
+...
+```
+
+**Example with 3 devices:**
+```
+prodino/SN0001/gps/position
+prodino/SN0002/gps/position  
+prodino/SN0003/gps/position
+```
+
+### Backend Subscription
+The backend subscribes to `prodino/#` which captures all devices:
+```javascript
+client.subscribe('prodino/#');
+```
+
+### Recommended Setup for Multiple Devices
+
+**Option 1: Shared Policy (Simpler)**
+- Create one IoT policy (`GRK_FullAccess`)
+- Each device uses the same policy but different certificates
+
+**Option 2: Individual Things (Better Tracking)**
+- Create a Thing for each device (e.g., `GRK_SN0001`, `GRK_SN0002`)
+- Helps track individual device connections in AWS Console
+
+### Device Serial Number
+Each Prodino device has a unique serial number burned to flash. To set/view:
+```
+# In Serial Monitor (technician mode):
+SET_SN:SN0001
+GET_SN
+```
+

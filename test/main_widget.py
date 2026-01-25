@@ -173,7 +173,25 @@ class MainWidget(QWidget):
         ip_config_layout.addWidget(self.save_ip_btn, 4, 0, 1, 2)
 
         ip_config_box.setLayout(ip_config_layout)
+        ip_config_box.setLayout(ip_config_layout)
         layout.addWidget(ip_config_box)
+
+        # Serial Number Configuration
+        sn_box = QGroupBox("Serial Number Configuration")
+        sn_layout = QHBoxLayout()
+        
+        self.sn_label = QLabel("Current SN: Unknown")
+        self.sn_input = QLineEdit()
+        self.sn_input.setPlaceholderText("2000-2999")
+        self.set_sn_btn = QPushButton("Set SN")
+        self.set_sn_btn.clicked.connect(self.set_serial_number)
+        
+        sn_layout.addWidget(self.sn_label)
+        sn_layout.addWidget(self.sn_input)
+        sn_layout.addWidget(self.set_sn_btn)
+        
+        sn_box.setLayout(sn_layout)
+        layout.addWidget(sn_box)
 
         # Relay controls
         relay_box = QGroupBox("Relays")
@@ -247,6 +265,9 @@ class MainWidget(QWidget):
         self.setLayout(main_layout)
         
         self.firmware_path = None
+        
+        # Initial fetch of serial number
+        QTimer.singleShot(1000, self.refresh_serial_number)
 
     def update_status(self):
         status = self.api_client.get_status()
@@ -394,3 +415,29 @@ class MainWidget(QWidget):
                 print(f"save_ip_configuration: Failed to save IP configuration: {msg}")
                 QMessageBox.critical(self, "IP Configuration Failed", f"Failed to save IP configuration: {msg}")
                 self.update_status() # Refresh to show the original IPs
+
+    def set_serial_number(self):
+        sn = self.sn_input.text()
+        if not sn.isdigit() or not (2000 <= int(sn) <= 2999):
+            QMessageBox.warning(self, "Invalid Serial Number", "Serial number must be a number between 2000 and 2999.")
+            return
+
+        if not self.technician_mode:
+            QMessageBox.warning(self, "Technician Mode Required", "You must be in Technician Mode to set the serial number.\nHold the button on the device during startup.")
+            return
+
+        resp = self.api_client.set_serial_number(sn)
+        if resp and resp.get("success"):
+            QMessageBox.information(self, "Success", f"Serial number set to {resp.get('message')}. Device will reboot.")
+            self.refresh_serial_number()
+        elif resp and resp.get("error"):
+            QMessageBox.critical(self, "Error", f"Failed to set serial number: {resp.get('message')}")
+        else:
+            QMessageBox.critical(self, "Error", "Failed to communicate with device.")
+
+    def refresh_serial_number(self):
+        resp = self.api_client.get_serial_number()
+        if resp and resp.get("type") == "serial_number":
+            sn = resp.get("serial_number", "Unknown")
+            self.sn_label.setText(f"Current SN: {sn}")
+

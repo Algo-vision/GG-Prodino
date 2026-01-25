@@ -7,6 +7,9 @@
     <title>GRK | MISSION CONTROL</title>
     <link rel="stylesheet" href="style.css">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 </head>
 
 <body>
@@ -26,9 +29,8 @@
                     <div id="mqtt-status" class="status-indicator"></div>
                     <span>MQTT LINK</span>
                 </div>
-                <div class="status-item">
-                    <div id="device-status" class="status-indicator"></div>
-                    <span>DEVICE LINK</span>
+                <div class="device-count-pill" id="device-count-pill">
+                    <span id="device-count">0</span>/<span id="device-total">0</span> Online
                 </div>
                 <div class="status-item">
                     <span id="last-seen">LAST SEEN: NEVER</span>
@@ -36,7 +38,43 @@
             </div>
         </header>
 
-        <main class="dashboard-grid">
+        <!-- FLEET OVERVIEW SECTION -->
+        <section class="fleet-overview" id="fleet-overview">
+            <div class="fleet-header">
+                <h2>Device Fleet</h2>
+                <div class="fleet-controls">
+                    <button class="btn-refresh" id="btn-refresh-fleet" title="Refresh device list">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M23 4v6h-6M1 20v-6h6M20.49 9A9 9 0 0 0 5.64 5.64L1 10M23 14l-4.64 4.36A9 9 0 0 1 3.51 15"/>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+            <div class="device-grid" id="device-grid">
+                <!-- Device cards will be dynamically inserted here -->
+                <div class="device-card placeholder">
+                    <div class="device-card-icon">📡</div>
+                    <p>Waiting for devices...</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- SELECTED DEVICE INDICATOR -->
+        <div class="selected-device-banner" id="selected-device-banner" style="display: none;">
+            <button class="btn-back" id="btn-back-to-fleet">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M19 12H5M12 19l-7-7 7-7"/>
+                </svg>
+                Fleet
+            </button>
+            <div class="selected-device-info">
+                <span class="label">VIEWING DEVICE:</span>
+                <span class="device-sn" id="selected-device-sn">--</span>
+                <span class="device-status-badge" id="selected-device-status">--</span>
+            </div>
+        </div>
+
+        <main class="dashboard-grid" id="dashboard-grid">
             <!-- GPS & NAVIGATION -->
             <section class="card gps-card">
                 <div class="card-title">

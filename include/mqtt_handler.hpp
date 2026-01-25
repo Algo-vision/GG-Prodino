@@ -3,6 +3,7 @@
  * 
  * MQTT publishing handler for Prodino IoT device
  * Publishes sensor data to MQTT broker on configured topics
+ * Topics include device serial number for multi-device support
  */
 
 #ifndef MQTT_HANDLER_HPP
@@ -16,27 +17,10 @@
 // MQTT Broker Configuration
 #define MQTT_BROKER_IP "192.168.100.131"  // Your PC IP (change to "192.168.1.1" for RUTX12)
 #define MQTT_BROKER_PORT 1883
-#define MQTT_CLIENT_ID "prodino_001"
 #define MQTT_USERNAME ""  // Empty for anonymous, set when authentication enabled
 #define MQTT_PASSWORD ""  // Empty for anonymous
 const unsigned long MQTT_PUBLISH_INTERVAL = 1000; // Publish every 1 second
 const unsigned long MQTT_RECONNECT_INTERVAL = 5000; // Try reconnect every 5 seconds
-
-// MQTT Topics
-#define TOPIC_STATUS "prodino/status"
-#define TOPIC_GPS_POSITION "prodino/gps/position"
-#define TOPIC_GPS_VELOCITY "prodino/gps/velocity"
-#define TOPIC_GPS_HEADING "prodino/gps/heading"
-#define TOPIC_IMU_ACCEL "prodino/imu/accel"
-#define TOPIC_IMU_GYRO "prodino/imu/gyro"
-#define TOPIC_IMU_ORIENTATION "prodino/imu/orientation"
-#define TOPIC_RELAYS_STATE "prodino/relays/state"
-#define TOPIC_LEDS_INTERNAL "prodino/leds/internal"
-#define TOPIC_LEDS_IO "prodino/leds/io"
-#define TOPIC_SENSORS_OPTOS "prodino/sensors/optos"
-#define TOPIC_SENSORS_BUTTON "prodino/sensors/button_tech"
-#define TOPIC_VALIDITY_GPS "prodino/validity/gps"
-#define TOPIC_VALIDITY_IMU "prodino/validity/imu"
 
 class MQTTHandler {
 private:
@@ -46,27 +30,47 @@ private:
     unsigned long lastReconnectAttempt;
     bool connected;
     
+    // Serial number and dynamic topic prefix
+    String serialNumber;
+    String topicPrefix;
+    String clientId;
+    
+    // Build a complete topic path
+    String getTopic(const char* suffix) {
+        return topicPrefix + String(suffix);
+    }
+    
 public:
     MQTTHandler() : mqttClient(ethClient), lastPublishTime(0), lastReconnectAttempt(0), connected(false) {}
     
-    void begin() {
+    void begin(const String& sn) {
+        serialNumber = sn;
+        topicPrefix = "prodino/" + serialNumber + "/";
+        clientId = "prodino_" + serialNumber;
+        
         mqttClient.setServer(MQTT_BROKER_IP, MQTT_BROKER_PORT);
-        Serial.println("MQTT: Handler initialized");
+        Serial.println("MQTT: Handler initialized for device: " + serialNumber);
         Serial.print("MQTT: Broker configured at ");
         Serial.print(MQTT_BROKER_IP);
         Serial.print(":");
         Serial.println(MQTT_BROKER_PORT);
+        Serial.println("MQTT: Topic prefix: " + topicPrefix);
+    }
+    
+    // Legacy begin() for backward compatibility
+    void begin() {
+        begin("DEFAULT");
     }
     
     bool connectToMQTTBroker() {
-        Serial.print("MQTT: Attempting connection to broker... ");
+        Serial.print("MQTT: Attempting connection to broker as " + clientId + "... ");
         
-        // Try to connect
+        // Try to connect with device-specific client ID
         bool result;
         if (strlen(MQTT_USERNAME) > 0) {
-            result = mqttClient.connect(MQTT_CLIENT_ID, MQTT_USERNAME, MQTT_PASSWORD);
+            result = mqttClient.connect(clientId.c_str(), MQTT_USERNAME, MQTT_PASSWORD);
         } else {
-            result = mqttClient.connect(MQTT_CLIENT_ID);
+            result = mqttClient.connect(clientId.c_str());
         }
         
         if (result) {
@@ -100,13 +104,17 @@ public:
         return connected && mqttClient.connected();
     }
     
+    String getSerialNumber() {
+        return serialNumber;
+    }
+    
     void publishStatus(JsonDocument& statusDoc) {
         if (!isConnected()) return;
         
         String jsonString;
         serializeJson(statusDoc, jsonString);
         
-        if (mqttClient.publish(TOPIC_STATUS, jsonString.c_str())) {
+        if (mqttClient.publish(getTopic("status").c_str(), jsonString.c_str())) {
             Serial.println("MQTT: Published status");
         }
     }
@@ -123,7 +131,7 @@ public:
         posDoc["alt"] = alt;
         String posJson;
         serializeJson(posDoc, posJson);
-        mqttClient.publish(TOPIC_GPS_POSITION, posJson.c_str());
+        mqttClient.publish(getTopic("gps/position").c_str(), posJson.c_str());
         
         // GPS Velocity
         JsonDocument velDoc;
@@ -133,11 +141,11 @@ public:
         velDoc["ground"] = groundSpeed;
         String velJson;
         serializeJson(velDoc, velJson);
-        mqttClient.publish(TOPIC_GPS_VELOCITY, velJson.c_str());
+        mqttClient.publish(getTopic("gps/velocity").c_str(), velJson.c_str());
         
         // GPS Heading
         String headingStr = String(heading, 2);
-        mqttClient.publish(TOPIC_GPS_HEADING, headingStr.c_str());
+        mqttClient.publish(getTopic("gps/heading").c_str(), headingStr.c_str());
         
         // GPS Validity
         JsonDocument validDoc;
@@ -145,7 +153,7 @@ public:
         validDoc["connected"] = connected_status;
         String validJson;
         serializeJson(validDoc, validJson);
-        mqttClient.publish(TOPIC_VALIDITY_GPS, validJson.c_str());
+        mqttClient.publish(getTopic("validity/gps").c_str(), validJson.c_str());
     }
     
     void publishIMU(float ax, float ay, float az,
@@ -161,7 +169,7 @@ public:
         accelDoc["z"] = az;
         String accelJson;
         serializeJson(accelDoc, accelJson);
-        mqttClient.publish(TOPIC_IMU_ACCEL, accelJson.c_str());
+        mqttClient.publish(getTopic("imu/accel").c_str(), accelJson.c_str());
         
         // IMU Gyroscope
         JsonDocument gyroDoc;
@@ -170,7 +178,7 @@ public:
         gyroDoc["gz"] = gz;
         String gyroJson;
         serializeJson(gyroDoc, gyroJson);
-        mqttClient.publish(TOPIC_IMU_GYRO, gyroJson.c_str());
+        mqttClient.publish(getTopic("imu/gyro").c_str(), gyroJson.c_str());
         
         // IMU Orientation
         JsonDocument orientDoc;
@@ -179,11 +187,11 @@ public:
         orientDoc["yaw"] = yaw;
         String orientJson;
         serializeJson(orientDoc, orientJson);
-        mqttClient.publish(TOPIC_IMU_ORIENTATION, orientJson.c_str());
+        mqttClient.publish(getTopic("imu/orientation").c_str(), orientJson.c_str());
         
         // IMU Validity
         String validStr = valid ? "true" : "false";
-        mqttClient.publish(TOPIC_VALIDITY_IMU, validStr.c_str());
+        mqttClient.publish(getTopic("validity/imu").c_str(), validStr.c_str());
     }
     
     void publishRelays(bool r0, bool r1, bool r2, bool r3) {
@@ -198,7 +206,7 @@ public:
         
         String json;
         serializeJson(doc, json);
-        mqttClient.publish(TOPIC_RELAYS_STATE, json.c_str());
+        mqttClient.publish(getTopic("relays/state").c_str(), json.c_str());
     }
     
     void publishLEDs(bool internal, const char* ioColor) {
@@ -206,10 +214,10 @@ public:
         
         // Internal LED
         String internalStr = internal ? "true" : "false";
-        mqttClient.publish(TOPIC_LEDS_INTERNAL, internalStr.c_str());
+        mqttClient.publish(getTopic("leds/internal").c_str(), internalStr.c_str());
         
         // IO LED
-        mqttClient.publish(TOPIC_LEDS_IO, ioColor);
+        mqttClient.publish(getTopic("leds/io").c_str(), ioColor);
     }
     
     void publishSensors(bool opto0, bool opto1, bool opto2, bool opto3, bool button) {
@@ -225,11 +233,11 @@ public:
         
         String json;
         serializeJson(doc, json);
-        mqttClient.publish(TOPIC_SENSORS_OPTOS, json.c_str());
+        mqttClient.publish(getTopic("sensors/optos").c_str(), json.c_str());
         
         // Button
         String buttonStr = button ? "true" : "false";
-        mqttClient.publish(TOPIC_SENSORS_BUTTON, buttonStr.c_str());
+        mqttClient.publish(getTopic("sensors/button_tech").c_str(), buttonStr.c_str());
     }
     
     unsigned long getLastPublishTime() {
@@ -242,3 +250,4 @@ public:
 };
 
 #endif // MQTT_HANDLER_HPP
+

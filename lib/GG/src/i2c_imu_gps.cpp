@@ -64,8 +64,8 @@ bool readAccelerometer(float &ax, float &ay, float &az)
 
     // Convert raw to g (±2g)
     ax = ax_raw * 0.000061;
-ay = ay_raw * 0.000061;
-az = az_raw * 0.000061;
+    ay = ay_raw * 0.000061;
+    az = az_raw * 0.000061;
     return true;
 }
 
@@ -90,8 +90,8 @@ bool readGyroscope(float &gx, float &gy, float &gz)
     // Convert raw to dps (±245 dps)
     // Sensitivity for ±245 dps is 8.75 mdps/LSB = 0.00875 dps/LSB
     gx = gx_raw * 0.00875;
-gy = gy_raw * 0.00875;
-gz = gz_raw * 0.00875;
+    gy = gy_raw * 0.00875;
+    gz = gz_raw * 0.00875;
     return true;
 }
 
@@ -142,20 +142,35 @@ bool readGPSCoords(gps_data &data)
 
     data.ground_speed = gps.speed.kmph(); // Ground speed in km/h
     if (gps.course.isValid()) {
-        float heading_rad = gps.course.deg() * 3.314159265358979323846 / 180.0; // Corrected PI value
+        float course_deg = gps.course.deg();
+        
+        // Debugging for date/timestamp mixup issue
+        Serial.print("DEBUG: Raw GPS Course: "); Serial.println(course_deg);
+        Serial.print("DEBUG: GPS Date: "); Serial.println(gps.date.value());
+
+        // Range validation: if not in [0, 360], reset to 0
+        if (course_deg < 0.0 || course_deg > 360.0) {
+            course_deg = 0.0;
+        }
+
+        // COG is only valid if moving. Filter out noise if speed is too low (< 1.0 km/h)
+        if (data.ground_speed < 1.0) {
+             course_deg = 0.0; // Or keep previous value, but 0 is safer for now
+        }
+
+        // Convert to radians ONLY for speed calculation (sin/cos expect radians)
+        float heading_rad = course_deg * 3.14159265358979323846 / 180.0; 
         data.speed_north = data.ground_speed * cos(heading_rad);
         data.speed_east = data.ground_speed * sin(heading_rad);
+        
+        // Return the heading in degrees
+        data.heading = course_deg;
     } else {
         data.speed_north = 0.0;
         data.speed_east = 0.0;
+        data.heading = 0.0; 
     }
     data.speed_down = 0.0;  // Placeholder
-
-    if (gps.course.isValid()) {
-        data.heading = gps.course.deg(); // Absolute heading in degrees
-    } else {
-        data.heading = 0.0; // Set to 0 if heading is not valid
-    }
 
     // Set data.valid if any core data is valid
     data.valid = gps.location.isValid() || gps.date.isValid() || gps.time.isValid() || gps.speed.isValid() || gps.course.isValid();

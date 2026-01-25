@@ -13,3 +13,4 @@ GG-GRK-GUI-*.spec
 prodino_web_ui/node_modules
 prodino_web_ui/certs
 keys/
+prodino_web_ui/.env

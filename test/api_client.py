@@ -122,3 +122,35 @@ class ApiClient:
         except Exception as e:
             print(f"ApiClient.set_ip_config: An unexpected error occurred: {e}")
             return False, f"An unexpected error occurred: {e}"
+
+    def set_serial_number(self, serial_number):
+        payload = {"type": "set_serial_number", "token": self.token, "serial_number": str(serial_number)}
+        try:
+            response = requests.post(self.base_url, data=json.dumps(payload), timeout=5)
+            if response.status_code == 200:
+                return response.json()
+            if response.status_code == 401:
+                return {"error": "AUTH_ERROR"}
+            if response.status_code == 403:
+                return {"error": "FORBIDDEN", "message": "Technician mode required"}
+            return None
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
+            return None
+        except Exception as e:
+            print(f"Error setting serial number: {e}")
+            return None
+
+    def get_serial_number(self):
+        payload = {"type": "get_serial_number", "token": self.token}
+        try:
+            response = requests.post(self.base_url, data=json.dumps(payload), timeout=5)
+            if response.status_code == 200:
+                return response.json()
+            if response.status_code == 401:
+                return {"error": "AUTH_ERROR"}
+            return None
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
+            return None
+        except Exception as e:
+            print(f"Error getting serial number: {e}")
+            return None

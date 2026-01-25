@@ -4,39 +4,109 @@ const { Server } = require('socket.io');
 const mqtt = require('mqtt');
 const path = require('path');
 const cors = require('cors');
+const session = require('express-session');
 require('dotenv').config();
+
+// Auth modules
+const db = require('./db');
+const { passport, initializePassport, isAuthenticated, isAdmin, filterDevicesForUser } = require('./auth');
 
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
     cors: {
         origin: "*",
-        methods: ["GET", "POST"]
+        methods: ["GET", "POST"],
+        credentials: true
     }
 });
 
-app.use(cors());
-// Static serving removed from backend
+// Middleware
+app.use(cors({ origin: true, credentials: true }));
+app.use(express.json());
+
+// Session middleware
+app.use(session({
+    secret: process.env.SESSION_SECRET || 'grk-secret-change-in-production',
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+        secure: process.env.NODE_ENV === 'production',
+        maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+    }
+}));
+
+// Passport middleware
+app.use(passport.initialize());
+app.use(passport.session());
+
+// Initialize Passport with Google OAuth
+if (!initializePassport()) {
+    console.warn('⚠️ Google OAuth not configured - auth disabled');
+}
+
+// Seed admin users
+const adminEmails = process.env.ADMIN_EMAILS || '';
+if (adminEmails) {
+    db.seedAdmins(adminEmails);
+}
+
+// Serve static files (public pages)
+app.use(express.static(path.join(__dirname, 'public')));
 
 // Configuration
 const MQTT_BROKER = process.env.MQTT_BROKER || 'mqtt://localhost:1883';
 const PORT = process.env.BACKEND_PORT || 5555;
+const DEVICE_TIMEOUT_MS = 30000; // Device considered offline after 30 seconds
 
-// State Management
-let deviceState = {
-    connected: false,
-    lastSeen: null,
-    gps: { lat: 0, lng: 0, alt: 0, speed: 0, heading: 0, valid: false, connected: false },
-    imu: {
-        accel: { x: 0, y: 0, z: 0 },
-        gyro: { x: 0, y: 0, z: 0 },
-        orientation: { pitch: 0, roll: 0, yaw: 0 },
-        valid: false
-    },
-    relays: [false, false, false, false],
-    leds: { internal: false, io: 'OFF' },
-    sensors: { optos: [false, false, false, false], button: false }
-};
+// Multi-Device State Management
+const devices = new Map(); // Key: serialNumber, Value: deviceState
+
+// Create default state for a new device
+function createDefaultDeviceState(serialNumber) {
+    return {
+        serialNumber: serialNumber,
+        connected: false,
+        lastSeen: null,
+        gps: { lat: 0, lng: 0, alt: 0, speed: 0, heading: 0, valid: false, connected: false },
+        imu: {
+            accel: { x: 0, y: 0, z: 0 },
+            gyro: { x: 0, y: 0, z: 0 },
+            orientation: { pitch: 0, roll: 0, yaw: 0 },
+            valid: false
+        },
+        relays: [false, false, false, false],
+        leds: { internal: false, io: 'OFF' },
+        sensors: { optos: [false, false, false, false], button: false }
+    };
+}
+
+// Get device status (online/offline/degraded)
+function getDeviceStatus(device) {
+    if (!device.lastSeen) return 'unknown';
+    const timeSinceLastSeen = Date.now() - device.lastSeen;
+    if (timeSinceLastSeen > DEVICE_TIMEOUT_MS) return 'offline';
+    if (!device.gps.valid || !device.imu.valid) return 'degraded';
+    return 'online';
+}
+
+// Get all devices as array with status
+function getDeviceList() {
+    const deviceList = [];
+    devices.forEach((device, serialNumber) => {
+        deviceList.push({
+            serialNumber: serialNumber,
+            status: getDeviceStatus(device),
+            lastSeen: device.lastSeen,
+            gpsValid: device.gps.valid,
+            imuValid: device.imu.valid,
+            gpsLat: device.gps.lat,
+            gpsLng: device.gps.lng,
+            ledIo: device.leds.io
+        });
+    });
+    return deviceList;
+}
 
 const fs = require('fs');
 
@@ -66,14 +136,45 @@ const client = mqtt.connect(MQTT_BROKER, mqttOptions);
 
 client.on('connect', () => {
     console.log('Connected to MQTT Broker');
+    // Subscribe to all devices with wildcard for serial number
+    // Supports both old format (prodino/gps/...) and new format (prodino/{SN}/gps/...)
     client.subscribe('prodino/#', (err) => {
-        if (!err) console.log('Subscribed to prodino/#');
+        if (!err) console.log('Subscribed to prodino/# (all devices)');
     });
 });
 
 client.on('error', (err) => {
     console.error('MQTT Error:', err);
 });
+
+// Parse topic to extract serial number and data path
+// New format: prodino/{serialNumber}/{dataPath}
+// Legacy format: prodino/{dataPath} (uses "DEFAULT" as serial number)
+function parseTopicPath(topic) {
+    const parts = topic.split('/');
+    if (parts.length < 2 || parts[0] !== 'prodino') {
+        return null;
+    }
+
+    // Check if second part looks like a serial number (starts with SN, GRK, or is alphanumeric ID)
+    const potentialSN = parts[1];
+    const isSerialNumber = /^(SN|GRK|PRODINO)[A-Z0-9-]+$/i.test(potentialSN) ||
+        /^[A-Z]{2,4}[0-9]{3,6}$/i.test(potentialSN);
+
+    if (isSerialNumber && parts.length >= 3) {
+        // New format: prodino/SN0001/gps/position
+        return {
+            serialNumber: potentialSN.toUpperCase(),
+            dataPath: parts.slice(2).join('/')
+        };
+    } else {
+        // Legacy format: prodino/gps/position (single device, no serial number)
+        return {
+            serialNumber: 'DEFAULT',
+            dataPath: parts.slice(1).join('/')
+        };
+    }
+}
 
 client.on('message', (topic, message) => {
     const payload = message.toString();
@@ -84,44 +185,286 @@ client.on('message', (topic, message) => {
         data = payload;
     }
 
-    console.log(`← ${topic}: ${payload.substring(0, 80)}${payload.length > 80 ? '...' : ''}`);
-
-    deviceState.lastSeen = Date.now();
-    deviceState.connected = true;
-
-    // Update state based on topic
-    if (topic === 'prodino/gps/position') deviceState.gps = { ...deviceState.gps, ...data };
-    else if (topic === 'prodino/gps/velocity') deviceState.gps.speed = data.ground;
-    else if (topic === 'prodino/gps/heading') deviceState.gps.heading = parseFloat(data);
-    else if (topic === 'prodino/validity/gps') {
-        deviceState.gps.valid = data.valid;
-        deviceState.gps.connected = data.connected;
+    // Parse topic to get serial number and data path
+    const parsed = parseTopicPath(topic);
+    if (!parsed) {
+        console.log(`⚠️ Ignoring invalid topic: ${topic}`);
+        return;
     }
-    else if (topic === 'prodino/imu/accel') deviceState.imu.accel = data;
-    else if (topic === 'prodino/imu/gyro') deviceState.imu.gyro = { x: data.gx, y: data.gy, z: data.gz };
-    else if (topic === 'prodino/imu/orientation') deviceState.imu.orientation = data;
-    else if (topic === 'prodino/validity/imu') deviceState.imu.valid = (data === 'true' || data === true);
-    else if (topic === 'prodino/relays/state') deviceState.relays = data;
-    else if (topic === 'prodino/leds/internal') deviceState.leds.internal = (data === 'true' || data === true);
-    else if (topic === 'prodino/leds/io') deviceState.leds.io = data;
-    else if (topic === 'prodino/sensors/optos') deviceState.sensors.optos = data;
-    else if (topic === 'prodino/sensors/button_tech') deviceState.sensors.button = (data === 'true' || data === true);
+
+    const { serialNumber, dataPath } = parsed;
+
+    // Get or create device state
+    if (!devices.has(serialNumber)) {
+        console.log(`📱 New device discovered: ${serialNumber}`);
+        devices.set(serialNumber, createDefaultDeviceState(serialNumber));
+    }
+
+    const device = devices.get(serialNumber);
+    device.lastSeen = Date.now();
+    device.connected = true;
+
+    console.log(`← [${serialNumber}] ${dataPath}: ${payload.substring(0, 60)}${payload.length > 60 ? '...' : ''}`);
+
+    // Update device state based on data path
+    switch (dataPath) {
+        case 'gps/position':
+            device.gps = { ...device.gps, ...data };
+            break;
+        case 'gps/velocity':
+            device.gps.speed = data.ground;
+            break;
+        case 'gps/heading':
+            device.gps.heading = parseFloat(data);
+            break;
+        case 'validity/gps':
+            device.gps.valid = data.valid;
+            device.gps.connected = data.connected;
+            break;
+        case 'imu/accel':
+            device.imu.accel = data;
+            break;
+        case 'imu/gyro':
+            device.imu.gyro = { x: data.gx, y: data.gy, z: data.gz };
+            break;
+        case 'imu/orientation':
+            device.imu.orientation = data;
+            break;
+        case 'validity/imu':
+            device.imu.valid = (data === 'true' || data === true);
+            break;
+        case 'relays/state':
+            device.relays = data;
+            break;
+        case 'leds/internal':
+            device.leds.internal = (data === 'true' || data === true);
+            break;
+        case 'leds/io':
+            device.leds.io = data;
+            break;
+        case 'sensors/optos':
+            device.sensors.optos = data;
+            break;
+        case 'sensors/button_tech':
+            device.sensors.button = (data === 'true' || data === true);
+            break;
+    }
 
     // Broadcast to all connected web clients
-    io.emit('device_update', deviceState);
+    io.emit('device_update', {
+        serialNumber: serialNumber,
+        device: device,
+        deviceList: getDeviceList()
+    });
 });
 
 // Socket.io Connection
 io.on('connection', (socket) => {
-    console.log('Web Client Connected');
-    socket.emit('device_update', deviceState);
+    console.log('🌐 Web Client Connected');
+
+    // Send current device list
+    socket.emit('devices_list', getDeviceList());
+
+    // Send all device states
+    devices.forEach((device, serialNumber) => {
+        socket.emit('device_update', {
+            serialNumber: serialNumber,
+            device: device,
+            deviceList: getDeviceList()
+        });
+    });
+
+    // Handle device selection request
+    socket.on('select_device', (serialNumber) => {
+        console.log(`📱 Client selected device: ${serialNumber}`);
+        if (devices.has(serialNumber)) {
+            socket.emit('device_selected', devices.get(serialNumber));
+        }
+    });
 });
 
-// API Endpoints
-app.get('/api/state', (req, res) => {
-    res.json(deviceState);
+// Periodic device status check (mark devices offline)
+setInterval(() => {
+    let statusChanged = false;
+    devices.forEach((device, serialNumber) => {
+        const previouslyConnected = device.connected;
+        device.connected = (Date.now() - device.lastSeen) < DEVICE_TIMEOUT_MS;
+        if (previouslyConnected !== device.connected) {
+            console.log(`📱 Device ${serialNumber} is now ${device.connected ? 'ONLINE' : 'OFFLINE'}`);
+            statusChanged = true;
+        }
+    });
+
+    if (statusChanged) {
+        io.emit('devices_list', getDeviceList());
+    }
+}, 5000);
+
+// ============================================================
+// AUTH ROUTES
+// ============================================================
+
+// Google OAuth login
+app.get('/auth/google', passport.authenticate('google', {
+    scope: ['profile', 'email']
+}));
+
+// Google OAuth callback
+app.get('/auth/google/callback',
+    passport.authenticate('google', {
+        failureRedirect: '/login.html?error=access_denied',
+        successRedirect: '/'
+    })
+);
+
+// Logout
+app.get('/auth/logout', (req, res) => {
+    req.logout((err) => {
+        if (err) console.error('Logout error:', err);
+        res.redirect('/login.html');
+    });
+});
+
+// Get current user info
+app.get('/auth/me', (req, res) => {
+    if (req.isAuthenticated()) {
+        const { id, email, name, role, access_type } = req.user;
+        const allowedDevices = db.getUserDevices(id);
+        res.json({
+            authenticated: true,
+            user: { id, email, name, role, access_type },
+            allowedDevices: access_type === 'restricted' ? allowedDevices : null
+        });
+    } else {
+        res.json({ authenticated: false });
+    }
+});
+
+// ============================================================
+// ADMIN API ROUTES
+// ============================================================
+
+// Get all users (admin only)
+app.get('/api/admin/users', isAuthenticated, isAdmin, (req, res) => {
+    const users = db.getAllUsers();
+    // Add device assignments for each user
+    const usersWithDevices = users.map(user => ({
+        ...user,
+        devices: db.getUserDevices(user.id)
+    }));
+    res.json(usersWithDevices);
+});
+
+// Add new user (admin only)
+app.post('/api/admin/users', isAuthenticated, isAdmin, (req, res) => {
+    const { email, role = 'user', accessType = 'all', devices: deviceList = [] } = req.body;
+
+    if (!email || !email.includes('@')) {
+        return res.status(400).json({ error: 'Valid email required' });
+    }
+
+    const result = db.createUser(email.toLowerCase(), null, role, accessType, req.user.email);
+
+    if (!result.success) {
+        return res.status(400).json({ error: result.error });
+    }
+
+    // Assign devices if specified
+    if (accessType === 'restricted' && deviceList.length > 0) {
+        for (const sn of deviceList) {
+            db.assignDevice(result.id, sn, req.user.email);
+        }
+    }
+
+    res.json({ success: true, id: result.id });
+});
+
+// Update user devices (admin only)
+app.put('/api/admin/users/:id/devices', isAuthenticated, isAdmin, (req, res) => {
+    const userId = parseInt(req.params.id);
+    const { devices: deviceList = [] } = req.body;
+
+    // Remove all existing device assignments
+    db.removeAllDevices(userId);
+
+    // Add new assignments
+    for (const sn of deviceList) {
+        db.assignDevice(userId, sn, req.user.email);
+    }
+
+    res.json({ success: true });
+});
+
+// Delete user (admin only)
+app.delete('/api/admin/users/:id', isAuthenticated, isAdmin, (req, res) => {
+    const userId = parseInt(req.params.id);
+    const result = db.deleteUser(userId);
+
+    if (!result.success) {
+        return res.status(400).json({ error: result.error });
+    }
+
+    res.json({ success: true });
+});
+
+// ============================================================
+// DEVICE API ENDPOINTS (Protected)
+// ============================================================
+
+// Get all devices (filtered by user permissions)
+app.get('/api/devices', isAuthenticated, (req, res) => {
+    let deviceList = getDeviceList();
+    deviceList = filterDevicesForUser(deviceList, req.user);
+    res.json(deviceList);
+});
+
+// Get specific device state
+app.get('/api/devices/:serialNumber', isAuthenticated, (req, res) => {
+    const { serialNumber } = req.params;
+
+    // Check permission
+    const allowed = filterDevicesForUser([{ serialNumber }], req.user);
+    if (allowed.length === 0) {
+        return res.status(403).json({ error: 'Access denied to this device' });
+    }
+
+    if (devices.has(serialNumber)) {
+        res.json(devices.get(serialNumber));
+    } else {
+        res.status(404).json({ error: 'Device not found', serialNumber });
+    }
+});
+
+// Legacy endpoint - returns first device or DEFAULT
+app.get('/api/state', isAuthenticated, (req, res) => {
+    if (devices.has('DEFAULT')) {
+        res.json(devices.get('DEFAULT'));
+    } else if (devices.size > 0) {
+        res.json(devices.values().next().value);
+    } else {
+        res.json(createDefaultDeviceState('NONE'));
+    }
+});
+
+// Device count summary
+app.get('/api/summary', isAuthenticated, (req, res) => {
+    let deviceList = getDeviceList();
+    deviceList = filterDevicesForUser(deviceList, req.user);
+
+    const online = deviceList.filter(d => d.status === 'online').length;
+    const degraded = deviceList.filter(d => d.status === 'degraded').length;
+    const offline = deviceList.filter(d => d.status === 'offline').length;
+
+    res.json({
+        total: deviceList.length,
+        online,
+        degraded,
+        offline,
+        devices: deviceList
+    });
 });
 
 server.listen(PORT, () => {
-    console.log(`Backend Server running on http://localhost:${PORT}`);
+    console.log(`🚀 Backend Server running on http://localhost:${PORT}`);
+    console.log(`📡 Multi-device support enabled`);
 });

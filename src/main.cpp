@@ -18,9 +18,14 @@ struct Config {
   byte controller_ip_bytes[4];
   byte whitelist_ip_bytes[10][4]; // Assuming max 10 whitelist IPs
   int whitelist_count;
+  
+  // Serial Number Configuration
+  char serial_number[16];      // Up to 15 chars + null terminator (e.g., "SN0001")
+  bool serial_number_set;      // Flag indicating if SN has been programmed
+  uint32_t validation_marker;  // Validation marker (0xCAFECAFE when valid)
 
   // Constructor to initialize with default values
-  Config() : whitelist_count(0) {
+  Config() : whitelist_count(0), serial_number_set(false), validation_marker(0) {
     // Default IP: 192.168.1.198
     controller_ip_bytes[0] = 192;
     controller_ip_bytes[1] = 168;
@@ -32,6 +37,10 @@ struct Config {
     whitelist_ip_bytes[1][0] = 192; whitelist_ip_bytes[1][1] = 168; whitelist_ip_bytes[1][2] = 1; whitelist_ip_bytes[1][3] = 169;
     whitelist_ip_bytes[2][0] = 192; whitelist_ip_bytes[2][1] = 168; whitelist_ip_bytes[2][2] = 1; whitelist_ip_bytes[2][3] = 33;
     whitelist_count = 3;
+    
+    // Default serial number (unconfigured)
+    memset(serial_number, 0, sizeof(serial_number));
+    strcpy(serial_number, "UNCONFIGURED");
   }
 };
 
@@ -41,6 +50,7 @@ FlashStorage(config_store, Config);
 IPAddress current_ip; // Initialized by loadConfig()
 IPAddress current_whitelist[10]; // C-style array for whitelist
 int current_whitelist_count = 0; // Number of IPs in the whitelist
+String deviceSerialNumber = "UNCONFIGURED"; // Global serial number for quick access
 
 // --- IP CONFIGURATION PERSISTENCE ---
 void saveConfig() {
@@ -102,6 +112,75 @@ void loadConfig() {
     }
   }
   Serial.println("Configuration loaded from FlashStorage.");
+}
+
+// --- SERIAL NUMBER MANAGEMENT ---
+
+// Forward declaration (defined later in file)
+extern bool technician_mode;
+
+
+// Load serial number from flash (call in setup())
+void loadSerialNumber() {
+    Config config_data = config_store.read();
+    if (config_data.serial_number_set && config_data.validation_marker == 0xCAFECAFE) {
+        deviceSerialNumber = String(config_data.serial_number);
+        Serial.println("Serial Number loaded: " + deviceSerialNumber);
+    } else {
+        deviceSerialNumber = "UNCONFIGURED";
+        Serial.println("WARNING: Device serial number not configured!");
+    }
+}
+
+// Burn serial number to flash (call via technician interface)
+bool burnSerialNumber(const char* input) {
+    // Check if input is a valid number between 2000 and 2999
+    int sn_val = atoi(input);
+    
+    if (sn_val < 2000 || sn_val > 2999) {
+        Serial.println("ERROR: Serial number must be between 2000 and 2999");
+        return false;
+    }
+    
+    char formatted_sn[16];
+    sprintf(formatted_sn, "SN%d", sn_val);
+    
+    Config config_data = config_store.read();
+    strncpy(config_data.serial_number, formatted_sn, 15);
+    config_data.serial_number[15] = '\0';
+    config_data.serial_number_set = true;
+    config_data.validation_marker = 0xCAFECAFE;
+    config_store.write(config_data);
+    
+    deviceSerialNumber = String(formatted_sn);
+    Serial.println("SUCCESS: Serial number burned: " + deviceSerialNumber);
+    return true;
+}
+
+// Get current serial number
+String getSerialNumber() {
+    return deviceSerialNumber;
+}
+
+// Handle serial console commands for serial number management
+void handleSerialCommands() {
+    if (Serial.available()) {
+        String cmd = Serial.readStringUntil('\n');
+        cmd.trim();
+        
+        if (cmd.startsWith("SET_SN:") && technician_mode) {
+            String newSN = cmd.substring(7);
+            newSN.trim();
+            if (burnSerialNumber(newSN.c_str())) {
+                Serial.println("Reboot to apply new serial number to MQTT topics");
+            }
+        } else if (cmd == "GET_SN") {
+            Serial.println("Serial Number: " + getSerialNumber());
+        } else if (cmd.startsWith("SET_SN:") && !technician_mode) {
+            Serial.println("ERROR: Technician mode required for serial number programming");
+            Serial.println("Hold button during startup to enter technician mode");
+        }
+    }
 }
 
 // OTA support
@@ -374,6 +453,7 @@ void setup()
   // while (!Serial);
 
   loadConfig(); // Load configuration from LittleFS
+  loadSerialNumber(); // Load serial number from flash
   KMPProDinoMKRZero.init(ProDino_MKR_Zero_Ethernet);
   IPAddress subnet(255, 255, 0, 0);
   IPAddress gateway(192, 168, 100, 1); 
@@ -487,8 +567,8 @@ void setup()
   udp.begin(UDP_PORT);
   Serial.println("UDP Broadcast started on port " + String(UDP_PORT));
   
-  // Initialize MQTT Handler
-  mqttHandler.begin();
+  // Initialize MQTT Handler with device serial number
+  mqttHandler.begin(deviceSerialNumber);
   Serial.println("MQTT handler initialized. Will attempt connection in loop()...");
 }
 
@@ -861,6 +941,30 @@ void http_loop()
               }
             }
           }
+          else if (msg_type == "set_serial_number")
+          {
+            if (!technician_mode) {
+                resp["type"] = "error";
+                resp["message"] = "Technician mode required";
+                http_status_code = 403;
+            } else {
+                String new_sn = doc["serial_number"];
+                if (burnSerialNumber(new_sn.c_str())) {
+                    resp["success"] = true;
+                    resp["message"] = "Serial number set to: " + getSerialNumber();
+                    resp["reboot_required"] = true;
+                } else {
+                    resp["type"] = "error";
+                    resp["message"] = "Invalid serial number (must be 2000-2999)";
+                }
+            }
+          }
+          else if (msg_type == "get_serial_number")
+          {
+            resp["type"] = "serial_number";
+            resp["serial_number"] = getSerialNumber();
+            resp["is_configured"] = (getSerialNumber() != "UNCONFIGURED");
+          }
           else if (msg_type == "set_ip_config")
           {
             String controller_ip_str = doc["controller_ip"];
@@ -1030,6 +1134,9 @@ void loop()
     // Handle OTA updates in technician mode
     ArduinoOTA.handle();
   }
+  
+  // Handle serial console commands (SET_SN, GET_SN)
+  handleSerialCommands();
   
   // 1. Handle MQTT connection maintenance
   mqttHandler.loop();

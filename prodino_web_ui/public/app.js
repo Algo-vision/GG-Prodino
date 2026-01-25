@@ -1,11 +1,28 @@
 const backendUrl = `${window.location.protocol}//${window.location.hostname}:5555`;
-const socket = io(backendUrl);
+let socket = null; // Initialize after auth check
+
+// Auth State
+let currentUser = null;
+let allowedDevices = null; // null = all devices, array = restricted
+
+// State Management
+let devices = new Map(); // Key: serialNumber, Value: deviceState
+let selectedDevice = null; // Currently selected device serial number
+let deviceMarkers = new Map(); // Key: serialNumber, Value: Leaflet marker
 
 // DOM Elements
 const mqttStatus = document.getElementById('mqtt-status');
-const deviceStatus = document.getElementById('device-status');
+const deviceCountEl = document.getElementById('device-count');
+const deviceTotalEl = document.getElementById('device-total');
 const lastSeenText = document.getElementById('last-seen');
 const logContainer = document.getElementById('log-container');
+const deviceGrid = document.getElementById('device-grid');
+const fleetOverview = document.getElementById('fleet-overview');
+const dashboardGrid = document.getElementById('dashboard-grid');
+const selectedDeviceBanner = document.getElementById('selected-device-banner');
+const selectedDeviceSN = document.getElementById('selected-device-sn');
+const selectedDeviceStatus = document.getElementById('selected-device-status');
+const btnBackToFleet = document.getElementById('btn-back-to-fleet');
 
 // GPS Elements
 const gpsLat = document.getElementById('gps-lat');
@@ -28,24 +45,24 @@ const btnTech = document.getElementById('btn-tech');
 
 // Map Elements
 const mapStatus = document.getElementById('map-status');
-let map, marker, pathLine;
-let pathCoordinates = [];
-const DEBUG_TEL_AVIV = false; // Set to true for debugging
+let map;
+let pathLines = new Map(); // Key: serialNumber, Value: polyline
+const DEBUG_TEL_AVIV = false;
+
+// Colors for different devices on map
+const deviceColors = ['#4f46e5', '#06b6d4', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'];
 
 // Initialize Map
 function initMap() {
     try {
-        map = L.map('map').setView([0, 0], 2);
+        map = L.map('map').setView([32.0, 34.8], 8); // Default view: Israel
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
             attribution: '&copy; OpenStreetMap contributors'
         }).addTo(map);
 
-        marker = L.marker([0, 0]).addTo(map);
-        pathLine = L.polyline([], { color: 'var(--accent-primary)', weight: 3 }).addTo(map);
-
         mapStatus.textContent = 'READY';
         mapStatus.classList.add('on');
-        addLog('Map', 'Leaflet initialized successfully', 'accent-secondary');
+        addLog('Map', 'Leaflet initialized for multi-device tracking', 'accent-secondary');
     } catch (error) {
         console.error('Map initialization failed:', error);
         mapStatus.textContent = 'ERROR';
@@ -54,34 +71,152 @@ function initMap() {
     }
 }
 
-// Call initMap on load
-window.addEventListener('load', initMap);
+// Get color for device (cycle through colors)
+function getDeviceColor(index) {
+    return deviceColors[index % deviceColors.length];
+}
 
-// Socket Events
-socket.on('connect', () => {
-    mqttStatus.classList.add('active');
-    addLog('System', 'Connected to Mission Control Server', 'accent-secondary');
-});
+// Create or update device marker on map
+function updateDeviceMarker(serialNumber, lat, lng, isValid) {
+    if (!map || !isValid) return;
 
-socket.on('disconnect', () => {
-    mqttStatus.classList.remove('active');
-    deviceStatus.classList.remove('active');
-    addLog('System', 'Disconnected from Server', 'danger');
-});
+    const deviceIndex = Array.from(devices.keys()).indexOf(serialNumber);
+    const color = getDeviceColor(deviceIndex);
 
-socket.on('device_update', (state) => {
-    updateUI(state);
-});
+    if (deviceMarkers.has(serialNumber)) {
+        deviceMarkers.get(serialNumber).setLatLng([lat, lng]);
+    } else {
+        // Create custom icon
+        const icon = L.divIcon({
+            className: 'device-map-marker',
+            html: `<div style="background: ${color}; width: 12px; height: 12px; border-radius: 50%; border: 2px solid white; box-shadow: 0 2px 6px rgba(0,0,0,0.3);"></div>`,
+            iconSize: [16, 16],
+            iconAnchor: [8, 8]
+        });
 
-function updateUI(state) {
-    // Connection Status
-    if (state.connected) {
-        deviceStatus.classList.add('active');
-        const secondsAgo = Math.floor((Date.now() - state.lastSeen) / 1000);
-        lastSeenText.textContent = `LAST SEEN: ${secondsAgo}S AGO`;
+        const marker = L.marker([lat, lng], { icon }).addTo(map);
+        marker.bindPopup(`<strong>${serialNumber}</strong>`);
+        deviceMarkers.set(serialNumber, marker);
 
-        if (secondsAgo > 5) deviceStatus.classList.remove('active');
+        addLog('Map', `Added marker for ${serialNumber}`, 'accent-secondary');
     }
+
+    // Update path line
+    if (!pathLines.has(serialNumber)) {
+        const polyline = L.polyline([], { color: color, weight: 2, opacity: 0.7 }).addTo(map);
+        pathLines.set(serialNumber, { line: polyline, coords: [] });
+    }
+
+    const pathData = pathLines.get(serialNumber);
+    pathData.coords.push([lat, lng]);
+    if (pathData.coords.length > 100) pathData.coords.shift(); // Limit path length
+    pathData.line.setLatLngs(pathData.coords);
+}
+
+// Render device grid
+function renderDeviceGrid(deviceList) {
+    if (!deviceList || deviceList.length === 0) {
+        deviceGrid.innerHTML = `
+            <div class="device-card placeholder">
+                <div class="device-card-icon">📡</div>
+                <p>Waiting for devices...</p>
+            </div>
+        `;
+        return;
+    }
+
+    deviceGrid.innerHTML = deviceList.map(device => {
+        const isSelected = device.serialNumber === selectedDevice;
+        const lastSeenStr = device.lastSeen
+            ? `${Math.floor((Date.now() - device.lastSeen) / 1000)}s ago`
+            : 'Never';
+
+        return `
+            <div class="device-card ${device.status} ${isSelected ? 'selected' : ''}" 
+                 data-sn="${device.serialNumber}" 
+                 onclick="selectDevice('${device.serialNumber}')">
+                <div class="device-card-header">
+                    <span class="device-card-sn">${device.serialNumber}</span>
+                    <span class="device-card-status ${device.status}">${device.status.toUpperCase()}</span>
+                </div>
+                <div class="device-card-sensors">
+                    <span class="sensor-badge ${device.gpsValid ? 'valid' : 'invalid'}">
+                        ${device.gpsValid ? '✓' : '✗'} GPS
+                    </span>
+                    <span class="sensor-badge ${device.imuValid ? 'valid' : 'invalid'}">
+                        ${device.imuValid ? '✓' : '✗'} IMU
+                    </span>
+                </div>
+                ${device.gpsValid ? `
+                    <div class="device-card-location">
+                        📍 ${device.gpsLat.toFixed(4)}, ${device.gpsLng.toFixed(4)}
+                    </div>
+                ` : ''}
+                <div class="device-card-lastseen">Last seen: ${lastSeenStr}</div>
+            </div>
+        `;
+    }).join('');
+}
+
+// Select a device to view details
+function selectDevice(serialNumber) {
+    selectedDevice = serialNumber;
+
+    // Update UI
+    selectedDeviceBanner.style.display = 'flex';
+    selectedDeviceSN.textContent = serialNumber;
+
+    // Update selected status badge
+    const device = devices.get(serialNumber);
+    if (device) {
+        const status = getDeviceStatus(device);
+        selectedDeviceStatus.textContent = status.toUpperCase();
+        selectedDeviceStatus.className = `device-status-badge ${status}`;
+
+        // Update dashboard with device data
+        updateDashboard(device);
+
+        // Center map on device
+        if (device.gps.valid && map) {
+            map.setView([device.gps.lat, device.gps.lng], 14);
+        }
+    }
+
+    // Re-render grid to show selection
+    renderDeviceGrid(getDeviceListFromMap());
+
+    addLog('Device', `Selected ${serialNumber}`, 'accent-primary');
+}
+
+// Get device status
+function getDeviceStatus(device) {
+    if (!device.lastSeen) return 'unknown';
+    const timeSinceLastSeen = Date.now() - device.lastSeen;
+    if (timeSinceLastSeen > 30000) return 'offline';
+    if (!device.gps.valid || !device.imu.valid) return 'degraded';
+    return 'online';
+}
+
+// Convert devices Map to array for rendering
+function getDeviceListFromMap() {
+    const list = [];
+    devices.forEach((device, serialNumber) => {
+        list.push({
+            serialNumber,
+            status: getDeviceStatus(device),
+            lastSeen: device.lastSeen,
+            gpsValid: device.gps.valid,
+            imuValid: device.imu.valid,
+            gpsLat: device.gps.lat,
+            gpsLng: device.gps.lng
+        });
+    });
+    return list;
+}
+
+// Update dashboard for a specific device
+function updateDashboard(state) {
+    if (!state) return;
 
     // GPS
     let lat = state.gps.lat;
@@ -101,17 +236,6 @@ function updateUI(state) {
     if (state.gps.valid || DEBUG_TEL_AVIV) {
         gpsValid.textContent = DEBUG_TEL_AVIV ? 'DEBUG: TEL AVIV' : 'FIX ACQUIRED';
         gpsValid.classList.add('on');
-
-        // Update Map
-        const newPos = [lat, lng];
-        if (marker) marker.setLatLng(newPos);
-        if (pathLine) {
-            pathCoordinates.push(newPos);
-            pathLine.setLatLngs(pathCoordinates);
-        }
-        if (map && !map.getBounds().contains(newPos)) {
-            map.panTo(newPos);
-        }
     } else {
         gpsValid.textContent = 'NO FIX';
         gpsValid.classList.remove('on');
@@ -138,8 +262,10 @@ function updateUI(state) {
     // Optos
     state.sensors.optos.forEach((val, i) => {
         const el = document.getElementById(`opto-${i}`);
-        if (val) el.classList.add('on');
-        else el.classList.remove('on');
+        if (el) {
+            if (val) el.classList.add('on');
+            else el.classList.remove('on');
+        }
     });
 
     // Button
@@ -150,22 +276,73 @@ function updateUI(state) {
     // Relays
     state.relays.forEach((val, i) => {
         const el = document.getElementById(`relay-${i}`);
-        el.textContent = val ? 'ACTIVE' : 'OFF';
-        if (val) el.classList.add('on');
-        else el.classList.remove('on');
+        if (el) {
+            el.textContent = val ? 'ACTIVE' : 'OFF';
+            if (val) el.classList.add('on');
+            else el.classList.remove('on');
+        }
     });
 
     // LEDs
     const ledInt = document.getElementById('led-int');
-    ledInt.textContent = state.leds.internal ? 'ON' : 'OFF';
-    if (state.leds.internal) ledInt.classList.add('on');
-    else ledInt.classList.remove('on');
+    if (ledInt) {
+        ledInt.textContent = state.leds.internal ? 'ON' : 'OFF';
+        if (state.leds.internal) ledInt.classList.add('on');
+        else ledInt.classList.remove('on');
+    }
 
     const ledIo = document.getElementById('led-io');
-    ledIo.textContent = state.leds.io;
-    if (state.leds.io !== 'OFF') ledIo.classList.add('on');
-    else ledIo.classList.remove('on');
+    if (ledIo) {
+        ledIo.textContent = state.leds.io;
+        if (state.leds.io !== 'OFF') ledIo.classList.add('on');
+        else ledIo.classList.remove('on');
+    }
 }
+
+// Update device counts in header
+function updateDeviceCounts() {
+    const deviceList = getDeviceListFromMap();
+    const online = deviceList.filter(d => d.status === 'online' || d.status === 'degraded').length;
+    deviceCountEl.textContent = online;
+    deviceTotalEl.textContent = deviceList.length;
+}
+
+// Socket event handlers are now initialized in initSocket() after auth check
+
+
+// Back to fleet button
+btnBackToFleet.addEventListener('click', () => {
+    selectedDevice = null;
+    selectedDeviceBanner.style.display = 'none';
+    renderDeviceGrid(getDeviceListFromMap());
+
+    // Reset map view to show all devices
+    if (map && deviceMarkers.size > 0) {
+        const bounds = L.latLngBounds([]);
+        deviceMarkers.forEach(marker => {
+            bounds.extend(marker.getLatLng());
+        });
+        map.fitBounds(bounds, { padding: [50, 50] });
+    }
+});
+
+// Refresh button
+document.getElementById('btn-refresh-fleet').addEventListener('click', () => {
+    addLog('System', 'Refreshing device list...', 'accent-secondary');
+    // Fetch current state from API
+    fetch(`${backendUrl}/api/devices`)
+        .then(res => res.json())
+        .then(deviceList => {
+            renderDeviceGrid(deviceList);
+            const online = deviceList.filter(d => d.status === 'online' || d.status === 'degraded').length;
+            deviceCountEl.textContent = online;
+            deviceTotalEl.textContent = deviceList.length;
+            addLog('System', `Found ${deviceList.length} devices`, 'accent-secondary');
+        })
+        .catch(err => {
+            addLog('System', 'Failed to refresh: ' + err.message, 'danger');
+        });
+});
 
 function addLog(source, message, type = '') {
     const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
@@ -179,5 +356,114 @@ function addLog(source, message, type = '') {
     }
 }
 
-// Initial Log
-addLog('System', 'Mission Control UI Loaded', 'accent-secondary');
+// Check authentication
+async function checkAuth() {
+    try {
+        const res = await fetch('/auth/me', { credentials: 'include' });
+        const data = await res.json();
+
+        if (!data.authenticated) {
+            window.location.href = '/login.html';
+            return false;
+        }
+
+        currentUser = data.user;
+        allowedDevices = data.allowedDevices;
+
+        // Show admin link if user is admin
+        if (currentUser.role === 'admin') {
+            addLog('System', '<a href="/admin.html" style="color: var(--accent-secondary)">Open Admin Panel →</a>', '');
+        }
+
+        addLog('Auth', `Logged in as ${currentUser.email}`, 'accent-secondary');
+        return true;
+    } catch (err) {
+        console.error('Auth check failed:', err);
+        window.location.href = '/login.html';
+        return false;
+    }
+}
+
+// Initialize Socket.io connection
+function initSocket() {
+    socket = io(backendUrl, { withCredentials: true });
+
+    socket.on('connect', () => {
+        mqttStatus.classList.add('active');
+        addLog('System', 'Connected to Mission Control Server', 'accent-secondary');
+    });
+
+    socket.on('disconnect', () => {
+        mqttStatus.classList.remove('active');
+        addLog('System', 'Disconnected from Server', 'danger');
+    });
+
+    // Handle device list updates
+    socket.on('devices_list', (deviceList) => {
+        // Filter by allowed devices
+        if (allowedDevices) {
+            deviceList = deviceList.filter(d => allowedDevices.includes(d.serialNumber));
+        }
+        renderDeviceGrid(deviceList);
+
+        const online = deviceList.filter(d => d.status === 'online' || d.status === 'degraded').length;
+        deviceCountEl.textContent = online;
+        deviceTotalEl.textContent = deviceList.length;
+    });
+
+    // Handle individual device updates
+    socket.on('device_update', (data) => {
+        const { serialNumber, device, deviceList } = data;
+
+        // Skip if user doesn't have access to this device
+        if (allowedDevices && !allowedDevices.includes(serialNumber)) {
+            return;
+        }
+
+        devices.set(serialNumber, device);
+
+        if (device.lastSeen) {
+            const secondsAgo = Math.floor((Date.now() - device.lastSeen) / 1000);
+            lastSeenText.textContent = `LAST UPDATE: ${secondsAgo}S AGO`;
+        }
+
+        if (deviceList) {
+            let filteredList = deviceList;
+            if (allowedDevices) {
+                filteredList = deviceList.filter(d => allowedDevices.includes(d.serialNumber));
+            }
+            renderDeviceGrid(filteredList);
+            updateDeviceCounts();
+        }
+
+        updateDeviceMarker(serialNumber, device.gps.lat, device.gps.lng, device.gps.valid);
+
+        if (serialNumber === selectedDevice) {
+            updateDashboard(device);
+            const status = getDeviceStatus(device);
+            selectedDeviceStatus.textContent = status.toUpperCase();
+            selectedDeviceStatus.className = `device-status-badge ${status}`;
+        }
+
+        if (!selectedDevice && devices.size === 1) {
+            selectDevice(serialNumber);
+        }
+    });
+
+    socket.on('device_selected', (device) => {
+        updateDashboard(device);
+    });
+}
+
+// Initialize
+window.addEventListener('load', async () => {
+    const isAuthed = await checkAuth();
+    if (!isAuthed) return;
+
+    initSocket();
+    initMap();
+    addLog('System', 'Multi-Device Mission Control Loaded', 'accent-secondary');
+});
+
+// Make selectDevice available globally
+window.selectDevice = selectDevice;

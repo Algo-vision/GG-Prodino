@@ -42,7 +42,7 @@ header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 3rem;
+    margin-bottom: 2rem;
     padding-bottom: 1rem;
     border-bottom: 1px solid var(--border-color);
 }
@@ -71,6 +71,7 @@ h1 {
     text-transform: uppercase;
     background: linear-gradient(to right, #fff, #94a3b8);
     -webkit-background-clip: text;
+    background-clip: text;
     -webkit-text-fill-color: transparent;
 }
 
@@ -98,6 +99,292 @@ h1 {
 .status-indicator.active {
     background-color: var(--success);
     box-shadow: 0 0 10px var(--success);
+}
+
+/* Device Count Pill in Header */
+.device-count-pill {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.5rem 1rem;
+    background: linear-gradient(135deg, rgba(79, 70, 229, 0.2), rgba(6, 182, 212, 0.2));
+    border: 1px solid rgba(79, 70, 229, 0.3);
+    border-radius: 100px;
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--text-main);
+}
+
+.device-count-pill #device-count {
+    color: var(--success);
+    font-weight: 700;
+}
+
+/* Fleet Overview Section */
+.fleet-overview {
+    margin-bottom: 2rem;
+    animation: fadeIn 0.4s ease;
+}
+
+.fleet-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+}
+
+.fleet-header h2 {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+}
+
+.fleet-controls {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.btn-refresh {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 0.5rem;
+    color: var(--text-dim);
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.btn-refresh:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--text-main);
+    border-color: var(--accent-primary);
+}
+
+/* Device Grid */
+.device-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 1rem;
+}
+
+/* Device Card */
+.device-card {
+    background: var(--card-bg);
+    backdrop-filter: blur(12px);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 1rem;
+    cursor: pointer;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+    overflow: hidden;
+}
+
+.device-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: var(--danger);
+    transition: background 0.3s ease;
+}
+
+.device-card.online::before {
+    background: var(--success);
+}
+
+.device-card.degraded::before {
+    background: var(--warning);
+}
+
+.device-card.offline::before {
+    background: var(--danger);
+}
+
+.device-card:hover {
+    border-color: var(--accent-primary);
+    transform: translateY(-4px);
+    box-shadow: 0 8px 25px rgba(79, 70, 229, 0.2);
+}
+
+.device-card.selected {
+    border-color: var(--accent-secondary);
+    background: rgba(6, 182, 212, 0.1);
+}
+
+.device-card.placeholder {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 120px;
+    color: var(--text-dim);
+    cursor: default;
+}
+
+.device-card.placeholder::before {
+    display: none;
+}
+
+.device-card-icon {
+    font-size: 2rem;
+    margin-bottom: 0.5rem;
+}
+
+.device-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 0.75rem;
+}
+
+.device-card-sn {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--text-main);
+}
+
+.device-card-status {
+    padding: 0.2rem 0.5rem;
+    border-radius: 100px;
+    font-size: 0.65rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.device-card-status.online {
+    background: rgba(16, 185, 129, 0.15);
+    color: var(--success);
+}
+
+.device-card-status.degraded {
+    background: rgba(245, 158, 11, 0.15);
+    color: var(--warning);
+}
+
+.device-card-status.offline {
+    background: rgba(239, 68, 68, 0.15);
+    color: var(--danger);
+}
+
+.device-card-sensors {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+}
+
+.sensor-badge {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.2rem 0.4rem;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 4px;
+    font-size: 0.7rem;
+    color: var(--text-dim);
+}
+
+.sensor-badge.valid {
+    color: var(--success);
+}
+
+.sensor-badge.invalid {
+    color: var(--danger);
+}
+
+.device-card-location {
+    font-size: 0.75rem;
+    color: var(--text-dim);
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+}
+
+.device-card-lastseen {
+    font-size: 0.7rem;
+    color: var(--text-dim);
+    margin-top: 0.5rem;
+}
+
+/* Selected Device Banner */
+.selected-device-banner {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 0.75rem 1rem;
+    background: linear-gradient(90deg, rgba(79, 70, 229, 0.15), rgba(6, 182, 212, 0.1));
+    border: 1px solid rgba(79, 70, 229, 0.3);
+    border-radius: 10px;
+    margin-bottom: 1.5rem;
+}
+
+.btn-back {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    color: var(--text-main);
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.btn-back:hover {
+    background: rgba(255, 255, 255, 0.15);
+    border-color: var(--accent-primary);
+}
+
+.selected-device-info {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.selected-device-info .label {
+    font-size: 0.75rem;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.selected-device-info .device-sn {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--accent-secondary);
+}
+
+.device-status-badge {
+    padding: 0.25rem 0.75rem;
+    border-radius: 100px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.device-status-badge.online {
+    background: rgba(16, 185, 129, 0.15);
+    color: var(--success);
+}
+
+.device-status-badge.degraded {
+    background: rgba(245, 158, 11, 0.15);
+    color: var(--warning);
+}
+
+.device-status-badge.offline {
+    background: rgba(239, 68, 68, 0.15);
+    color: var(--danger);
 }
 
 /* Dashboard Grid */
@@ -267,8 +554,27 @@ h1 {
     animation-delay: 0.5s;
 }
 
+@keyframes pulse {
+
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0.5;
+    }
+}
+
+.device-card.offline .device-card-sn {
+    animation: pulse 2s infinite;
+}
+
 /* Responsive */
 @media (max-width: 1200px) {
+    .device-grid {
+        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    }
 
     .gps-card,
     .imu-card,
@@ -277,21 +583,40 @@ h1 {
     .telemetry-card {
         grid-column: span 6;
     }
+
+    .map-card {
+        grid-column: span 12;
+        grid-row: auto;
+    }
 }
 
 @media (max-width: 768px) {
+    .device-grid {
+        grid-template-columns: 1fr;
+    }
 
     .gps-card,
     .imu-card,
     .sensor-card,
     .control-card,
-    .telemetry-card {
+    .telemetry-card,
+    .map-card {
         grid-column: span 12;
     }
 
     header {
         flex-direction: column;
         gap: 1.5rem;
+        align-items: flex-start;
+    }
+
+    .system-status {
+        flex-wrap: wrap;
+        gap: 1rem;
+    }
+
+    .selected-device-banner {
+        flex-direction: column;
         align-items: flex-start;
     }
 }

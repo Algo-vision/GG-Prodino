@@ -1,6 +1,6 @@
 # AWS EC2 Dashboard Server Setup Guide
 
-This guide describes how to set up an EC2 instance to host the Prodino Web UI and Backend.
+This guide describes how to set up an EC2 instance to host the Prodino Web UI and Backend with multi-device support and Google OAuth authentication.
 
 ## 1. Launch an EC2 Instance
 1.  Navigate to **EC2 -> Instances -> Launch instances**.
@@ -65,7 +65,7 @@ sudo npm install -g pm2
 ## 4. Transfer Code and Certificates
 From your **local computer**, upload the `prodino_web_ui` folder (excluding `node_modules`):
 ```bash
-rsync -avz -e "ssh -i keys/remote_aws_grk-key.pem" --exclude 'node_modules' ./prodino_web_ui ubuntu@<YOUR_PUBLIC_IP>:/home/ubuntu/
+rsync -avz -e "ssh -i keys/remote_aws_grk-key.pem" --exclude 'node_modules' --exclude 'data' ./prodino_web_ui ubuntu@<YOUR_PUBLIC_IP>:/home/ubuntu/
 ```
 
 ### Upload Backend Certificates
@@ -78,7 +78,7 @@ rsync -avz -e "ssh -i keys/remote_aws_grk-key.pem" ./prodino_web_ui/certs ubuntu
 On the **VPS terminal**:
 1.  Navigate to the folder: `cd prodino_web_ui`
 2.  Install dependencies: `npm install`
-3.  Update the `.env` file with your AWS IoT Endpoint and certificate paths.
+3.  Update the `.env` file with your configuration.
 
 ### Detailed `.env` Configuration
 Create or edit the `.env` file in the `prodino_web_ui` directory:
@@ -99,6 +99,17 @@ MQTT_CA_PATH=./certs/AmazonRootCA1.pem
 # Port configuration
 BACKEND_PORT=5555
 UI_PORT=5556
+
+# Google OAuth (see GOOGLE_AUTH_SETUP.md for details)
+GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=your-client-secret
+GOOGLE_CALLBACK_URL=http://<YOUR_PUBLIC_IP>:5555/auth/google/callback
+
+# Session Secret (generate a strong random string)
+SESSION_SECRET=your-random-secret-key-here
+
+# Admin Emails (comma-separated, these users have full access)
+ADMIN_EMAILS=ron@gg-el.com,haim.hadad@algowis.com
 ```
 
 **Variable Descriptions:**
@@ -108,6 +119,9 @@ UI_PORT=5556
 *   **MQTT_CA_PATH:** Path to the `AmazonRootCA1.pem` certificate.
 *   **BACKEND_PORT:** The port the Socket.io server will listen on (default: 5555).
 *   **UI_PORT:** The port the Web UI server will listen on (default: 5556).
+*   **GOOGLE_CLIENT_ID/SECRET:** OAuth credentials from Google Cloud Console.
+*   **SESSION_SECRET:** Random string for session encryption (keep confidential).
+*   **ADMIN_EMAILS:** Comma-separated list of admin user emails.
 
 4.  Start the applications:
     ```bash
@@ -119,3 +133,32 @@ UI_PORT=5556
 ## 6. Access the Dashboard
 Open your browser and go to:
 `http://<YOUR_PUBLIC_IP>:5556`
+
+You will be redirected to the login page. Sign in with an authorized Google account.
+
+---
+
+## Multi-Device Support
+
+The backend automatically supports multiple Prodino devices:
+
+- **MQTT Subscription:** Listens to `prodino/#` (all devices)
+- **Topic Format:** Each device publishes to `prodino/{serial_number}/...`
+- **Web UI:** Shows a fleet overview with all connected devices
+
+### Device Topics Example
+```
+prodino/SN0001/gps/position
+prodino/SN0001/imu/orientation
+prodino/SN0002/gps/position
+prodino/SN0002/imu/orientation
+```
+
+### SQLite Database
+User data is stored in `data/grk_users.db`. This file is created automatically and persists across restarts.
+
+**Backup the database before updates:**
+```bash
+cp data/grk_users.db data/grk_users.db.backup
+```
+
