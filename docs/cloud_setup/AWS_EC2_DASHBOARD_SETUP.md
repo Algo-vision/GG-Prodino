@@ -27,7 +27,7 @@ Open a terminal on your laptop and SSH into the instance:
 ```bash
 ssh -i "path/to/your-key.pem" ubuntu@<YOUR_PUBLIC_IP>
 ```
-
+*** the key should be instance_gg_key.pem ***
 if there is an error like this:
 ```bash
 ssh -i "path/to/your-key.pem" ubuntu@<YOUR_PUBLIC_IP>
@@ -65,7 +65,7 @@ sudo npm install -g pm2
 ## 4. Transfer Code and Certificates
 From your **local computer**, upload the `prodino_web_ui` folder (excluding `node_modules`):
 ```bash
-rsync -avz -e "ssh -i keys/remote_aws_grk-key.pem" --exclude 'node_modules' --exclude 'data' ./prodino_web_ui ubuntu@<YOUR_PUBLIC_IP>:/home/ubuntu/
+rsync -avz -e "ssh -i keys/remote_aws_grk-key.pem" --exclude 'node_modules' --exclude 'data' --exclude '*.db' ./prodino_web_ui ubuntu@<YOUR_PUBLIC_IP>:/home/ubuntu/
 ```
 
 ### Upload Backend Certificates
@@ -162,3 +162,38 @@ User data is stored in `data/grk_users.db`. This file is created automatically a
 cp data/grk_users.db data/grk_users.db.backup
 ```
 
+---
+
+## Updating the Server
+
+After making code changes locally, follow these steps to deploy and restart:
+
+### 1. Upload Updated Code
+From your **local computer**:
+```bash
+rsync -avz -e "ssh -i keys/instance_gg_key.pem" --exclude 'node_modules' --exclude 'data' --exclude '*.db' ./prodino_web_ui ubuntu@<YOUR_PUBLIC_IP>:/home/ubuntu/
+```
+
+### 2. Restart the Server
+SSH into the EC2 instance and restart the services:
+```bash
+ssh -i "keys/instance_gg_key.pem" ubuntu@<YOUR_PUBLIC_IP>
+
+# Restart the backend server
+pm2 restart grk-backend
+
+# Optional: Restart the UI server if changed
+pm2 restart grk-ui
+
+# Check status
+pm2 status
+```
+
+### Useful PM2 Commands
+```bash
+pm2 logs grk-backend     # View server logs
+pm2 logs grk-backend --lines 100  # View last 100 lines
+pm2 restart all          # Restart all services
+pm2 stop grk-backend     # Stop the backend
+pm2 start grk-backend    # Start the backend
+```

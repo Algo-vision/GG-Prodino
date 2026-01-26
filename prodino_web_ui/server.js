@@ -25,8 +25,8 @@ const io = new Server(server, {
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json());
 
-// Session middleware
-app.use(session({
+// Session middleware - shared with Socket.io
+const sessionMiddleware = session({
     secret: process.env.SESSION_SECRET || 'grk-secret-change-in-production',
     resave: false,
     saveUninitialized: false,
@@ -34,11 +34,34 @@ app.use(session({
         secure: process.env.NODE_ENV === 'production',
         maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
     }
-}));
+});
+app.use(sessionMiddleware);
 
 // Passport middleware
 app.use(passport.initialize());
 app.use(passport.session());
+
+// Socket.io authentication middleware - share session with Socket.io
+io.use((socket, next) => {
+    sessionMiddleware(socket.request, {}, () => {
+        passport.initialize()(socket.request, {}, () => {
+            passport.session()(socket.request, {}, () => {
+                // Check if user is authenticated
+                if (socket.request.session && socket.request.session.passport && socket.request.session.passport.user) {
+                    const userId = socket.request.session.passport.user;
+                    const user = db.findUserById(userId);
+                    if (user) {
+                        socket.user = user;
+                        console.log(`🔐 Socket authenticated: ${user.email}`);
+                        return next();
+                    }
+                }
+                console.log('❌ Socket connection rejected - not authenticated');
+                return next(new Error('Authentication required'));
+            });
+        });
+    });
+});
 
 // Initialize Passport with Google OAuth
 if (!initializePassport()) {
@@ -250,36 +273,66 @@ client.on('message', (topic, message) => {
             break;
     }
 
-    // Broadcast to all connected web clients
-    io.emit('device_update', {
-        serialNumber: serialNumber,
-        device: device,
-        deviceList: getDeviceList()
+    // Broadcast to authenticated web clients (filtered by user permissions)
+    io.sockets.sockets.forEach((socket) => {
+        if (socket.user) {
+            const filteredList = filterDevicesForUser(getDeviceList(), socket.user);
+            const allowedSerials = filteredList.map(d => d.serialNumber);
+
+            // Only send if user has access to this device
+            if (allowedSerials.length === 0 || allowedSerials.includes(serialNumber)) {
+                socket.emit('device_update', {
+                    serialNumber: serialNumber,
+                    device: device,
+                    deviceList: filteredList
+                });
+            }
+        }
     });
 });
 
-// Socket.io Connection
+// Socket.io Connection (authentication is checked by middleware above)
 io.on('connection', (socket) => {
-    console.log('🌐 Web Client Connected');
+    const user = socket.user;
+    console.log(`🌐 Web Client Connected: ${user.email} (${user.role})`);
 
-    // Send current device list
-    socket.emit('devices_list', getDeviceList());
+    // Get device list filtered by user permissions
+    const filteredDeviceList = filterDevicesForUser(getDeviceList(), user);
+    const allowedSerials = user.role === 'admin' || user.access_type === 'all'
+        ? null  // null means all devices
+        : filteredDeviceList.map(d => d.serialNumber);
 
-    // Send all device states
+    // Send current device list (filtered)
+    socket.emit('devices_list', filteredDeviceList);
+
+    // Send device states (only for devices user can access)
     devices.forEach((device, serialNumber) => {
-        socket.emit('device_update', {
-            serialNumber: serialNumber,
-            device: device,
-            deviceList: getDeviceList()
-        });
+        if (allowedSerials === null || allowedSerials.includes(serialNumber)) {
+            socket.emit('device_update', {
+                serialNumber: serialNumber,
+                device: device,
+                deviceList: filteredDeviceList
+            });
+        }
     });
 
-    // Handle device selection request
+    // Handle device selection request (check permission)
     socket.on('select_device', (serialNumber) => {
-        console.log(`📱 Client selected device: ${serialNumber}`);
+        console.log(`📱 ${user.email} selected device: ${serialNumber}`);
+
+        // Verify user has access to this device
+        if (allowedSerials !== null && !allowedSerials.includes(serialNumber)) {
+            console.log(`⚠️ Access denied to device ${serialNumber} for ${user.email}`);
+            return;
+        }
+
         if (devices.has(serialNumber)) {
             socket.emit('device_selected', devices.get(serialNumber));
         }
+    });
+
+    socket.on('disconnect', () => {
+        console.log(`👋 Web Client Disconnected: ${user.email}`);
     });
 });
 
@@ -296,7 +349,13 @@ setInterval(() => {
     });
 
     if (statusChanged) {
-        io.emit('devices_list', getDeviceList());
+        // Send filtered device list to each authenticated user
+        io.sockets.sockets.forEach((socket) => {
+            if (socket.user) {
+                const filteredList = filterDevicesForUser(getDeviceList(), socket.user);
+                socket.emit('devices_list', filteredList);
+            }
+        });
     }
 }, 5000);
 
