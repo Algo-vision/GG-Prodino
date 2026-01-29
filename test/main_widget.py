@@ -1,6 +1,5 @@
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QLabel, QPushButton, QHBoxLayout, QTableWidget, QTableWidgetItem, QComboBox, QFileDialog, QMessageBox, QGroupBox, QGridLayout, QLineEdit, QCheckBox, QScrollArea)
-from PyQt5.QtCore import QTimer, pyqtSignal
-from firmware_uploader import upload_firmware
+from PyQt5.QtCore import QTimer, pyqtSignal, Qt
 from firmware_uploader import upload_firmware
 import time
 import random
@@ -13,17 +12,20 @@ class MainWidget(QWidget):
     upload_finished_signal = pyqtSignal(bool, str)
     status_update_signal = pyqtSignal(dict) # New signal for UDP updates
     
-    def __init__(self, api_client, base_ip, parent=None, client_offset_ms=0, polling_interval_ms=10000): # Slow poll for fallback
+    def __init__(self, api_client, base_ip, parent=None, client_offset_ms=0, polling_interval_ms=500): # 1 second polling
         super().__init__(parent)
         self.api_client = api_client
         self.base_ip = base_ip
         self.client_offset_ms = client_offset_ms
         self.polling_interval_ms = polling_interval_ms
+        self.technician_mode = False
+        self.firmware_path = None
+        self.is_editing_ip = False
+        self.waiting_for_reset = False  # Flag to indicate we're waiting for board reset
         print(f"MainWidget.__init__: api_client.base_url is {self.api_client.base_url}")
         print(f"MainWidget.__init__: client_offset={client_offset_ms}ms, polling_interval={polling_interval_ms}ms")
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.update_status)
-        self.is_editing_ip = False
         self.init_ui()
         # Start polling with offset (if specified) for multi-client scenarios
         if self.client_offset_ms > 0:
@@ -71,18 +73,6 @@ class MainWidget(QWidget):
                 try:
                     data, addr = self.udp_socket.recvfrom(1024)
                     status = json.loads(data.decode())
-                    # Update UI on main thread (using QTimer.singleShot as a hack or signal)
-                    # Since we are in a thread, we should use signals. 
-                    # But for simplicity in this existing structure, let's just update the internal state
-                    # and trigger a UI update safely.
-                    # Actually, PyQt widgets must be updated from main thread.
-                    # Let's use a signal.
-                    # Wait, I can't easily add a signal to the class definition dynamically.
-                    # I'll add a signal to the class in a separate edit or use QMetaObject.invokeMethod
-                    # For now, let's just use the existing timer to process the LAST received UDP packet?
-                    # No, that defeats the purpose.
-                    
-                    # I will add a signal to the class definition in the next chunk.
                     self.status_update_signal.emit(status)
                     
                 except socket.timeout:
@@ -104,9 +94,9 @@ class MainWidget(QWidget):
                 val = ", ".join(str(x) for x in val)
             v.setText(str(val))
             
-        # Enable firmware uploader if technician mode
+        # Enable technician mode section if in technician mode
         self.technician_mode = status.get("technicianMode", False)
-        self.fw_box.setEnabled(self.technician_mode)
+        self.tech_mode_box.setEnabled(self.technician_mode)
         self.fw_upload_btn.setEnabled(self.technician_mode and self.firmware_path is not None)
 
         # Update IP configuration fields only if not editing
@@ -116,6 +106,8 @@ class MainWidget(QWidget):
             self.whitelist_ip1_edit.setText(whitelist[0] if len(whitelist) > 0 else "")
             self.whitelist_ip2_edit.setText(whitelist[1] if len(whitelist) > 1 else "")
             self.whitelist_ip3_edit.setText(whitelist[2] if len(whitelist) > 2 else "192.168.1.33")
+            # Update router IP field
+            self.router_ip_edit.setText(status.get("routerIp", "192.168.1.1"))
 
         # If manual override is not active, update LED combo from status
         if not self.led_override_checkbox.isChecked():
@@ -135,8 +127,8 @@ class MainWidget(QWidget):
         self.status_group = QGroupBox("Device Status")
         status_layout = QGridLayout()
         self.status_labels = {}
-        # Add "controllerIp" and "whitelistIps" to the fields list
-        fields = ["firmwareVersion", "controllerIp", "whitelistIps", "relays_status", "imuX", "imuY", "imuZ", "imuGx", "imuGy", "imuGz", "pitch", "roll", "yaw", "gpsLat", "gpsLng", "gpsAlt", "gpsTime", "gpsSpeedNorth", "gpsSpeedEast", "gpsSpeedDown", "gpsGroundSpeed", "gpsHeading", "ledInternal", "ledIo", "gpsValid", "button_tech", "imuValid", "GPSConnected", "optoin_status"]
+        # Add IP fields to the status fields list
+        fields = ["firmwareVersion", "controllerIp", "routerIp", "whitelistIps", "motorWorkHours", "relays_status", "imuX", "imuY", "imuZ", "imuGx", "imuGy", "imuGz", "pitch", "roll", "yaw", "gpsLat", "gpsLng", "gpsAlt", "gpsTime", "gpsSpeedNorth", "gpsSpeedEast", "gpsSpeedDown", "gpsGroundSpeed", "gpsHeading", "gpsSatellites", "ledInternal", "ledIo", "gpsValid", "button_tech", "imuValid", "GPSConnected", "optoin_status"]
         for i, field in enumerate(fields):
             label = QLabel("-")
             status_layout.addWidget(QLabel(field), i, 0)
@@ -176,22 +168,86 @@ class MainWidget(QWidget):
         ip_config_box.setLayout(ip_config_layout)
         layout.addWidget(ip_config_box)
 
-        # Serial Number Configuration
-        sn_box = QGroupBox("Serial Number Configuration")
-        sn_layout = QHBoxLayout()
+        # Router/MQTT Broker IP Configuration
+        router_config_box = QGroupBox("Router/MQTT Configuration")
+        router_config_layout = QGridLayout()
         
+        self.router_ip_edit = QLineEdit("192.168.1.1")
+        self.router_ip_edit.textChanged.connect(self.on_ip_editing_started)
+        
+        router_config_layout.addWidget(QLabel("Router/MQTT Broker IP:"), 0, 0)
+        router_config_layout.addWidget(self.router_ip_edit, 0, 1)
+        
+        self.save_router_ip_btn = QPushButton("Save Router IP")
+        self.save_router_ip_btn.clicked.connect(self.save_router_ip)
+        router_config_layout.addWidget(self.save_router_ip_btn, 1, 0, 1, 2)
+        
+        router_config_box.setLayout(router_config_layout)
+        layout.addWidget(router_config_box)
+
+        # Technician Mode Section - contains Serial Number and Firmware Uploader
+        self.tech_mode_box = QGroupBox("Technician Mode (Hold button during startup to enable)")
+        tech_mode_layout = QVBoxLayout()
+        
+        # Serial Number subsection - 4 separate digit slots
+        sn_layout = QHBoxLayout()
         self.sn_label = QLabel("Current SN: Unknown")
-        self.sn_input = QLineEdit()
-        self.sn_input.setPlaceholderText("2000-2999")
+        sn_layout.addWidget(self.sn_label)
+        
+        # Add "SN" prefix label
+        sn_layout.addWidget(QLabel("Set SN:"))
+        
+        # First digit is fixed to "2" (range 2000-2999)
+        self.sn_digit1 = QLineEdit("2")
+        self.sn_digit1.setMaxLength(1)
+        self.sn_digit1.setFixedWidth(35)
+        self.sn_digit1.setAlignment(Qt.AlignCenter)
+        self.sn_digit1.setEnabled(False)  # Fixed, cannot change
+        self.sn_digit1.setStyleSheet("background-color: #e0e0e0;")
+        sn_layout.addWidget(self.sn_digit1)
+        
+        # Digits 2, 3, 4 (each accepts 0-9)
+        self.sn_digit2 = QLineEdit()
+        self.sn_digit3 = QLineEdit()
+        self.sn_digit4 = QLineEdit()
+        
+        self.sn_digits = [self.sn_digit2, self.sn_digit3, self.sn_digit4]
+        for i, digit_input in enumerate(self.sn_digits):
+            digit_input.setMaxLength(1)
+            digit_input.setFixedWidth(35)
+            digit_input.setAlignment(Qt.AlignCenter)
+            digit_input.setPlaceholderText(str(i))
+            # Only allow digits 0-9
+            digit_input.textChanged.connect(self.on_sn_digit_changed)
+            sn_layout.addWidget(digit_input)
+        
+        # Auto-advance to next digit
+        self.sn_digit2.textChanged.connect(lambda t: self.sn_digit3.setFocus() if t.isdigit() else None)
+        self.sn_digit3.textChanged.connect(lambda t: self.sn_digit4.setFocus() if t.isdigit() else None)
+        
         self.set_sn_btn = QPushButton("Set SN")
         self.set_sn_btn.clicked.connect(self.set_serial_number)
-        
-        sn_layout.addWidget(self.sn_label)
-        sn_layout.addWidget(self.sn_input)
         sn_layout.addWidget(self.set_sn_btn)
         
-        sn_box.setLayout(sn_layout)
-        layout.addWidget(sn_box)
+        sn_layout.addStretch()  # Push everything to the left
+        tech_mode_layout.addLayout(sn_layout)
+        
+        # Firmware uploader subsection
+        fw_layout = QHBoxLayout()
+        self.fw_path_label = QLabel("No file selected")
+        self.fw_select_btn = QPushButton("Select Firmware")
+        self.fw_select_btn.clicked.connect(self.select_firmware)
+        self.fw_upload_btn = QPushButton("Upload")
+        self.fw_upload_btn.clicked.connect(self.upload_firmware)
+        self.fw_upload_btn.setEnabled(False)
+        fw_layout.addWidget(self.fw_path_label)
+        fw_layout.addWidget(self.fw_select_btn)
+        fw_layout.addWidget(self.fw_upload_btn)
+        tech_mode_layout.addLayout(fw_layout)
+        
+        self.tech_mode_box.setLayout(tech_mode_layout)
+        self.tech_mode_box.setEnabled(False)  # Disabled until technician mode is active
+        layout.addWidget(self.tech_mode_box)
 
         # Relay controls
         relay_box = QGroupBox("Relays")
@@ -235,22 +291,6 @@ class MainWidget(QWidget):
         int_led_box.setLayout(int_led_layout)
         layout.addWidget(int_led_box)
 
-        # Firmware uploader
-        self.fw_box = QGroupBox("Firmware Uploader (Technician Mode)")
-        fw_layout = QHBoxLayout()
-        self.fw_path_label = QLabel("No file selected")
-        self.fw_select_btn = QPushButton("Select Firmware")
-        self.fw_select_btn.clicked.connect(self.select_firmware)
-        self.fw_upload_btn = QPushButton("Upload")
-        self.fw_upload_btn.clicked.connect(self.upload_firmware)
-        self.fw_upload_btn.setEnabled(False)
-        fw_layout.addWidget(self.fw_path_label)
-        fw_layout.addWidget(self.fw_select_btn)
-        fw_layout.addWidget(self.fw_upload_btn)
-        self.fw_box.setLayout(fw_layout)
-        layout.addWidget(self.fw_box)
-        self.fw_box.setEnabled(False)
-
         # Set layout on container
         container.setLayout(layout)
         
@@ -272,18 +312,28 @@ class MainWidget(QWidget):
     def update_status(self):
         status = self.api_client.get_status()
         if status and status.get("error") == "AUTH_ERROR":
+            # If waiting for reset, this is expected - don't show error
+            if self.waiting_for_reset:
+                print("[GUI] Board is resetting, waiting for reconnection...")
+                return
             self.timer.stop()
             QMessageBox.warning(self, "Authentication Error", "Invalid session token. Please log in again.")
             self.reconnect_requested.emit()
         elif status:
+            # Successfully got status - reset the waiting flag
+            if self.waiting_for_reset:
+                print("[GUI] Board is back online, refreshing serial number...")
+                self.waiting_for_reset = False
+                self.refresh_serial_number()
+            
             for k, v in self.status_labels.items():
                 val = status.get(k, "-")
                 if isinstance(val, list):
                     val = ", ".join(str(x) for x in val)
                 v.setText(str(val))
-            # Enable firmware uploader if technician mode
+            # Enable technician mode section if in technician mode
             self.technician_mode = status.get("technicianMode", False)
-            self.fw_box.setEnabled(self.technician_mode)
+            self.tech_mode_box.setEnabled(self.technician_mode)
             self.fw_upload_btn.setEnabled(self.technician_mode and self.firmware_path is not None)
 
             # Update IP configuration fields only if not editing
@@ -292,6 +342,8 @@ class MainWidget(QWidget):
                 whitelist = status.get("whitelistIps", [])
                 self.whitelist_ip1_edit.setText(whitelist[0] if len(whitelist) > 0 else "")
                 self.whitelist_ip2_edit.setText(whitelist[1] if len(whitelist) > 1 else "")
+                # Update router IP field
+                self.router_ip_edit.setText(status.get("routerIp", "192.168.1.1"))
 
             # If manual override is not active, update LED combo from status
             if not self.led_override_checkbox.isChecked():
@@ -300,18 +352,24 @@ class MainWidget(QWidget):
                 if index != -1:
                     self.led_combo.setCurrentIndex(index)
             
-            # Add jitter to prevent collision with other clients
-            # Random jitter of ±500ms around the base interval
-            # This prevents uncoordinated clients from polling at the same time
-            jitter = random.randint(-500, 500)
+            # Add small jitter to prevent collision with other clients
+            # Random jitter of ±100ms (reduced from ±500ms)
+            jitter = random.randint(-100, 100)
             next_interval = self.polling_interval_ms + jitter
-            # Ensure interval stays within reasonable bounds (2-4 seconds)
-            next_interval = max(2000, min(4000, next_interval))
+            # Keep interval at least 500ms and at most double the configured interval
+            next_interval = max(500, min(self.polling_interval_ms * 2, next_interval))
             self.timer.setInterval(next_interval)
 
         else:
-            # Communication lost, return to login screen
+            # Communication lost
+            if self.waiting_for_reset:
+                # This is expected during reset - just wait
+                print("[GUI] Waiting for board to come back online...")
+                return
+            
+            # Unexpected communication loss - show error
             self.timer.stop()
+            QMessageBox.critical(self, "Error", "Failed to communicate with device.")
             self.reconnect_requested.emit()
             for v in self.status_labels.values():
                 v.setText("-")
@@ -416,20 +474,70 @@ class MainWidget(QWidget):
                 QMessageBox.critical(self, "IP Configuration Failed", f"Failed to save IP configuration: {msg}")
                 self.update_status() # Refresh to show the original IPs
 
-    def set_serial_number(self):
-        sn = self.sn_input.text()
-        if not sn.isdigit() or not (2000 <= int(sn) <= 2999):
-            QMessageBox.warning(self, "Invalid Serial Number", "Serial number must be a number between 2000 and 2999.")
+    def save_router_ip(self):
+        print("save_router_ip: Initiated.")
+        self.is_editing_ip = False
+        router_ip = self.router_ip_edit.text()
+        
+        if not router_ip:
+            QMessageBox.warning(self, "Invalid IP", "Please enter a router IP address.")
             return
+            
+        print(f"save_router_ip: Attempting to set router_ip={router_ip}")
+        
+        ok, msg = self.api_client.set_router_ip(router_ip)
+        if ok:
+            print(f"save_router_ip: Router IP saved successfully: {router_ip}")
+            QMessageBox.information(self, "Router IP Configuration", 
+                f"Router IP updated to: {router_ip}\n\nNote: Reboot the device for MQTT to use the new IP.")
+        else:
+            if msg == "Authentication Error":
+                self.timer.stop()
+                QMessageBox.warning(self, "Authentication Error", "Invalid session token. Please log in again.")
+                self.reconnect_requested.emit()
+            else:
+                print(f"save_router_ip: Failed to save router IP: {msg}")
+                QMessageBox.critical(self, "Router IP Configuration Failed", f"Failed to save router IP: {msg}")
+                self.update_status() # Refresh to show the original IP
+
+    def on_sn_digit_changed(self):
+        """Validate that only digits 0-9 are allowed in SN input slots."""
+        sender = self.sender()
+        if sender and sender.text() and not sender.text().isdigit():
+            sender.setText("")  # Clear if not a digit
+
+    def set_serial_number(self):
+        # Read from 4 individual digit slots
+        d2 = self.sn_digit2.text()
+        d3 = self.sn_digit3.text()
+        d4 = self.sn_digit4.text()
+        
+        # Validate all digits are entered
+        if not all([d2.isdigit(), d3.isdigit(), d4.isdigit()]):
+            QMessageBox.warning(self, "Invalid Serial Number", 
+                "Please enter all 3 remaining digits (0-9).\nFirst digit is fixed to '2'.")
+            return
+        
+        # Construct full serial number
+        sn = f"2{d2}{d3}{d4}"
 
         if not self.technician_mode:
-            QMessageBox.warning(self, "Technician Mode Required", "You must be in Technician Mode to set the serial number.\nHold the button on the device during startup.")
+            QMessageBox.warning(self, "Technician Mode Required", 
+                "You must be in Technician Mode to set the serial number.\nHold the button on the device during startup.")
             return
 
         resp = self.api_client.set_serial_number(sn)
         if resp and resp.get("success"):
-            QMessageBox.information(self, "Success", f"Serial number set to {resp.get('message')}. Device will reboot.")
-            self.refresh_serial_number()
+            # Clear the input fields
+            self.sn_digit2.setText("")
+            self.sn_digit3.setText("")
+            self.sn_digit4.setText("")
+            
+            # Set flag to wait patiently for board to reset
+            self.waiting_for_reset = True
+            
+            # Show info message
+            QMessageBox.information(self, "Success", f"Serial number set to SN{sn}. Device will reboot.\nWaiting for device to come back online...")
         elif resp and resp.get("error"):
             QMessageBox.critical(self, "Error", f"Failed to set serial number: {resp.get('message')}")
         else:
@@ -440,4 +548,15 @@ class MainWidget(QWidget):
         if resp and resp.get("type") == "serial_number":
             sn = resp.get("serial_number", "Unknown")
             self.sn_label.setText(f"Current SN: {sn}")
-
+            
+            # Disable SN input if serial number is already set (starts with SN followed by 4 digits)
+            is_configured = sn.startswith("SN") and len(sn) >= 6 and sn[2:6].isdigit()
+            self.sn_digit2.setEnabled(not is_configured)
+            self.sn_digit3.setEnabled(not is_configured)
+            self.sn_digit4.setEnabled(not is_configured)
+            self.set_sn_btn.setEnabled(not is_configured)
+            
+            if is_configured:
+                self.sn_label.setStyleSheet("color: green; font-weight: bold;")
+            else:
+                self.sn_label.setStyleSheet("color: orange; font-weight: bold;")

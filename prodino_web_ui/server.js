@@ -41,8 +41,18 @@ app.use(sessionMiddleware);
 app.use(passport.initialize());
 app.use(passport.session());
 
+// Check if in development mode (defined early for Socket.io middleware)
+const IS_DEV_MODE = process.env.DEV_MODE === 'true' || process.env.NODE_ENV === 'development';
+
 // Socket.io authentication middleware - share session with Socket.io
 io.use((socket, next) => {
+    // In dev mode, allow unauthenticated connections with mock user
+    if (IS_DEV_MODE) {
+        socket.user = { id: 'dev', email: 'dev@admin.local', name: 'Dev Admin', role: 'admin', access_type: 'all' };
+        console.log('🔧 Socket connected (dev mode)');
+        return next();
+    }
+
     sessionMiddleware(socket.request, {}, () => {
         passport.initialize()(socket.request, {}, () => {
             passport.session()(socket.request, {}, () => {
@@ -91,7 +101,12 @@ function createDefaultDeviceState(serialNumber) {
         serialNumber: serialNumber,
         connected: false,
         lastSeen: null,
-        gps: { lat: 0, lng: 0, alt: 0, speed: 0, heading: 0, valid: false, connected: false },
+        gps: {
+            lat: 0, lng: 0, alt: 0, speed: 0, heading: 0,
+            valid: false, connected: false, satellites: 0,
+            velocityNorth: 0, velocityEast: 0, velocityDown: 0,
+            time: '--:--:--'
+        },
         imu: {
             accel: { x: 0, y: 0, z: 0 },
             gyro: { x: 0, y: 0, z: 0 },
@@ -100,7 +115,8 @@ function createDefaultDeviceState(serialNumber) {
         },
         relays: [false, false, false, false],
         leds: { internal: false, io: 'OFF' },
-        sensors: { optos: [false, false, false, false], button: false }
+        sensors: { optos: [false, false, false, false], button: false },
+        deviceInfo: { motorWorkHours: 0, firmwareVersion: '--', controllerIp: '--', routerIp: '--', serialNumber: serialNumber }
     };
 }
 
@@ -235,7 +251,13 @@ client.on('message', (topic, message) => {
             device.gps = { ...device.gps, ...data };
             break;
         case 'gps/velocity':
-            device.gps.speed = data.ground;
+            device.gps.speed = data.ground || 0;
+            device.gps.velocityNorth = data.north || 0;
+            device.gps.velocityEast = data.east || 0;
+            device.gps.velocityDown = data.down || 0;
+            break;
+        case 'gps/time':
+            device.gps.time = data || '--:--:--';
             break;
         case 'gps/heading':
             device.gps.heading = parseFloat(data);
@@ -270,6 +292,24 @@ client.on('message', (topic, message) => {
             break;
         case 'sensors/button_tech':
             device.sensors.button = (data === 'true' || data === true);
+            break;
+        case 'gps/satellites':
+            device.gps.satellites = parseInt(data) || 0;
+            break;
+        case 'status':
+            // Full status message from device - extract deviceInfo fields
+            if (typeof data === 'object') {
+                device.deviceInfo = {
+                    motorWorkHours: data.motorWorkHours || 0,
+                    firmwareVersion: data.firmwareVersion || '--',
+                    controllerIp: data.controllerIp || '--',
+                    routerIp: data.routerIp || '--'
+                };
+                // Also update satellites from status message if present
+                if (data.gpsSatellites !== undefined) {
+                    device.gps.satellites = data.gpsSatellites;
+                }
+            }
             break;
     }
 
@@ -363,18 +403,94 @@ setInterval(() => {
 // AUTH ROUTES
 // ============================================================
 
-// Google OAuth login
-app.get('/auth/google', passport.authenticate('google', {
-    scope: ['profile', 'email']
-}));
+// Check if in development mode
+// Use IS_DEV_MODE defined earlier
 
-// Google OAuth callback
-app.get('/auth/google/callback',
-    passport.authenticate('google', {
-        failureRedirect: '/login.html?error=access_denied',
-        successRedirect: '/'
-    })
-);
+if (IS_DEV_MODE) {
+    console.log('🔧 DEV MODE ENABLED - Using mock authentication');
+
+    // Dev mode: Mock login page
+    app.get('/auth/dev-login', (req, res) => {
+        res.send(`
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Dev Login</title>
+                <style>
+                    body { font-family: Arial; background: #1a1a2e; color: white; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+                    .container { background: #16213e; padding: 40px; border-radius: 10px; text-align: center; }
+                    input { padding: 10px; margin: 10px; width: 200px; border-radius: 5px; border: none; }
+                    button { padding: 10px 30px; background: #4f46e5; color: white; border: none; border-radius: 5px; cursor: pointer; }
+                    button:hover { background: #6366f1; }
+                    h2 { color: #f59e0b; }
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <h2>🔧 DEV MODE LOGIN</h2>
+                    <p>This bypasses Google OAuth for local development</p>
+                    <form action="/auth/dev-login" method="POST">
+                        <input type="email" name="email" placeholder="Email" value="dev@admin.local" required /><br/>
+                        <input type="text" name="name" placeholder="Name" value="Dev Admin" required /><br/>
+                        <button type="submit">Login as Admin</button>
+                    </form>
+                </div>
+            </body>
+            </html>
+        `);
+    });
+
+    // Dev mode: Handle mock login POST
+    app.post('/auth/dev-login', express.urlencoded({ extended: true }), (req, res) => {
+        const { email, name } = req.body;
+
+        // Create or get mock user
+        let user = db.findUserByEmail(email);
+        if (!user) {
+            // Auto-create user as admin for dev mode
+            db.createUser(email, 'Dev Admin', 'admin', 'all', 'dev-mode');
+            user = db.findUserByEmail(email);
+        }
+
+        if (user) {
+            db.updateUserName(user.id, name);
+            db.updateUserLastLogin(user.id);
+            user = db.findUserById(user.id);
+        }
+
+        // Create session
+        req.login(user, (err) => {
+            if (err) {
+                console.error('Dev login error:', err);
+                return res.status(500).send('Login failed');
+            }
+            console.log(`🔧 Dev login successful: ${email} (${name})`);
+            res.redirect('/');
+        });
+    });
+
+    // Override Google OAuth to redirect to dev login
+    app.get('/auth/google', (req, res) => {
+        res.redirect('/auth/dev-login');
+    });
+
+    app.get('/auth/google/callback', (req, res) => {
+        res.redirect('/auth/dev-login');
+    });
+} else {
+    // Production: Google OAuth login
+    app.get('/auth/google', passport.authenticate('google', {
+        scope: ['profile', 'email']
+    }));
+
+    // Google OAuth callback
+    app.get('/auth/google/callback',
+        passport.authenticate('google', {
+            failureRedirect: '/login.html?error=access_denied',
+            successRedirect: '/'
+        })
+    );
+}
 
 // Logout
 app.get('/auth/logout', (req, res) => {

@@ -197,3 +197,6 @@ pm2 restart all          # Restart all services
 pm2 stop grk-backend     # Stop the backend
 pm2 start grk-backend    # Start the backend
 ```
+
+
+IP: 13.49.66.130

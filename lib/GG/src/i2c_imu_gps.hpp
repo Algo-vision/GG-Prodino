@@ -26,6 +26,7 @@ struct gps_data {
   float ground_speed;
   float heading;
   bool valid;
+  uint8_t satellites;  // Number of satellites used for position fix
 };
 
 // Externally defined TinyGPSPlus object and buffer

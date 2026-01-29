@@ -113,6 +113,7 @@ bool readGPSCoords(gps_data &data)
         data.ground_speed = 0.0;
         data.heading = 0.0;
         data.valid = false;
+        data.satellites = 0;
         return false; // GPS not connected
     }
     gps_conncted = true;
@@ -131,6 +132,7 @@ bool readGPSCoords(gps_data &data)
     data.latitude = gps.location.lat();
     data.longitude = gps.location.lng();
     data.altitude = gps.altitude.meters();
+    data.satellites = gps.satellites.isValid() ? gps.satellites.value() : 0;
     
     if (gps.date.isValid() && gps.time.isValid()) {
         sprintf(data.time_str, "%04d-%02d-%02d %02d:%02d:%02d",

@@ -14,3 +14,4 @@ prodino_web_ui/node_modules
 prodino_web_ui/certs
 keys/
 prodino_web_ui/.env
+prodino_web_ui/data/grk_users.db

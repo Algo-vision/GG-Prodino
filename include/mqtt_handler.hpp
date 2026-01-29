@@ -15,12 +15,11 @@
 #include <ArduinoJson.h>
 
 // MQTT Broker Configuration
-#define MQTT_BROKER_IP "192.168.100.131"  // Your PC IP (change to "192.168.1.1" for RUTX12)
 #define MQTT_BROKER_PORT 1883
 #define MQTT_USERNAME ""  // Empty for anonymous, set when authentication enabled
 #define MQTT_PASSWORD ""  // Empty for anonymous
 const unsigned long MQTT_PUBLISH_INTERVAL = 1000; // Publish every 1 second
-const unsigned long MQTT_RECONNECT_INTERVAL = 5000; // Try reconnect every 5 seconds
+const unsigned long MQTT_RECONNECT_INTERVAL = 30000; // Try reconnect every 30 seconds (was 5s)
 
 class MQTTHandler {
 private:
@@ -35,6 +34,9 @@ private:
     String topicPrefix;
     String clientId;
     
+    // Dynamic broker IP
+    IPAddress brokerIp;
+    
     // Build a complete topic path
     String getTopic(const char* suffix) {
         return topicPrefix + String(suffix);
@@ -43,23 +45,39 @@ private:
 public:
     MQTTHandler() : mqttClient(ethClient), lastPublishTime(0), lastReconnectAttempt(0), connected(false) {}
     
-    void begin(const String& sn) {
+    // Begin with serial number and broker IP
+    void begin(const String& sn, const IPAddress& brokerIpAddr) {
         serialNumber = sn;
         topicPrefix = "prodino/" + serialNumber + "/";
         clientId = "prodino_" + serialNumber;
+        brokerIp = brokerIpAddr;
         
-        mqttClient.setServer(MQTT_BROKER_IP, MQTT_BROKER_PORT);
+        // Set socket timeout to prevent blocking on connection failures
+        // This reduces the delay when broker is unreachable from ~5s to ~500ms
+        ethClient.setConnectionTimeout(500);  // 500ms timeout
+        
+        mqttClient.setServer(brokerIp, MQTT_BROKER_PORT);
         Serial.println("MQTT: Handler initialized for device: " + serialNumber);
         Serial.print("MQTT: Broker configured at ");
-        Serial.print(MQTT_BROKER_IP);
+        Serial.print(brokerIp.toString());
         Serial.print(":");
         Serial.println(MQTT_BROKER_PORT);
         Serial.println("MQTT: Topic prefix: " + topicPrefix);
     }
     
+    // Legacy begin() for backward compatibility - uses default IP
+    void begin(const String& sn) {
+        begin(sn, IPAddress(192, 168, 1, 1));  // Default Teltonika router IP
+    }
+    
     // Legacy begin() for backward compatibility
     void begin() {
-        begin("DEFAULT");
+        begin("DEFAULT", IPAddress(192, 168, 1, 1));
+    }
+    
+    // Get current broker IP
+    IPAddress getBrokerIp() {
+        return brokerIp;
     }
     
     bool connectToMQTTBroker() {

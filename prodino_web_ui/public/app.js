@@ -29,8 +29,19 @@ const gpsLat = document.getElementById('gps-lat');
 const gpsLng = document.getElementById('gps-lng');
 const gpsAlt = document.getElementById('gps-alt');
 const gpsSpeed = document.getElementById('gps-speed');
+const gpsVelocity = document.getElementById('gps-velocity');
 const gpsHeading = document.getElementById('gps-heading');
 const gpsValid = document.getElementById('gps-valid');
+const gpsConnected = document.getElementById('gps-connected');
+const gpsSatellites = document.getElementById('gps-satellites');
+const gpsTime = document.getElementById('gps-time');
+
+// Device Info Elements
+const deviceSerial = document.getElementById('device-serial');
+const motorWorkHours = document.getElementById('motor-work-hours');
+const firmwareVersion = document.getElementById('firmware-version');
+const controllerIp = document.getElementById('controller-ip');
+const routerIp = document.getElementById('router-ip');
 
 // IMU Elements
 const pitchVal = document.getElementById('pitch-val');
@@ -232,6 +243,7 @@ function updateDashboard(state) {
     gpsAlt.textContent = `${state.gps.alt.toFixed(1)} m`;
     gpsSpeed.textContent = `${state.gps.speed.toFixed(1)} km/h`;
     gpsHeading.textContent = `${state.gps.heading.toFixed(1)}°`;
+    gpsSatellites.textContent = state.gps.satellites || 0;
 
     if (state.gps.valid || DEBUG_TEL_AVIV) {
         gpsValid.textContent = DEBUG_TEL_AVIV ? 'DEBUG: TEL AVIV' : 'FIX ACQUIRED';
@@ -240,6 +252,42 @@ function updateDashboard(state) {
         gpsValid.textContent = 'NO FIX';
         gpsValid.classList.remove('on');
     }
+
+    // GPS Connected
+    if (gpsConnected) {
+        if (state.gps.connected) {
+            gpsConnected.textContent = 'CONNECTED';
+            gpsConnected.classList.add('on');
+        } else {
+            gpsConnected.textContent = 'DISCONNECTED';
+            gpsConnected.classList.remove('on');
+        }
+    }
+
+    // GPS Velocity (N/E/D)
+    if (gpsVelocity) {
+        const vn = state.gps.velocityNorth || 0;
+        const ve = state.gps.velocityEast || 0;
+        const vd = state.gps.velocityDown || 0;
+        gpsVelocity.textContent = `${vn.toFixed(1)} / ${ve.toFixed(1)} / ${vd.toFixed(1)} m/s`;
+    }
+
+    // GPS Time
+    if (gpsTime) {
+        gpsTime.textContent = state.gps.time || '--:--:--';
+    }
+
+    // Device Info - Serial Number
+    if (deviceSerial) {
+        deviceSerial.textContent = state.deviceInfo?.serialNumber || selectedDevice || '--';
+    }
+
+    // Device Info
+    const workHours = state.deviceInfo?.motorWorkHours || 0;
+    motorWorkHours.textContent = `${workHours.toFixed(2)} h`;
+    firmwareVersion.textContent = state.deviceInfo?.firmwareVersion || '--';
+    controllerIp.textContent = state.deviceInfo?.controllerIp || '--';
+    routerIp.textContent = state.deviceInfo?.routerIp || '--';
 
     // IMU
     const { pitch, roll, yaw } = state.imu.orientation;
