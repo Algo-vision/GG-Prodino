@@ -12,7 +12,7 @@ class MainWidget(QWidget):
     upload_finished_signal = pyqtSignal(bool, str)
     status_update_signal = pyqtSignal(dict) # New signal for UDP updates
     
-    def __init__(self, api_client, base_ip, parent=None, client_offset_ms=0, polling_interval_ms=500): # 1 second polling
+    def __init__(self, api_client, base_ip, parent=None, client_offset_ms=0, polling_interval_ms=50): # 1 second polling
         super().__init__(parent)
         self.api_client = api_client
         self.base_ip = base_ip
@@ -128,7 +128,7 @@ class MainWidget(QWidget):
         status_layout = QGridLayout()
         self.status_labels = {}
         # Add IP fields to the status fields list
-        fields = ["firmwareVersion", "controllerIp", "routerIp", "whitelistIps", "motorWorkHours", "relays_status", "imuX", "imuY", "imuZ", "imuGx", "imuGy", "imuGz", "pitch", "roll", "yaw", "gpsLat", "gpsLng", "gpsAlt", "gpsTime", "gpsSpeedNorth", "gpsSpeedEast", "gpsSpeedDown", "gpsGroundSpeed", "gpsHeading", "gpsSatellites", "ledInternal", "ledIo", "gpsValid", "button_tech", "imuValid", "GPSConnected", "optoin_status"]
+        fields = ["firmwareVersion", "controllerIp", "routerIp", "whitelistIps", "motorWorkHours", "busVoltage", "inaConnected", "relays_status", "imuX", "imuY", "imuZ", "imuGx", "imuGy", "imuGz", "pitch", "roll", "yaw", "gpsLat", "gpsLng", "gpsAlt", "gpsTime", "gpsSpeedNorth", "gpsSpeedEast", "gpsSpeedDown", "gpsGroundSpeed", "gpsHeading", "gpsSatellites", "ledInternal", "ledIo", "gpsValid", "button_tech", "imuValid", "GPSConnected", "optoin_status"]
         for i, field in enumerate(fields):
             label = QLabel("-")
             status_layout.addWidget(QLabel(field), i, 0)
@@ -353,11 +353,11 @@ class MainWidget(QWidget):
                     self.led_combo.setCurrentIndex(index)
             
             # Add small jitter to prevent collision with other clients
-            # Random jitter of ±100ms (reduced from ±500ms)
-            jitter = random.randint(-100, 100)
+            # Random jitter of ±10% of polling interval
+            jitter = random.randint(-self.polling_interval_ms // 10, self.polling_interval_ms // 10)
             next_interval = self.polling_interval_ms + jitter
-            # Keep interval at least 500ms and at most double the configured interval
-            next_interval = max(500, min(self.polling_interval_ms * 2, next_interval))
+            # Keep interval at least 50ms (board can handle ~20 RPS) and at most double the configured interval
+            next_interval = max(50, min(self.polling_interval_ms * 2, next_interval))
             self.timer.setInterval(next_interval)
 
         else:
