@@ -238,28 +238,36 @@ JsonDocument httpHandleLogin(JsonDocument& doc) {
 void httpServerLoop() {
     if (!s_server) return;
     
-    EthernetClient client = s_server->available();
-    if (!client) return;
+    // Process ALL available clients (up to 4 per loop iteration)
+    // This ensures we handle multiple simultaneous requests efficiently
+    int clientsProcessed = 0;
+    const int MAX_CLIENTS_PER_LOOP = 4;  // W5500 supports up to 4-8 sockets
     
-    unsigned long httpStartTime = millis();  // TIMING DEBUG
-    
-    // Check IP whitelist
-    IPAddress remoteIP = client.remoteIP();
-    if (!authIsIPWhitelisted(remoteIP)) {
-        String out = "{\"type\":\"error\",\"message\":\"IP not allowed\"}";
-        httpSendResponse(client, 403, out);
-        delay(1);
-        client.stop();
-        return;
-    }
-    
-    Serial.print("[HTTP TIMING] t1 whitelist: "); Serial.println(millis() - httpStartTime);
-    
+    while (clientsProcessed < MAX_CLIENTS_PER_LOOP) {
+        EthernetClient client = s_server->available();
+        if (!client) break;  // No more clients waiting
+        
+        clientsProcessed++;
+        unsigned long httpStartTime = millis();
+        
+        // Log when request is received (shows queue order)
+        IPAddress remoteIP = client.remoteIP();
+        Serial.print("[HTTP] Request #");
+        Serial.print(clientsProcessed);
+        Serial.print(" from ");
+        Serial.println(remoteIP);
+        
+        // Check IP whitelist
+        if (!authIsIPWhitelisted(remoteIP)) {
+            String out = "{\"type\":\"error\",\"message\":\"IP not allowed\"}";
+            httpSendResponse(client, 403, out);
+            delay(1);
+            client.stop();
+            continue;  // Process next client
+        }    
     // Read first line of request
     String req = client.readStringUntil('\r');
     client.flush();
-    
-    Serial.print("[HTTP TIMING] t2 readLine: "); Serial.println(millis() - httpStartTime);
     
     if (req.startsWith("POST /")) {
         // Wait for data with timeout (prevents infinite blocking)
@@ -269,30 +277,23 @@ void httpServerLoop() {
             delay(1);
         }
         
-        Serial.print("[HTTP TIMING] t3 waitData: "); Serial.println(millis() - httpStartTime);
         
         // Check if we got data
         if (client.available() == 0) {
             // No data received within timeout
             httpSendResponse(client, 400, "{\"type\":\"error\",\"message\":\"Request timeout\"}");
             client.stop();
-            return;
+            continue;  // Process next client
         }
         
         // Read full request
         String request = httpReadRequest(client);
         String body = httpExtractBody(request);
         
-        Serial.print("[HTTP TIMING] t4 readBody: "); Serial.println(millis() - httpStartTime);
-        
-        Serial.println("Request body: " + body);
         
         // Parse JSON
         JsonDocument doc;
         deserializeJson(doc, body.c_str());
-        
-        Serial.println("Json content: " + body);
-        Serial.println("Is Json null: " + String(doc.isNull()));
         
         String msgType = doc["type"];
         JsonDocument resp;
@@ -492,14 +493,12 @@ void httpServerLoop() {
             }
         }
         
-        Serial.print("[HTTP TIMING] t5 processReq: "); Serial.println(millis() - httpStartTime);
         
         // Send response
         String out;
         serializeJson(resp, out);
         httpSendResponse(client, httpStatusCode, out);
         
-        Serial.print("[HTTP TIMING] t6 sendResp: "); Serial.println(millis() - httpStartTime);
         
         if (msgType == "login") {
             Serial.println(resp["success"] ? "Client logged in" : "Client login failed");
@@ -509,7 +508,7 @@ void httpServerLoop() {
     delay(1);
     client.stop();
     
-    Serial.print("[HTTP TIMING] t7 TOTAL: "); Serial.println(millis() - httpStartTime);
+    }  // End of while loop
 }
 
 bool httpIsUserConnected() {

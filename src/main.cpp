@@ -295,33 +295,12 @@ void loop() {
         lastMQTTPublish = millis();
     }
     
-    // 4. UDP Status Unicast to ACTIVE clients only
-    // Only sends to IPs that have recently connected via HTTP (last 30 seconds)
-    // This avoids ARP blocking for offline/unreachable clients
-    static unsigned long lastBroadcast = 0;
-    if (millis() - lastBroadcast > UDP_BROADCAST_INTERVAL) {
-        // Get list of active IPs (recently connected via HTTP)
-        IPAddress activeIPs[10];
-        int activeCount = httpGetActiveIPs(activeIPs, 10);
-        
-        if (activeCount > 0) {
-            JsonDocument statusDoc = statusGenerateJsonSimple();
-            String json;
-            serializeJson(statusDoc, json);
-            
-            // Send to each active IP only
-            for (int i = 0; i < activeCount; i++) {
-                udp.beginPacket(activeIPs[i], UDP_PORT);
-                udp.write((const uint8_t*)json.c_str(), json.length());
-                udp.endPacket();
-            }
-        }
-        
-        lastBroadcast = millis();
+    // 4. Regular maintenance tasks
+    static unsigned long lastSerialOutput = 0;
+    if (millis() - lastSerialOutput > 1000) {
+        statusWriteToSerial();
+        lastSerialOutput = millis();
     }
-    
-    // 5. Regular maintenance tasks
-    statusWriteToSerial();  // Re-enabled
     relayControllerUpdate();
     
     // Update user connection status
