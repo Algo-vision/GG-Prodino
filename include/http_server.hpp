@@ -81,4 +81,15 @@ bool httpIsUserConnected();
  */
 unsigned long httpGetLastUserConnectedTime();
 
+/**
+ * @brief Get list of recently active client IPs
+ * @param outIPs Array to store active IPs
+ * @param maxCount Maximum number of IPs to return
+ * @return Number of active IPs returned
+ * 
+ * Used for UDP unicast optimization - only send to IPs that have
+ * recently connected via HTTP (within last 30 seconds).
+ */
+int httpGetActiveIPs(IPAddress* outIPs, int maxCount);
+
 #endif // HTTP_SERVER_HPP

@@ -240,12 +240,13 @@ void loop() {
     // 2. Handle HTTP requests
     httpServerLoop();
     
-    // 3. Publish MQTT data (1Hz)
+    // 3. Update status and publish MQTT data (1Hz)
     static unsigned long lastMQTTPublish = 0;
     if (millis() - lastMQTTPublish > MQTT_PUBLISH_INTERVAL) {
+        // Always update hardware status (ensures Serial output has fresh data)
+        statusUpdate();
+        
         if (mqttHandler.isConnected()) {
-            // Update hardware status first
-            statusUpdate();
             
             // Publish complete status
             JsonDocument statusDoc = statusGenerateJsonSimple();
@@ -287,32 +288,37 @@ void loop() {
                 g_status.optos_status[2], g_status.optos_status[3],
                 g_status.button_tech
             );
+            
+            // Publish power monitoring (INA219)
+            mqttHandler.publishPower(g_status.inaConnected, g_status.busVoltage);
         }
         lastMQTTPublish = millis();
     }
     
-    // 4. UDP Status Broadcast - DISABLED
-    // The W5500 chip blocks for ~1.4s per IP while waiting for ARP resolution
-    // when the target IP is not responding. This causes HTTP to be slow.
-    // HTTP polling at 500ms is sufficient for real-time updates.
-    // TODO: Implement non-blocking UDP or only send to recently-seen IPs
-    /*
+    // 4. UDP Status Unicast to ACTIVE clients only
+    // Only sends to IPs that have recently connected via HTTP (last 30 seconds)
+    // This avoids ARP blocking for offline/unreachable clients
     static unsigned long lastBroadcast = 0;
     if (millis() - lastBroadcast > UDP_BROADCAST_INTERVAL) {
-        JsonDocument statusDoc = statusGenerateJsonSimple();
-        String json;
-        serializeJson(statusDoc, json);
+        // Get list of active IPs (recently connected via HTTP)
+        IPAddress activeIPs[10];
+        int activeCount = httpGetActiveIPs(activeIPs, 10);
         
-        // Send to each whitelisted IP (unicast instead of broadcast)
-        for (int i = 0; i < g_whitelistCount; i++) {
-            udp.beginPacket(g_whitelist[i], UDP_PORT);
-            udp.write((const uint8_t*)json.c_str(), json.length());
-            udp.endPacket();
+        if (activeCount > 0) {
+            JsonDocument statusDoc = statusGenerateJsonSimple();
+            String json;
+            serializeJson(statusDoc, json);
+            
+            // Send to each active IP only
+            for (int i = 0; i < activeCount; i++) {
+                udp.beginPacket(activeIPs[i], UDP_PORT);
+                udp.write((const uint8_t*)json.c_str(), json.length());
+                udp.endPacket();
+            }
         }
         
         lastBroadcast = millis();
     }
-    */
     
     // 5. Regular maintenance tasks
     statusWriteToSerial();  // Re-enabled

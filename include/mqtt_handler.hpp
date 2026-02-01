@@ -258,6 +258,21 @@ public:
         mqttClient.publish(getTopic("sensors/button_tech").c_str(), buttonStr.c_str());
     }
     
+    // Publish power monitoring data (INA219)
+    void publishPower(bool connected, float busVoltage) {
+        if (!isConnected()) return;
+        
+        // Connection status
+        String connStr = connected ? "true" : "false";
+        mqttClient.publish(getTopic("power/connected").c_str(), connStr.c_str());
+        
+        // Bus voltage (only if connected)
+        if (connected) {
+            String voltageStr = String(busVoltage, 2);
+            mqttClient.publish(getTopic("power/bus_voltage").c_str(), voltageStr.c_str());
+        }
+    }
+    
     unsigned long getLastPublishTime() {
         return lastPublishTime;
     }

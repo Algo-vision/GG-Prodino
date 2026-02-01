@@ -58,7 +58,6 @@ class ApiClient:
         now = time.time()
         if self.last_call_time:
             time_since_last = (now - self.last_call_time) * 1000  # ms
-            print(f"[TIMING] Time since last get_status call: {time_since_last:.1f}ms")
         self.last_call_time = now
         
         try:
@@ -66,7 +65,6 @@ class ApiClient:
             response = self.session.post(self.base_url, data=json.dumps(payload), timeout=5)
             end_time = time.time()
             request_duration = (end_time - start_time) * 1000  # ms
-            print(f"[TIMING] get_status request took: {request_duration:.1f}ms (status: {response.status_code})")
             
             if response.status_code == 200:
                 return response.json()
@@ -82,7 +80,6 @@ class ApiClient:
                 return {"error": "AUTH_ERROR"}
             return None
         except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
-            print(f"[TIMING] get_status FAILED: {e}")
             return None # Indicate communication loss
         except Exception as e:
             print(f"Error getting status: {e}")

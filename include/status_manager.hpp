@@ -89,6 +89,10 @@ struct DeviceStatus {
     
     // Technician mode flag
     bool technicianMode = false;
+    
+    // INA219 Power Monitor
+    bool inaConnected = false;
+    float busVoltage = 0.0;
 };
 
 // ============================================================================

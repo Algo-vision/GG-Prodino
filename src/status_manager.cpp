@@ -10,6 +10,7 @@
 #include <i2c_imu_gps.hpp>
 #include "calculations.hpp"
 #include <Ethernet.h>
+#include <Adafruit_INA219.h>
 
 // ============================================================================
 // FIRMWARE VERSION (configurable constant)
@@ -57,6 +58,12 @@ static const float SPEED_DOWN_FILTER_ALPHA = 0.2f;
 /** Flag indicating all devices are connected */
 static bool s_allDevicesConnected = false;
 
+/** INA219 power monitor instance */
+static Adafruit_INA219 s_ina219;
+
+/** INA219 connection status */
+static bool s_inaConnected = false;
+
 // External reference to technician_mode (defined in main.cpp)
 extern bool technician_mode;
 
@@ -73,6 +80,15 @@ void statusInit() {
     s_previousGpsTime = 0;
     s_filteredGpsSpeedDown = 0.0f;
     s_allDevicesConnected = false;
+    
+    // Initialize INA219 power monitor
+    s_inaConnected = s_ina219.begin();
+    if (s_inaConnected) {
+        Serial.println("INA219 power monitor initialized");
+    } else {
+        Serial.println("INA219 not found - power monitoring disabled");
+    }
+    
     Serial.println("Status manager initialized");
 }
 
@@ -178,6 +194,14 @@ void statusUpdate() {
         g_status.technicianMode = true;
     }
     
+    // Read INA219 power monitor
+    g_status.inaConnected = s_inaConnected;
+    if (s_inaConnected) {
+        g_status.busVoltage = s_ina219.getBusVoltage_V();
+    } else {
+        g_status.busVoltage = -1.0f;  // Indicate error
+    }
+    
     // Debug removed - was printing every 200ms on UDP broadcast
 }
 
@@ -253,6 +277,10 @@ JsonDocument statusGenerateJson(JsonDocument* requestDoc) {
     // Motor work hours
     resp["motorWorkHours"] = round(g_motorWorkSeconds / 3600.0 * 100) / 100.0;  // 2 decimal places
     resp["motorWorkSeconds"] = g_motorWorkSeconds;
+    
+    // INA219 power monitor
+    resp["inaConnected"] = g_status.inaConnected;
+    resp["busVoltage"] = g_status.busVoltage;
     
     return resp;
 }
@@ -338,7 +366,15 @@ void statusWriteToSerial() {
     }
     
     Serial.print(" | IP: ");
-    Serial.println(Ethernet.localIP());
+    Serial.print(Ethernet.localIP());
+    Serial.print(" | INA219: ");
+    Serial.print(g_status.inaConnected ? "Yes" : "No");
+    if (g_status.inaConnected) {
+        Serial.print(" | Bus V: ");
+        Serial.print(g_status.busVoltage, 2);
+        Serial.print("V");
+    }
+    Serial.println();
     Serial.println();
 }
 

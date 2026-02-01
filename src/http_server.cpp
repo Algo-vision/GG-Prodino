@@ -33,6 +33,20 @@ static unsigned long s_lastUserConnectedTime = 0;
 /** User connected flag */
 static bool s_userConnected = false;
 
+// Active IP Tracking - for UDP unicast optimization
+// Only IPs that have recently connected via HTTP will receive UDP broadcasts
+constexpr int MAX_ACTIVE_IPS = 10;
+constexpr unsigned long ACTIVE_IP_TIMEOUT_MS = 30000; // 30 seconds
+
+struct ActiveIP {
+    IPAddress ip;
+    unsigned long lastSeen;
+    bool valid;
+};
+
+static ActiveIP s_activeIPs[MAX_ACTIVE_IPS];
+static int s_activeIPCount = 0;
+
 // External references
 extern bool technician_mode;
 extern GG_HAL _gg_hal;
@@ -47,7 +61,71 @@ void httpServerInit(EthernetServer& server) {
     s_server = &server;
     s_lastUserConnectedTime = 0;
     s_userConnected = false;
+    
+    // Initialize active IP tracking
+    for (int i = 0; i < MAX_ACTIVE_IPS; i++) {
+        s_activeIPs[i].valid = false;
+        s_activeIPs[i].lastSeen = 0;
+    }
+    s_activeIPCount = 0;
+    
     Serial.println("HTTP server initialized");
+}
+
+// Track an IP as active (called when HTTP request received)
+static void trackActiveIP(const IPAddress& ip) {
+    unsigned long now = millis();
+    
+    // First, check if this IP is already tracked
+    for (int i = 0; i < MAX_ACTIVE_IPS; i++) {
+        if (s_activeIPs[i].valid && s_activeIPs[i].ip == ip) {
+            s_activeIPs[i].lastSeen = now;
+            return;
+        }
+    }
+    
+    // Not found, add it to an empty slot or replace oldest
+    int emptySlot = -1;
+    int oldestSlot = 0;
+    unsigned long oldestTime = now;
+    
+    for (int i = 0; i < MAX_ACTIVE_IPS; i++) {
+        if (!s_activeIPs[i].valid) {
+            emptySlot = i;
+            break;
+        }
+        if (s_activeIPs[i].lastSeen < oldestTime) {
+            oldestTime = s_activeIPs[i].lastSeen;
+            oldestSlot = i;
+        }
+    }
+    
+    int slot = (emptySlot >= 0) ? emptySlot : oldestSlot;
+    s_activeIPs[slot].ip = ip;
+    s_activeIPs[slot].lastSeen = now;
+    s_activeIPs[slot].valid = true;
+    
+    Serial.print("[Active IP] Added: ");
+    Serial.println(ip);
+}
+
+// Get list of active IPs (not timed out)
+int httpGetActiveIPs(IPAddress* outIPs, int maxCount) {
+    unsigned long now = millis();
+    int count = 0;
+    
+    for (int i = 0; i < MAX_ACTIVE_IPS && count < maxCount; i++) {
+        if (s_activeIPs[i].valid) {
+            // Check if timed out
+            if (now - s_activeIPs[i].lastSeen > ACTIVE_IP_TIMEOUT_MS) {
+                s_activeIPs[i].valid = false;  // Mark as expired
+                continue;
+            }
+            outIPs[count++] = s_activeIPs[i].ip;
+        }
+    }
+    
+    return count;
 }
 
 String httpReadRequest(EthernetClient& client) {
@@ -248,6 +326,10 @@ void httpServerLoop() {
                 // Token is valid - process request
                 s_lastUserConnectedTime = millis();
                 s_userConnected = true;
+                
+                // Track this IP as active for UDP unicast
+                IPAddress remoteIP = client.remoteIP();
+                trackActiveIP(remoteIP);
                 
                 if (msgType == "get_status") {
                     resp = statusGenerateJson(&doc);
