@@ -174,7 +174,15 @@ bool readGPSCoords(gps_data &data)
     }
     data.speed_down = 0.0;  // Placeholder
 
-    // Set data.valid if any core data is valid
-    data.valid = gps.location.isValid() || gps.date.isValid() || gps.time.isValid() || gps.speed.isValid() || gps.course.isValid();
+    // Robust GPS validity check:
+    // 1. Location must be valid AND not at 0,0 (ocean/default value)
+    // 2. Must have at least 1 satellite
+    // 3. Year must be > 2020 (sanity check - filters cold start junk dates like 1980/2000)
+    bool locationValid = gps.location.isValid() && 
+                         (fabs(data.latitude) > 0.0001 || fabs(data.longitude) > 0.0001);
+    bool hasEnoughSatellites = data.satellites >= 1;
+    bool dateReasonable = gps.date.isValid() && gps.date.year() > 2020;
+
+    data.valid = locationValid && hasEnoughSatellites && dateReasonable;
     return data.valid;
 }

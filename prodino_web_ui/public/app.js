@@ -42,6 +42,7 @@ const motorWorkHours = document.getElementById('motor-work-hours');
 const firmwareVersion = document.getElementById('firmware-version');
 const controllerIp = document.getElementById('controller-ip');
 const routerIp = document.getElementById('router-ip');
+const busVoltage = document.getElementById('bus-voltage');
 
 // IMU Elements
 const pitchVal = document.getElementById('pitch-val');
@@ -288,6 +289,17 @@ function updateDashboard(state) {
     firmwareVersion.textContent = state.deviceInfo?.firmwareVersion || '--';
     controllerIp.textContent = state.deviceInfo?.controllerIp || '--';
     routerIp.textContent = state.deviceInfo?.routerIp || '--';
+
+    // Power Monitoring (INA219)
+    if (busVoltage) {
+        if (state.power?.connected && state.power.busVoltage > 0) {
+            busVoltage.textContent = `${state.power.busVoltage.toFixed(2)} V`;
+        } else if (state.power?.connected === false) {
+            busVoltage.textContent = 'N/C';
+        } else {
+            busVoltage.textContent = '--';
+        }
+    }
 
     // IMU
     const { pitch, roll, yaw } = state.imu.orientation;

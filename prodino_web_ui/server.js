@@ -116,6 +116,7 @@ function createDefaultDeviceState(serialNumber) {
         relays: [false, false, false, false],
         leds: { internal: false, io: 'OFF' },
         sensors: { optos: [false, false, false, false], button: false },
+        power: { connected: false, busVoltage: 0 },
         deviceInfo: { motorWorkHours: 0, firmwareVersion: '--', controllerIp: '--', routerIp: '--', serialNumber: serialNumber }
     };
 }
@@ -309,7 +310,20 @@ client.on('message', (topic, message) => {
                 if (data.gpsSatellites !== undefined) {
                     device.gps.satellites = data.gpsSatellites;
                 }
+                // Update power monitoring from status if present
+                if (data.inaConnected !== undefined) {
+                    device.power.connected = data.inaConnected;
+                }
+                if (data.busVoltage !== undefined) {
+                    device.power.busVoltage = data.busVoltage;
+                }
             }
+            break;
+        case 'power/connected':
+            device.power.connected = (data === 'true' || data === true);
+            break;
+        case 'power/bus_voltage':
+            device.power.busVoltage = parseFloat(data) || 0;
             break;
     }
 
