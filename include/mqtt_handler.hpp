@@ -176,7 +176,6 @@ public:
         validDoc["valid"] = valid;
         validDoc["connected"] = connected_status;
         String validJson;
-        String validJson;
         serializeJson(validDoc, validJson);
         mqttClient.publish(getTopic("validity/gps").c_str(), validJson.c_str());
         
