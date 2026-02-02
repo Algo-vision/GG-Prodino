@@ -258,7 +258,8 @@ void loop() {
                 g_status.gpsSpeedNorth, g_status.gpsSpeedEast, 
                 g_status.gpsSpeedDown, g_status.gpsGroundSpeed,
                 g_status.gpsHeading,
-                g_status.gpsValid, g_status.gpsConnected
+                g_status.gpsValid, g_status.gpsConnected,
+                g_status.gpsTime, g_status.gpsSatellites
             );
             
             // Publish IMU data

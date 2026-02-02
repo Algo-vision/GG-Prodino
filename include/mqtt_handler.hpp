@@ -62,6 +62,11 @@ public:
         Serial.print(brokerIp.toString());
         Serial.print(":");
         Serial.println(MQTT_BROKER_PORT);
+        
+        // Increase buffer size to handle full status JSON (~1040 bytes)
+        // Default is 256 bytes. We use 2048 to be safe and allow for future growth.
+        mqttClient.setBufferSize(2048);
+        
         Serial.println("MQTT: Topic prefix: " + topicPrefix);
     }
     
@@ -139,7 +144,8 @@ public:
     
     void publishGPS(double lat, double lng, double alt, 
                     float speedNorth, float speedEast, float speedDown, float groundSpeed,
-                    float heading, bool valid, bool connected_status) {
+                    float heading, bool valid, bool connected_status,
+                    const char* timeStr, int satellites) {
         if (!isConnected()) return;
         
         // GPS Position
@@ -170,8 +176,17 @@ public:
         validDoc["valid"] = valid;
         validDoc["connected"] = connected_status;
         String validJson;
+        String validJson;
         serializeJson(validDoc, validJson);
         mqttClient.publish(getTopic("validity/gps").c_str(), validJson.c_str());
+        
+        // GPS Time
+        if (timeStr != nullptr && strlen(timeStr) > 0) {
+            mqttClient.publish(getTopic("gps/time").c_str(), timeStr);
+        }
+        
+        // GPS Satellites
+        mqttClient.publish(getTopic("gps/satellites").c_str(), String(satellites).c_str());
     }
     
     void publishIMU(float ax, float ay, float az,
