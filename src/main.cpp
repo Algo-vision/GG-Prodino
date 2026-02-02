@@ -213,9 +213,14 @@ void setup() {
     Serial.println("Starting up...");
     Serial.println("The example WebRelay is started.");
     Serial.println("IPs:");
+    Serial.print("Local IP: ");
     Serial.println(Ethernet.localIP());
+    Serial.print("Gateway IP: ");
     Serial.println(Ethernet.gatewayIP());
+    Serial.print("Subnet Mask: ");
     Serial.println(Ethernet.subnetMask());
+    Serial.print("MQTT Broker (Router) IP: ");
+    Serial.println(g_routerIP);
 }
 
 // ============================================================================
