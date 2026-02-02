@@ -26,6 +26,10 @@ IPAddress g_routerIP;
 String g_serialNumber = "UNCONFIGURED";
 uint32_t g_motorWorkSeconds = 0;
 
+// Reboot scheduling globals
+bool g_rebootPending = false;
+unsigned long g_rebootTimeMs = 0;
+
 // ============================================================================
 // INTERNAL STATE FOR WORK HOURS TRACKING
 // ============================================================================
@@ -290,13 +294,12 @@ bool serialNumberBurn(const char* input) {
     g_serialNumber = String(formattedSN);
     
     Serial.println("SUCCESS: Serial number burned: " + g_serialNumber);
-    Serial.println("Device will now reboot to apply new serial number...");
-    delay(500);  // Allow serial message to be transmitted
+    Serial.println("Device will reboot in 2 seconds to apply new serial number...");
     
-    // Reboot the device so MQTT topics reflect new serial number
-    NVIC_SystemReset();
+    // Schedule reboot instead of immediate reset
+    g_rebootPending = true;
+    g_rebootTimeMs = millis() + 2000;
     
-    // Code below this line will not execute due to reset
     return true;
 }
 

@@ -118,6 +118,12 @@ extern String g_serialNumber;
 /** Current motor work seconds counter */
 extern uint32_t g_motorWorkSeconds;
 
+/** Flag to indicate a reboot is pending */
+extern bool g_rebootPending;
+
+/** Time (in millis) when the pending reboot should execute */
+extern unsigned long g_rebootTimeMs;
+
 // ============================================================================
 // CONFIGURATION MANAGEMENT FUNCTIONS
 // ============================================================================

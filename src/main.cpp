@@ -228,6 +228,13 @@ void loop() {
         ArduinoOTA.handle();
     }
     
+    // Check for scheduled reboot
+    if (g_rebootPending && millis() >= g_rebootTimeMs) {
+        Serial.println("Executing scheduled reboot...");
+        delay(100);
+        NVIC_SystemReset();
+    }
+    
     // Handle serial console commands (SET_SN, GET_SN)
     handleSerialCommands();
     

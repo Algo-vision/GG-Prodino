@@ -26,6 +26,7 @@ class MainWidget(QWidget):
         print(f"MainWidget.__init__: client_offset={client_offset_ms}ms, polling_interval={polling_interval_ms}ms")
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.update_status)
+        self.status_ignore_deadline = 0  # Timestamp until which to ignore status updates (for reboot)
         self.init_ui()
         # Start polling with offset (if specified) for multi-client scenarios
         if self.client_offset_ms > 0:
@@ -310,6 +311,12 @@ class MainWidget(QWidget):
         QTimer.singleShot(1000, self.refresh_serial_number)
 
     def update_status(self):
+        # Check if we should ignore status updates (e.g. while waiting for reboot)
+        if time.time() < self.status_ignore_deadline:
+            if self.waiting_for_reset:
+                print("[GUI] Ignoring status (waiting for reboot)...")
+            return
+
         status = self.api_client.get_status()
         if status and status.get("error") == "AUTH_ERROR":
             # If waiting for reset, this is expected - don't show error
@@ -536,8 +543,18 @@ class MainWidget(QWidget):
             # Set flag to wait patiently for board to reset
             self.waiting_for_reset = True
             
+            # Stop timer to prevent updates while message box is shown
+            self.timer.stop()
+            
             # Show info message
             QMessageBox.information(self, "Success", f"Serial number set to SN{sn}. Device will reboot.\nWaiting for device to come back online...")
+            
+            # Resume timer
+            self.timer.start()
+            
+            # Set deadline to ignore status for 4 seconds (cover the 2s delay + reboot time)
+            # This prevents us from seeing the "old" status before the board actually dies
+            self.status_ignore_deadline = time.time() + 4.0
         elif resp and resp.get("error"):
             QMessageBox.critical(self, "Error", f"Failed to set serial number: {resp.get('message')}")
         else:
