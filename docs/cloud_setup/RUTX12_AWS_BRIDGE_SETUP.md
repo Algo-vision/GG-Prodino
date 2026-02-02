@@ -36,6 +36,8 @@
     *   **QoS:** `1`
 6.  Click **Save & Apply**.
 
+### *Change the LAN mask to 255.255.0.0 in the RUTX12 !!!*
+
 ## 3. Verification (RUTX12 CLI)
 SSH into the RUTX12 and run:
 ```bash

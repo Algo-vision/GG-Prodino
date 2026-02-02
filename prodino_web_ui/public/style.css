@@ -120,6 +120,63 @@ h1 {
     font-weight: 700;
 }
 
+/* Admin Button in Header */
+.btn-admin {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    background: linear-gradient(135deg, rgba(79, 70, 229, 0.3), rgba(139, 92, 246, 0.3));
+    border: 1px solid rgba(79, 70, 229, 0.5);
+    border-radius: 8px;
+    color: var(--text-main);
+    font-size: 0.875rem;
+    font-weight: 600;
+    text-decoration: none;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.btn-admin:hover {
+    background: linear-gradient(135deg, rgba(79, 70, 229, 0.5), rgba(139, 92, 246, 0.5));
+    border-color: var(--accent-primary);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(79, 70, 229, 0.3);
+}
+
+.btn-admin svg {
+    opacity: 0.8;
+}
+
+/* Device Remove Button */
+.btn-remove-device {
+    position: absolute;
+    top: 0.5rem;
+    right: 0.5rem;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    background: rgba(239, 68, 68, 0.15);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    border-radius: 6px;
+    color: var(--danger);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0.3;
+    transition: opacity 0.2s ease, background-color 0.2s ease;
+    z-index: 5;
+}
+
+.device-card:hover .btn-remove-device {
+    opacity: 1;
+}
+
+.btn-remove-device:hover {
+    background: rgba(239, 68, 68, 0.5);
+}
+
 /* Fleet Overview Section */
 .fleet-overview {
     margin-bottom: 2rem;
@@ -207,7 +264,6 @@ h1 {
 
 .device-card:hover {
     border-color: var(--accent-primary);
-    transform: translateY(-4px);
     box-shadow: 0 8px 25px rgba(79, 70, 229, 0.2);
 }
 

@@ -137,16 +137,29 @@ function renderDeviceGrid(deviceList) {
         return;
     }
 
+    const isAdmin = currentUser && currentUser.role === 'admin';
+
     deviceGrid.innerHTML = deviceList.map(device => {
         const isSelected = device.serialNumber === selectedDevice;
         const lastSeenStr = device.lastSeen
             ? `${Math.floor((Date.now() - device.lastSeen) / 1000)}s ago`
             : 'Never';
 
+        // Remove button only for admins
+        const removeBtn = isAdmin ? `
+            <button class="btn-remove-device" onclick="event.stopPropagation(); removeDevice('${device.serialNumber}')" title="Remove device from fleet">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="18" y1="6" x2="6" y2="18"/>
+                    <line x1="6" y1="6" x2="18" y2="18"/>
+                </svg>
+            </button>
+        ` : '';
+
         return `
             <div class="device-card ${device.status} ${isSelected ? 'selected' : ''}" 
                  data-sn="${device.serialNumber}" 
                  onclick="selectDevice('${device.serialNumber}')">
+                ${removeBtn}
                 <div class="device-card-header">
                     <span class="device-card-sn">${device.serialNumber}</span>
                     <span class="device-card-status ${device.status}">${device.status.toUpperCase()}</span>
@@ -168,6 +181,40 @@ function renderDeviceGrid(deviceList) {
             </div>
         `;
     }).join('');
+}
+
+// Remove device from fleet (admin only)
+async function removeDevice(serialNumber) {
+    if (!confirm(`Are you sure you want to remove ${serialNumber} from the fleet?`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`${backendUrl}/api/devices/${serialNumber}`, {
+            method: 'DELETE',
+            credentials: 'include'
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+            addLog('Fleet', `Removed device ${serialNumber}`, 'accent-secondary');
+            devices.delete(serialNumber);
+
+            // If the removed device was selected, deselect it
+            if (selectedDevice === serialNumber) {
+                selectedDevice = null;
+                selectedDeviceBanner.style.display = 'none';
+            }
+
+            renderDeviceGrid(getDeviceListFromMap());
+            updateDeviceCounts();
+        } else {
+            addLog('Fleet', `Failed to remove device: ${data.error}`, 'danger');
+        }
+    } catch (err) {
+        addLog('Fleet', `Error removing device: ${err.message}`, 'danger');
+    }
 }
 
 // Select a device to view details
@@ -430,9 +477,12 @@ async function checkAuth() {
         currentUser = data.user;
         allowedDevices = data.allowedDevices;
 
-        // Show admin link if user is admin
+        // Show admin button in header if user is admin
         if (currentUser.role === 'admin') {
-            addLog('System', '<a href="/admin.html" style="color: var(--accent-secondary)">Open Admin Panel →</a>', '');
+            const adminBtn = document.getElementById('btn-admin');
+            if (adminBtn) {
+                adminBtn.style.display = 'flex';
+            }
         }
 
         addLog('Auth', `Logged in as ${currentUser.email}`, 'accent-secondary');
@@ -525,5 +575,6 @@ window.addEventListener('load', async () => {
     addLog('System', 'Multi-Device Mission Control Loaded', 'accent-secondary');
 });
 
-// Make selectDevice available globally
+// Make selectDevice and removeDevice available globally
 window.selectDevice = selectDevice;
+window.removeDevice = removeDevice;

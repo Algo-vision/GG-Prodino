@@ -131,9 +131,15 @@ function getDeviceStatus(device) {
 }
 
 // Get all devices as array with status
+// Filters out DEFAULT and UNCONFIGURED devices
 function getDeviceList() {
     const deviceList = [];
+    const EXCLUDED_SERIALS = ['DEFAULT', 'UNCONFIGURED', 'NONE'];
     devices.forEach((device, serialNumber) => {
+        // Skip excluded serial numbers
+        if (EXCLUDED_SERIALS.includes(serialNumber.toUpperCase())) {
+            return;
+        }
         deviceList.push({
             serialNumber: serialNumber,
             status: getDeviceStatus(device),
@@ -619,6 +625,28 @@ app.get('/api/devices/:serialNumber', isAuthenticated, (req, res) => {
 
     if (devices.has(serialNumber)) {
         res.json(devices.get(serialNumber));
+    } else {
+        res.status(404).json({ error: 'Device not found', serialNumber });
+    }
+});
+
+// Remove device from fleet (admin only)
+app.delete('/api/devices/:serialNumber', isAuthenticated, isAdmin, (req, res) => {
+    const { serialNumber } = req.params;
+
+    if (devices.has(serialNumber)) {
+        devices.delete(serialNumber);
+        console.log(`🗑️ Device ${serialNumber} removed from fleet by ${req.user.email}`);
+
+        // Notify all connected clients about the updated device list
+        io.sockets.sockets.forEach((socket) => {
+            if (socket.user) {
+                const filteredList = filterDevicesForUser(getDeviceList(), socket.user);
+                socket.emit('devices_list', filteredList);
+            }
+        });
+
+        res.json({ success: true, message: `Device ${serialNumber} removed from fleet` });
     } else {
         res.status(404).json({ error: 'Device not found', serialNumber });
     }
