@@ -5,6 +5,7 @@
 
 #include "led_controller.hpp"
 #include "status_manager.hpp"
+#include "ocu_monitor.hpp"
 #include "gg_hal.hpp"
 
 // ============================================================================
@@ -13,6 +14,9 @@
 
 /** Last LED change time for blink timing */
 static unsigned long s_ledLastChangeTime = 0;
+
+/** Timestamp of ledControllerInit(), for the boot-up grace period */
+static unsigned long s_bootStartTime = 0;
 
 /** Manual LED control flag */
 static bool s_manualControlActive = false;
@@ -25,8 +29,21 @@ extern GG_HAL _gg_hal;
 // IMPLEMENTATION
 // ============================================================================
 
+/** Toggle the given color on/off at LED_BLINK_INTERVAL_MS */
+static void blinkColor(LED_STATES color) {
+    if ((millis() - s_ledLastChangeTime) > LED_BLINK_INTERVAL_MS) {
+        if (_gg_hal.get_indicator_led_state() == OFF) {
+            _gg_hal.set_indicator_led(color);
+        } else {
+            _gg_hal.set_indicator_led(OFF);
+        }
+        s_ledLastChangeTime = millis();
+    }
+}
+
 void ledControllerInit() {
     s_ledLastChangeTime = millis();
+    s_bootStartTime = millis();
     s_manualControlActive = false;
     Serial.println("LED controller initialized");
 }
@@ -36,62 +53,33 @@ void ledControllerUpdate() {
     if (s_manualControlActive) {
         return;
     }
-    
-    // Get current states from global status
+
+    bool stillBooting = (millis() - s_bootStartTime) < LED_BOOT_GRACE_MS;
+
+    if (technician_mode || stillBooting) {
+        // Solid Orange: technician mode, or still within the boot-up grace period
+        _gg_hal.set_indicator_led(ORANGE);
+        return;
+    }
+
+    bool ocuConnected = ocuMonitorIsConnected();
     bool isSafeState = g_status.safetyMode;
-    bool imuConnected = g_status.imuValid;
-    bool gpsConnected = g_status.gpsConnected;
-    bool allSensorsConnected = imuConnected && gpsConnected;
-    
-    if (technician_mode) {
-        // TECHNICIAN MODE LED PATTERNS
+
+    if (ocuConnected) {
         if (isSafeState) {
-            // Solid Orange: Technician mode, voltage to optocouplers (safe)
-            _gg_hal.set_indicator_led(ORANGE);
+            // Solid Green: OCU connected, safety mode active
+            _gg_hal.set_indicator_led(GREEN);
         } else {
-            // Blinking Orange: Technician mode, no voltage to optocouplers (unsafe)
-            if ((millis() - s_ledLastChangeTime) > LED_BLINK_INTERVAL_MS) {
-                if (_gg_hal.get_indicator_led_state() == OFF) {
-                    _gg_hal.set_indicator_led(ORANGE);
-                } else {
-                    _gg_hal.set_indicator_led(OFF);
-                }
-                s_ledLastChangeTime = millis();
-            }
+            // Blinking Green: OCU connected, safety mode not active
+            blinkColor(GREEN);
         }
     } else {
-        // NORMAL MODE LED PATTERNS
         if (isSafeState) {
-            if (allSensorsConnected) {
-                // Solid Green: GPS & IMU connected, voltage to optocouplers (safe)
-                _gg_hal.set_indicator_led(GREEN);
-            } else {
-                // Solid Red: IMU disconnected (or GPS), voltage to optocouplers (safe)
-                _gg_hal.set_indicator_led(RED);
-            }
+            // Blinking Red: OCU disconnected, safety mode active
+            blinkColor(RED);
         } else {
-            // Unsafe state (no voltage to optocouplers)
-            if (allSensorsConnected) {
-                // Blinking Green: GPS & IMU connected, no voltage to optocouplers (unsafe)
-                if ((millis() - s_ledLastChangeTime) > LED_BLINK_INTERVAL_MS) {
-                    if (_gg_hal.get_indicator_led_state() == OFF) {
-                        _gg_hal.set_indicator_led(GREEN);
-                    } else {
-                        _gg_hal.set_indicator_led(OFF);
-                    }
-                    s_ledLastChangeTime = millis();
-                }
-            } else {
-                // Blinking Red: IMU disconnected (or GPS), no voltage to optocouplers (unsafe)
-                if ((millis() - s_ledLastChangeTime) > LED_BLINK_INTERVAL_MS) {
-                    if (_gg_hal.get_indicator_led_state() == OFF) {
-                        _gg_hal.set_indicator_led(RED);
-                    } else {
-                        _gg_hal.set_indicator_led(OFF);
-                    }
-                    s_ledLastChangeTime = millis();
-                }
-            }
+            // Solid Red: OCU disconnected, safety mode not active
+            _gg_hal.set_indicator_led(RED);
         }
     }
 }

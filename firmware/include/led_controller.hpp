@@ -1,19 +1,18 @@
 /**
  * @file led_controller.hpp
  * @brief LED Status Indicator Controller
- * 
- * Manages the bi-color status LED with blink patterns based on:
- * - Technician mode state
- * - Optocoupler safety state (voltage present)
- * - Sensor connectivity (GPS + IMU)
- * 
+ *
+ * Manages the bi-color status LED based on:
+ * - Technician mode / system boot-up
+ * - OCU heartbeat connectivity (see ocu_monitor.hpp)
+ * - Safety mode (both optocoupler safety inputs active)
+ *
  * LED States:
- * - Solid Green: Normal mode, all sensors connected, safe state
- * - Blink Green: Normal mode, all sensors connected, unsafe state
- * - Solid Red: Normal mode, sensor disconnected, safe state
- * - Blink Red: Normal mode, sensor disconnected, unsafe state
- * - Solid Orange: Technician mode, safe state
- * - Blink Orange: Technician mode, unsafe state
+ * - Solid Orange:   Technician mode, or still within the boot-up grace period
+ * - Solid Green:    OCU connected, safety mode active
+ * - Blink Green:    OCU connected, safety mode not active
+ * - Solid Red:      OCU disconnected, safety mode not active
+ * - Blink Red:      OCU disconnected, safety mode active
  */
 
 #ifndef LED_CONTROLLER_HPP
@@ -27,6 +26,10 @@
 
 /** LED blink interval in milliseconds */
 constexpr unsigned long LED_BLINK_INTERVAL_MS = 500;
+
+/** Boot-up grace period: LED shows solid orange for this long after start,
+ *  regardless of OCU/safety state, while sensors/network/OCU comm settle */
+constexpr unsigned long LED_BOOT_GRACE_MS = 60000;
 
 // ============================================================================
 // LED CONTROLLER FUNCTIONS

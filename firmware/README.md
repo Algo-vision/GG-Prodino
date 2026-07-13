@@ -270,7 +270,7 @@ or
 
 **LED Control Modes:**
 - **Manual Colors (OFF/GREEN/RED/ORANGE):** Sets the LED to a specific color and activates manual control mode, overriding automatic LED logic.
-- **AUTO:** Deactivates manual control and returns the LED to automatic mode, where it reflects system status based on sensor connectivity and safety state (see LED Status Indication section).
+- **AUTO:** Deactivates manual control and returns the LED to automatic mode, where it reflects OCU connectivity and safety state (see LED Status Indication section).
 
 ### 5. Set Internal LED
 **Request:**
@@ -395,16 +395,17 @@ struct DeviceStatus {
 
 ## LED Status Indication
 
-The IO LED provides critical system status feedback based on the following logic:
+The IO LED provides critical system status feedback based on OCU (Operator Control Unit) heartbeat connectivity and safety mode:
 
-| LED State          | Condition                                                              | Description                                                                                             |
-| :----------------- | :--------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------ |
-| **Blinking Orange**| Technician Mode active & System Unsafe                                 | Device is in technician mode. Optocouplers `optos_status[0]` OR `optos_status[1]` are FALSE.            |
-| **Blinking Green** | Normal Mode & System Unsafe & All Sensors Connected                    | Device in normal operation. Optocouplers `optos_status[0]` OR `optos_status[1]` are FALSE. Both GPS (`gpsValid` and `GPSConnected`) and IMU (`imuValid`) are TRUE. |
-| **Blinking Red**   | Normal Mode & System Unsafe & One or More Sensors Disconnected        | Device in normal operation. Optocouplers `optos_status[0]` OR `optos_status[1]` are FALSE. Either GPS (`gpsValid` or `GPSConnected`) or IMU (`imuValid`) is FALSE. |
-| **Solid Orange**   | Technician Mode active & System Safe                                   | Device is in technician mode. Both optocouplers `optos_status[0]` AND `optos_status[1]` are TRUE.       |
-| **Solid Green**    | Normal Mode & System Safe & All Sensors Connected                      | Device in normal operation. Both optocouplers `optos_status[0]` AND `optos_status[1]` are TRUE. Both GPS (`gpsValid` and `GPSConnected`) and IMU (`imuValid`) are TRUE. |
-| **Solid Red**      | Normal Mode & System Safe & One or More Sensors Disconnected          | Device in normal operation. Both optocouplers `optos_status[0]` AND `optos_status[1]` are TRUE. Either GPS (`gpsValid` or `GPSConnected`) or IMU (`imuValid`) is FALSE. |
+| LED State          | Condition                                          | Description                                                                                     |
+| :----------------- | :-------------------------------------------------- | :------------------------------------------------------------------------------------------------ |
+| **Solid Orange**    | Technician mode, or within the boot-up grace period | Device is in technician mode, or still within `LED_BOOT_GRACE_MS` (60s) of startup while sensors/network/OCU comm settle. |
+| **Solid Green**     | OCU connected & safety mode active                  | Heartbeat reply received from the OCU within the timeout window. Both optocoupler safety inputs (`optos_status[0]` and `[1]`) are TRUE. |
+| **Blinking Green**  | OCU connected & safety mode not active              | OCU heartbeat is healthy, but at least one optocoupler safety input is FALSE.                    |
+| **Blinking Red**    | OCU disconnected & safety mode active               | No heartbeat reply from the OCU within the timeout window, but the optocoupler safety inputs are both TRUE. |
+| **Solid Red**       | OCU disconnected & safety mode not active           | No heartbeat reply from the OCU, and at least one optocoupler safety input is FALSE.             |
+
+See [`include/ocu_monitor.hpp`](include/ocu_monitor.hpp) for the OCU heartbeat protocol - note the OCU's own script needs a matching UDP responder for `ocuConnected` to ever read true.
 
 ## OTA Firmware Updates
 Firmware can be updated Over-The-Air (OTA) through the desktop GUI (see [`tools/README.md`](../tools/README.md)) in Technician Mode. Select a `.bin` file and initiate upload.

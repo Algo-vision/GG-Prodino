@@ -123,16 +123,13 @@ void handleSerialCommands();
 void setup() {
     Serial.begin(115200);
     
-    // Initialize LED pins and show startup indicator
+    // Initialize LED pins
     // LED_GREEN_LEG and LED_RED_LEG are defined in gg_hal.hpp
     pinMode(LED_GREEN_LEG, OUTPUT);
     pinMode(LED_RED_LEG, OUTPUT);
-    _gg_hal.set_indicator_led(ORANGE);
-    
-    // Wait for system stabilization (60 seconds)
-    //delay(60000);
-    _gg_hal.set_indicator_led(OFF);
-    
+    // The boot-up solid-orange indicator and grace period are handled by
+    // led_controller (LED_BOOT_GRACE_MS), once ledControllerInit() runs below.
+
     // Load configuration from flash
     configLoad();
     serialNumberLoad();
