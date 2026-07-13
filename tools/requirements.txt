@@ -1,3 +1,5 @@
 requests
 PyQt5
 pyinstaller
+pyqtgraph
+PyOpenGL

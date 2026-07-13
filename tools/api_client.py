@@ -261,3 +261,18 @@ class ApiClient:
         except Exception as e:
             print(f"Error getting config: {e}")
             return None
+
+    def get_imu(self):
+        payload = {"type": "get_imu", "token": self.token}
+        try:
+            response = self.session.post(self.base_url, data=json.dumps(payload), timeout=5)
+            if response.status_code == 200:
+                return response.json()
+            if response.status_code == 401:
+                return {"error": "AUTH_ERROR"}
+            return None
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
+            return None
+        except Exception as e:
+            print(f"Error getting IMU data: {e}")
+            return None

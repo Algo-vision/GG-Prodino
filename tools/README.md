@@ -36,6 +36,18 @@ To create a standalone executable for the GUI application, follow these steps:
 ## Python API Tester
 See `gg_api_tester.py` for example usage of the API from Python.
 
+## Orientation Viewer
+
+`orientation_viewer.py` is a standalone 3D orientation verification tool - separate
+from the main GUI on purpose. It polls the board's `get_imu` endpoint (~10Hz) and
+renders a live 3D box + axis gizmo representing the HLC enclosure, rotating in real
+time to match the calculated pitch/roll/yaw. Used to physically tilt the real board
+and visually confirm the orientation math (dual-IMU fusion, mount-orientation remap)
+is correct. Requires `pyqtgraph`/`PyOpenGL` (see `requirements.txt`). Run with:
+```sh
+python orientation_viewer.py
+```
+
 ## Other Scripts
 - `jetson_diagnostics.py` - Network diagnostics when connecting to the GRK board from a Jetson.
 - `firmware_uploader.py` / `ota_uploader.py` - OTA firmware upload helpers.
