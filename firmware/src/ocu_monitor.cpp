@@ -4,6 +4,7 @@
  */
 
 #include "ocu_monitor.hpp"
+#include "ocu_connection_state.hpp"
 #include "config_manager.hpp"
 #include <Ethernet.h>
 #include <EthernetUdp.h>
@@ -78,31 +79,20 @@ void ocuMonitorUpdate() {
     int packetSize = s_udp.parsePacket();
     if (packetSize > 0) {
         s_udp.read(s_rxBuffer, min((size_t)packetSize, sizeof(s_rxBuffer)));
-
-        bool wasDisconnected = (s_disconnectedSinceMs != 0);
         s_lastReplyMs = now;
-        if (wasDisconnected) {
-            s_disconnectedSinceMs = 0;  // transitioned back to connected
-        }
     }
 
-    // Detect a connected->disconnected transition
-    bool connectedNow = (s_lastReplyMs != 0) && (now - s_lastReplyMs < OCU_HEARTBEAT_TIMEOUT_MS);
-    if (!connectedNow && s_disconnectedSinceMs == 0) {
-        s_disconnectedSinceMs = now;
-    }
+    // Update the connected/disconnected-since state from the fresh reply time
+    bool connectedNow = ocuIsConnected(s_lastReplyMs, now, OCU_HEARTBEAT_TIMEOUT_MS);
+    ocuUpdateDisconnectedSince(connectedNow, now, s_disconnectedSinceMs);
 }
 
 bool ocuMonitorIsConnected() {
-    if (s_lastReplyMs == 0) {
-        return false;
-    }
-    return (millis() - s_lastReplyMs) < OCU_HEARTBEAT_TIMEOUT_MS;
+    return ocuIsConnected(s_lastReplyMs, millis(), OCU_HEARTBEAT_TIMEOUT_MS);
 }
 
 unsigned long ocuMonitorDisconnectedDurationMs() {
-    if (ocuMonitorIsConnected() || s_disconnectedSinceMs == 0) {
-        return 0;
-    }
-    return millis() - s_disconnectedSinceMs;
+    unsigned long now = millis();
+    bool connected = ocuIsConnected(s_lastReplyMs, now, OCU_HEARTBEAT_TIMEOUT_MS);
+    return ocuDisconnectedDuration(connected, now, s_disconnectedSinceMs);
 }

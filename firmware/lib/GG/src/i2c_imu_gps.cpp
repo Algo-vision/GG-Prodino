@@ -329,28 +329,3 @@ bool readGPSCoords(gps_data &data)
 
     return data.valid;
 }
-
-void applyMountOrientationRemap(float &x, float &y, float &z, uint8_t orientation) {
-    float rx = x, ry = y, rz = z;
-    switch (orientation) {
-        case MOUNT_TILT_FORWARD:  // rotate -90 deg about X: y'=z, z'=-y
-            y = rz;
-            z = -ry;
-            break;
-        case MOUNT_TILT_BACKWARD: // rotate +90 deg about X: y'=-z, z'=y
-            y = -rz;
-            z = ry;
-            break;
-        case MOUNT_TILT_LEFT:     // rotate +90 deg about Y: x'=z, z'=-x
-            x = rz;
-            z = -rx;
-            break;
-        case MOUNT_TILT_RIGHT:    // rotate -90 deg about Y: x'=-z, z'=x
-            x = -rz;
-            z = rx;
-            break;
-        case MOUNT_STANDING:
-        default:
-            break; // no change
-    }
-}

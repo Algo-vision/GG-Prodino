@@ -10,6 +10,7 @@
 #include "led_controller.hpp"
 #include "relay_controller.hpp"
 #include "ocu_monitor.hpp"
+#include "imu_mount_orientation.hpp"
 #include "KMPProDinoMKRZero.h"
 #include "gg_hal.hpp"
 #include <Arduino_DebugUtils.h>  // For NVIC_SystemReset()
@@ -108,28 +109,6 @@ static void trackActiveIP(const IPAddress& ip) {
     
     Serial.print("[Active IP] Added: ");
     Serial.println(ip);
-}
-
-/** Convert an ImuMountOrientation enum value to its string form */
-static String imuMountOrientationToString(uint8_t orientation) {
-    switch (orientation) {
-        case MOUNT_TILT_FORWARD:  return "TILT_FORWARD";
-        case MOUNT_TILT_BACKWARD: return "TILT_BACKWARD";
-        case MOUNT_TILT_LEFT:     return "TILT_LEFT";
-        case MOUNT_TILT_RIGHT:    return "TILT_RIGHT";
-        case MOUNT_STANDING:
-        default:                  return "STANDING";
-    }
-}
-
-/** Parse an orientation string into an ImuMountOrientation value, or -1 if invalid */
-static int imuMountOrientationFromString(const String& orientation) {
-    if (orientation == "STANDING")       return MOUNT_STANDING;
-    if (orientation == "TILT_FORWARD")  return MOUNT_TILT_FORWARD;
-    if (orientation == "TILT_BACKWARD") return MOUNT_TILT_BACKWARD;
-    if (orientation == "TILT_LEFT")     return MOUNT_TILT_LEFT;
-    if (orientation == "TILT_RIGHT")    return MOUNT_TILT_RIGHT;
-    return -1;
 }
 
 // Get list of active IPs (not timed out)
@@ -537,7 +516,7 @@ void httpServerLoop() {
                 }
                 else if (msgType == "set_imu_mount_orientation") {
                     String orientationStr = doc["orientation"];
-                    int newOrientation = imuMountOrientationFromString(orientationStr);
+                    int newOrientation = imuMountOrientationFromString(orientationStr.c_str());
 
                     if (newOrientation >= 0) {
                         configSetImuMountOrientation((uint8_t)newOrientation);

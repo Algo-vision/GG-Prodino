@@ -8,6 +8,8 @@
 #include "KMPProDinoMKRZero.h"
 #include "KMPCommon.h"
 #include <i2c_imu_gps.hpp>
+#include <imu_mount_orientation.hpp>
+#include <sanity_check.hpp>
 #include "calculations.hpp"
 #include <Ethernet.h>
 #include <Adafruit_INA219.h>
@@ -82,7 +84,7 @@ static uint8_t s_angleStuckCount = 0;
 static uint8_t s_gpsStuckCount = 0;
 
 /** Previous readings, per sensor group, for stuck-value comparison */
-static float s_prevBusVoltage = 0, s_prevBusCurrent = 0;
+static float s_prevPower[2] = {0, 0};
 static float s_prevImu1[6] = {0, 0, 0, 0, 0, 0};
 static float s_prevImu2[6] = {0, 0, 0, 0, 0, 0};
 static float s_prevAngle[3] = {0, 0, 0};
@@ -305,61 +307,32 @@ void statusUpdate() {
     // ------------------------------------------------------------------
 
     // Power monitor
-    bool powerStuck = (g_status.busVoltage == s_prevBusVoltage && g_status.busCurrent_mA == s_prevBusCurrent);
-    s_powerStuckCount = powerStuck ? (s_powerStuckCount + 1) : 0;
-    s_prevBusVoltage = g_status.busVoltage;
-    s_prevBusCurrent = g_status.busCurrent_mA;
-    bool powerAllZero = (g_status.busVoltage == 0 && g_status.busCurrent_mA == 0);
-    bool powerNegative = (g_status.busVoltage < 0 || g_status.busCurrent_mA < 0);
-    g_status.powerSane = s_powerMonitorConnected && !powerAllZero && !powerNegative &&
-                          s_powerStuckCount < SANITY_STUCK_THRESHOLD;
+    float powerNow[2] = {g_status.busVoltage, g_status.busCurrent_mA};
+    bool powerSaneCheck = checkSane(powerNow, s_prevPower, 2, s_powerStuckCount,
+                                     SANITY_STUCK_THRESHOLD, /*requireNonNegative=*/true);
+    g_status.powerSane = s_powerMonitorConnected && powerSaneCheck;
 
     // IMU1 raw readings (accel + gyro)
     float imu1Now[6] = {g_status.imuX, g_status.imuY, g_status.imuZ,
                          g_status.imuGx, g_status.imuGy, g_status.imuGz};
-    bool imu1AllZero = true, imu1Stuck = true;
-    for (uint8_t i = 0; i < 6; i++) {
-        if (imu1Now[i] != 0) imu1AllZero = false;
-        if (imu1Now[i] != s_prevImu1[i]) imu1Stuck = false;
-        s_prevImu1[i] = imu1Now[i];
-    }
-    s_imu1StuckCount = imu1Stuck ? (s_imu1StuckCount + 1) : 0;
-    g_status.imu1Sane = g_status.imuValid && !imu1AllZero && s_imu1StuckCount < SANITY_STUCK_THRESHOLD;
+    bool imu1SaneCheck = checkSane(imu1Now, s_prevImu1, 6, s_imu1StuckCount, SANITY_STUCK_THRESHOLD);
+    g_status.imu1Sane = g_status.imuValid && imu1SaneCheck;
 
     // IMU2 raw readings (accel + gyro)
     float imu2Now[6] = {g_status.imu2X, g_status.imu2Y, g_status.imu2Z,
                          g_status.imu2Gx, g_status.imu2Gy, g_status.imu2Gz};
-    bool imu2AllZero = true, imu2Stuck = true;
-    for (uint8_t i = 0; i < 6; i++) {
-        if (imu2Now[i] != 0) imu2AllZero = false;
-        if (imu2Now[i] != s_prevImu2[i]) imu2Stuck = false;
-        s_prevImu2[i] = imu2Now[i];
-    }
-    s_imu2StuckCount = imu2Stuck ? (s_imu2StuckCount + 1) : 0;
-    g_status.imu2Sane = g_status.imu2Valid && !imu2AllZero && s_imu2StuckCount < SANITY_STUCK_THRESHOLD;
+    bool imu2SaneCheck = checkSane(imu2Now, s_prevImu2, 6, s_imu2StuckCount, SANITY_STUCK_THRESHOLD);
+    g_status.imu2Sane = g_status.imu2Valid && imu2SaneCheck;
 
     // Calculated angle data (pitch/roll/yaw)
     float angleNow[3] = {g_status.pitch, g_status.roll, g_status.yaw};
-    bool angleAllZero = true, angleStuck = true;
-    for (uint8_t i = 0; i < 3; i++) {
-        if (angleNow[i] != 0) angleAllZero = false;
-        if (angleNow[i] != s_prevAngle[i]) angleStuck = false;
-        s_prevAngle[i] = angleNow[i];
-    }
-    s_angleStuckCount = angleStuck ? (s_angleStuckCount + 1) : 0;
-    g_status.angleSane = (g_status.imuValid || g_status.imu2Valid) && !angleAllZero &&
-                          s_angleStuckCount < SANITY_STUCK_THRESHOLD;
+    bool angleSaneCheck = checkSane(angleNow, s_prevAngle, 3, s_angleStuckCount, SANITY_STUCK_THRESHOLD);
+    g_status.angleSane = (g_status.imuValid || g_status.imu2Valid) && angleSaneCheck;
 
-    // GPS position
+    // GPS position (double precision - lat/lng need it)
     double gpsNow[3] = {g_status.gpsLat, g_status.gpsLng, g_status.gpsAlt};
-    bool gpsAllZero = true, gpsStuck = true;
-    for (uint8_t i = 0; i < 3; i++) {
-        if (gpsNow[i] != 0) gpsAllZero = false;
-        if (gpsNow[i] != s_prevGps[i]) gpsStuck = false;
-        s_prevGps[i] = gpsNow[i];
-    }
-    s_gpsStuckCount = gpsStuck ? (s_gpsStuckCount + 1) : 0;
-    g_status.gpsSane = g_status.gpsValid && !gpsAllZero && s_gpsStuckCount < SANITY_STUCK_THRESHOLD;
+    bool gpsSaneCheck = checkSane(gpsNow, s_prevGps, 3, s_gpsStuckCount, SANITY_STUCK_THRESHOLD);
+    g_status.gpsSane = g_status.gpsValid && gpsSaneCheck;
 
     // Debug removed - was printing every 200ms on UDP broadcast
 }

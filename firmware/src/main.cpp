@@ -31,6 +31,7 @@
 // HAL and sensors
 #include "gg_hal.hpp"
 #include <i2c_imu_gps.hpp>
+#include <imu_mount_orientation.hpp>
 #include "calculations.hpp"
 
 // Application modules
