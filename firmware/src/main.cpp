@@ -2,9 +2,9 @@
  * @file main.cpp
  * @brief GRK Controller Main Application
  * 
- * This is the main entry point for the GRK Pro Dino controller.
+ * This is the main entry point for the GRK controller.
  * All functionality has been modularized into separate components:
- * 
+ *
  * - config_manager: Configuration persistence (IPs, serial number, work hours)
  * - auth_manager: Authentication and session management
  * - status_manager: Device status tracking and JSON generation
@@ -12,8 +12,8 @@
  * - led_controller: Status LED blink patterns
  * - relay_controller: Relay auto-reset functionality
  * - mqtt_handler: MQTT communication
- * 
- * @version 1.4.2
+ *
+ * @version 1.5.0
  */
 
 // ============================================================================
@@ -46,7 +46,7 @@
 // FIRMWARE VERSION
 // ============================================================================
 
-#define FIRMWARE_VERSION "1.4.2"
+#define FIRMWARE_VERSION "1.5.0"
 
 // ============================================================================
 // NETWORK CONFIGURATION

@@ -166,7 +166,7 @@ or
 ```json
 {
   "type": "status",                               // string
-  "firmwareVersion": "1.0.0",                     // string
+  "firmwareVersion": "1.5.0",                     // string
   "relays_status": [false, false, false, false],  // Array of booleans
   "optoin_status": [false, false, false, false],  // Array of booleans
   "imuX": 0.01,                                   // float
