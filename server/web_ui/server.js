@@ -184,9 +184,9 @@ const client = mqtt.connect(MQTT_BROKER, mqttOptions);
 client.on('connect', () => {
     console.log('Connected to MQTT Broker');
     // Subscribe to all devices with wildcard for serial number
-    // Supports both old format (prodino/gps/...) and new format (prodino/{SN}/gps/...)
-    client.subscribe('prodino/#', (err) => {
-        if (!err) console.log('Subscribed to prodino/# (all devices)');
+    // Supports both old format (grk/gps/...) and new format (grk/{SN}/gps/...)
+    client.subscribe('grk/#', (err) => {
+        if (!err) console.log('Subscribed to grk/# (all devices)');
     });
 });
 
@@ -195,27 +195,27 @@ client.on('error', (err) => {
 });
 
 // Parse topic to extract serial number and data path
-// New format: prodino/{serialNumber}/{dataPath}
-// Legacy format: prodino/{dataPath} (uses "DEFAULT" as serial number)
+// New format: grk/{serialNumber}/{dataPath}
+// Legacy format: grk/{dataPath} (uses "DEFAULT" as serial number)
 function parseTopicPath(topic) {
     const parts = topic.split('/');
-    if (parts.length < 2 || parts[0] !== 'prodino') {
+    if (parts.length < 2 || parts[0] !== 'grk') {
         return null;
     }
 
     // Check if second part looks like a serial number (starts with SN, GRK, or is alphanumeric ID)
     const potentialSN = parts[1];
-    const isSerialNumber = /^(SN|GRK|PRODINO)[A-Z0-9-]+$/i.test(potentialSN) ||
+    const isSerialNumber = /^(SN|GRK)[A-Z0-9-]+$/i.test(potentialSN) ||
         /^[A-Z]{2,4}[0-9]{3,6}$/i.test(potentialSN);
 
     if (isSerialNumber && parts.length >= 3) {
-        // New format: prodino/SN0001/gps/position
+        // New format: grk/SN0001/gps/position
         return {
             serialNumber: potentialSN.toUpperCase(),
             dataPath: parts.slice(2).join('/')
         };
     } else {
-        // Legacy format: prodino/gps/position (single device, no serial number)
+        // Legacy format: grk/gps/position (single device, no serial number)
         return {
             serialNumber: 'DEFAULT',
             dataPath: parts.slice(1).join('/')

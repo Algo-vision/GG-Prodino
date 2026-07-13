@@ -3,7 +3,7 @@
 Jetson Network Diagnostics Tool
 Version: 1.0.0
 
-This tool diagnoses network issues when connecting to the GG ProDino board
+This tool diagnoses network issues when connecting to the GG GRK board
 from Jetson devices. It tests various potential bottlenecks:
 
 1. Network interface type (Ethernet vs USB adapter)
@@ -459,7 +459,7 @@ def test_rapid_fire(host: str, count: int = 50, delay_ms: int = 50) -> Dict:
 # =============================================================================
 
 def main():
-    parser = argparse.ArgumentParser(description="Jetson Network Diagnostics for GG ProDino")
+    parser = argparse.ArgumentParser(description="Jetson Network Diagnostics for GG GRK")
     parser.add_argument("--host", default=DEFAULT_HOST, help="Board IP address")
     args = parser.parse_args()
     

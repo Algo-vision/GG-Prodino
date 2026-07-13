@@ -1,4 +1,4 @@
-// Prodino IoT Dashboard - Real-time WebSocket Client
+// GRK IoT Dashboard - Real-time WebSocket Client
 
 // Connect to WebSocket server
 const socket = io('http://localhost:5000');
@@ -21,7 +21,7 @@ socket.on('initial_data', (data) => {
 });
 
 // Receive real-time updates
-socket.on('prodino_update', (update) => {
+socket.on('grk_update', (update) => {
     console.log('Update received:', update.topic, update.data);
     handleUpdate(update.topic, update.data);
 });
@@ -46,43 +46,43 @@ function updateConnectionStatus(connected) {
 // Handle incoming MQTT topic updates
 function handleUpdate(topic, data) {
     switch (topic) {
-        case 'prodino/gps/position':
+        case 'grk/gps/position':
             updateGPSPosition(data);
             break;
-        case 'prodino/gps/velocity':
+        case 'grk/gps/velocity':
             updateGPSVelocity(data);
             break;
-        case 'prodino/gps/heading':
+        case 'grk/gps/heading':
             updateGPSHeading(data);
             break;
-        case 'prodino/validity/gps':
+        case 'grk/validity/gps':
             updateGPSValidity(data);
             break;
-        case 'prodino/imu/accel':
+        case 'grk/imu/accel':
             updateAccel(data);
             break;
-        case 'prodino/imu/gyro':
+        case 'grk/imu/gyro':
             updateGyro(data);
             break;
-        case 'prodino/imu/orientation':
+        case 'grk/imu/orientation':
             updateOrientation(data);
             break;
-        case 'prodino/validity/imu':
+        case 'grk/validity/imu':
             updateIMUValidity(data);
             break;
-        case 'prodino/relays/state':
+        case 'grk/relays/state':
             updateRelays(data);
             break;
-        case 'prodino/leds/internal':
+        case 'grk/leds/internal':
             updateLEDInternal(data);
             break;
-        case 'prodino/leds/io':
+        case 'grk/leds/io':
             updateLEDIO(data);
             break;
-        case 'prodino/sensors/optos':
+        case 'grk/sensors/optos':
             updateOptos(data);
             break;
-        case 'prodino/sensors/button_tech':
+        case 'grk/sensors/button_tech':
             updateButton(data);
             break;
     }

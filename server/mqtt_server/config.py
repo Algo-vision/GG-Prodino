@@ -9,7 +9,7 @@ MQTT_USERNAME = None  # Set to "python_server" when authentication enabled
 MQTT_PASSWORD = None  # Set password when authentication enabled
 MQTT_CLIENT_ID = "python_server_001"
 MQTT_KEEPALIVE = 60
-SUBSCRIBE_TOPICS = ["prodino/#"]
+SUBSCRIBE_TOPICS = ["grk/#"]
 
 # Web Server Configuration
 WEB_SERVER_HOST = "0.0.0.0"

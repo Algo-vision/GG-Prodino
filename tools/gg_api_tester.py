@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-GG ProDino API Tester - Professional Client Tool
+GG GRK API Tester - Professional Client Tool
 Version: 1.0.1
 
-This tool tests the HTTP API of the GG ProDino controller board.
+This tool tests the HTTP API of the GG GRK controller board.
 It provides comprehensive diagnostics for connection, authentication,
 and data retrieval issues.
 
@@ -64,7 +64,7 @@ class ErrorType(Enum):
 # =============================================================================
 
 class GGApiClient:
-    """Professional API client for GG ProDino board"""
+    """Professional API client for GG GRK board"""
     
     def __init__(self, host: str, user: str = "admin", password: str = "1234", 
                  timeout: float = 5.0):
@@ -314,7 +314,7 @@ def run_test(args):
     """Run the API test"""
     
     print("=" * 70)
-    print(f"  GG ProDino API Tester v{VERSION}")
+    print(f"  GG GRK API Tester v{VERSION}")
     print("=" * 70)
     print()
     
@@ -457,7 +457,7 @@ def run_test(args):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="GG ProDino API Tester - Professional testing tool for the GG ProDino HTTP API",
+        description="GG GRK API Tester - Professional testing tool for the GG GRK HTTP API",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:

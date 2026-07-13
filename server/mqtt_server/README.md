@@ -1,6 +1,6 @@
-# MQTT Server for Prodino IoT Device
+# MQTT Server for GRK IoT Device
 
-This directory contains the Python MQTT subscriber server that receives data from the Prodino device via MQTT and exposes it through a REST API and WebSocket.
+This directory contains the Python MQTT subscriber server that receives data from the GRK device via MQTT and exposes it through a REST API and WebSocket.
 
 ## Quick Start
 
@@ -32,21 +32,21 @@ python mqtt_subscriber.py
 
 The server will start on `http://localhost:5000`
 
-## Testing Without Prodino
+## Testing Without GRK
 
 ### Test with mosquitto_pub
 
 ```bash
 # Publish test GPS data
-mosquitto_pub -h localhost -t "prodino/gps/position" \
+mosquitto_pub -h localhost -t "grk/gps/position" \
   -m '{"lat": 32.0853, "lng": 34.7818, "alt": 150.2}'
 
 # Publish test IMU data
-mosquitto_pub -h localhost -t "prodino/imu/accel" \
+mosquitto_pub -h localhost -t "grk/imu/accel" \
   -m '{"x": 0.01, "y": -0.02, "z": 0.98}'
 
 # Publish test status
-mosquitto_pub -h localhost -t "prodino/status" \
+mosquitto_pub -h localhost -t "grk/status" \
   -m '{"firmwareVersion": "1.4", "gpsLat": 32.0853, "gpsLng": 34.7818}'
 ```
 
@@ -84,7 +84,7 @@ Connect to `ws://localhost:5000` to receive real-time updates.
 **Events:**
 - `connect` - Client connected
 - `initial_data` - Receive current data on connection
-- `prodino_update` - Receive updates when new MQTT messages arrive
+- `grk_update` - Receive updates when new MQTT messages arrive
 
 **Example (JavaScript):**
 ```javascript
@@ -98,7 +98,7 @@ socket.on('initial_data', (data) => {
     console.log('Initial data:', data);
 });
 
-socket.on('prodino_update', (update) => {
+socket.on('grk_update', (update) => {
     console.log('Update:', update.topic, update.data);
 });
 ```
@@ -115,10 +115,10 @@ Edit `config.py` to change settings:
 
 ## MQTT Topic Structure
 
-The server subscribes to `prodino/#` which includes:
+The server subscribes to `grk/#` which includes:
 
 ```
-prodino/
+grk/
 ├── status              # Complete status JSON
 ├── gps/
 │   ├── position       # {lat, lng, alt}
@@ -157,7 +157,7 @@ prodino/
 
 3. **Test MQTT connection manually:**
    ```bash
-   mosquitto_sub -h localhost -t "prodino/#" -v
+   mosquitto_sub -h localhost -t "grk/#" -v
    ```
 
 ### Port Already in Use
@@ -174,7 +174,7 @@ If you enable authentication in Mosquitto:
 ## Next Steps
 
 Once this server is running and tested:
-1. Update Prodino firmware to publish MQTT messages
-2. Connect Prodino to same network as this server
-3. Verify data flow: Prodino → Mosquitto → Python Server
+1. Update GRK firmware to publish MQTT messages
+2. Connect GRK to same network as this server
+3. Verify data flow: GRK → Mosquitto → Python Server
 4. Build web app to consume the REST API/WebSocket

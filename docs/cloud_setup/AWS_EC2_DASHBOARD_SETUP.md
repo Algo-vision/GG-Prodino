@@ -1,6 +1,6 @@
 # AWS EC2 Dashboard Server Setup Guide
 
-This guide describes how to set up an EC2 instance to host the Prodino Web UI and Backend with multi-device support and Google OAuth authentication.
+This guide describes how to set up an EC2 instance to host the GRK Web UI and Backend with multi-device support and Google OAuth authentication.
 
 ## 1. Launch an EC2 Instance
 1.  Navigate to **EC2 -> Instances -> Launch instances**.
@@ -63,25 +63,25 @@ sudo npm install -g pm2
 ```
 
 ## 4. Transfer Code and Certificates
-From your **local computer**, upload the `prodino_web_ui` folder (excluding `node_modules`):
+From your **local computer**, upload the `web_ui` folder (excluding `node_modules`):
 ```bash
-rsync -avz -e "ssh -i keys/remote_aws_grk-key.pem" --exclude 'node_modules' --exclude 'data' --exclude '*.db' ./prodino_web_ui ubuntu@<YOUR_PUBLIC_IP>:/home/ubuntu/
+rsync -avz -e "ssh -i keys/remote_aws_grk-key.pem" --exclude 'node_modules' --exclude 'data' --exclude '*.db' ./web_ui ubuntu@<YOUR_PUBLIC_IP>:/home/ubuntu/
 ```
 
 ### Upload Backend Certificates
 Ensure the certificates for the backend are uploaded to the `certs/` folder on the EC2 instance:
 ```bash
-rsync -avz -e "ssh -i keys/remote_aws_grk-key.pem" ./prodino_web_ui/certs ubuntu@<YOUR_PUBLIC_IP>:/home/ubuntu/prodino_web_ui/
+rsync -avz -e "ssh -i keys/remote_aws_grk-key.pem" ./web_ui/certs ubuntu@<YOUR_PUBLIC_IP>:/home/ubuntu/web_ui/
 ```
 
 ## 5. Configure and Run
 On the **VPS terminal**:
-1.  Navigate to the folder: `cd prodino_web_ui`
+1.  Navigate to the folder: `cd web_ui`
 2.  Install dependencies: `npm install`
 3.  Update the `.env` file with your configuration.
 
 ### Detailed `.env` Configuration
-Create or edit the `.env` file in the `prodino_web_ui` directory:
+Create or edit the `.env` file in the `web_ui` directory:
 ```bash
 nano .env
 ```
@@ -140,18 +140,18 @@ You will be redirected to the login page. Sign in with an authorized Google acco
 
 ## Multi-Device Support
 
-The backend automatically supports multiple Prodino devices:
+The backend automatically supports multiple GRK devices:
 
-- **MQTT Subscription:** Listens to `prodino/#` (all devices)
-- **Topic Format:** Each device publishes to `prodino/{serial_number}/...`
+- **MQTT Subscription:** Listens to `grk/#` (all devices)
+- **Topic Format:** Each device publishes to `grk/{serial_number}/...`
 - **Web UI:** Shows a fleet overview with all connected devices
 
 ### Device Topics Example
 ```
-prodino/SN0001/gps/position
-prodino/SN0001/imu/orientation
-prodino/SN0002/gps/position
-prodino/SN0002/imu/orientation
+grk/SN0001/gps/position
+grk/SN0001/imu/orientation
+grk/SN0002/gps/position
+grk/SN0002/imu/orientation
 ```
 
 ### SQLite Database
@@ -171,7 +171,7 @@ After making code changes locally, follow these steps to deploy and restart:
 ### 1. Upload Updated Code
 From your **local computer**:
 ```bash
-rsync -avz -e "ssh -i keys/instance_gg_key.pem" --exclude 'node_modules' --exclude 'data' --exclude '*.db' ./prodino_web_ui ubuntu@<YOUR_PUBLIC_IP>:/home/ubuntu/
+rsync -avz -e "ssh -i keys/instance_gg_key.pem" --exclude 'node_modules' --exclude 'data' --exclude '*.db' ./web_ui ubuntu@<YOUR_PUBLIC_IP>:/home/ubuntu/
 ```
 
 ### 2. Restart the Server

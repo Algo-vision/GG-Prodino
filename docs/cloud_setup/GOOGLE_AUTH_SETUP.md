@@ -97,7 +97,7 @@ ADMIN_EMAILS=ron@gg-el.com,haim.hadad@algowis.com
 
 ### Local:
 ```bash
-cd prodino_web_ui
+cd web_ui
 npm start
 ```
 

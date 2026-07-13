@@ -1,7 +1,7 @@
 /*
  * mqtt_handler.hpp
  * 
- * MQTT publishing handler for Prodino IoT device
+ * MQTT publishing handler for GRK IoT device
  * Publishes sensor data to MQTT broker on configured topics
  * Topics include device serial number for multi-device support
  */
@@ -48,8 +48,8 @@ public:
     // Begin with serial number and broker IP
     void begin(const String& sn, const IPAddress& brokerIpAddr) {
         serialNumber = sn;
-        topicPrefix = "prodino/" + serialNumber + "/";
-        clientId = "prodino_" + serialNumber;
+        topicPrefix = "grk/" + serialNumber + "/";
+        clientId = "grk_" + serialNumber;
         brokerIp = brokerIpAddr;
         
         // Set socket timeout to prevent blocking on connection failures

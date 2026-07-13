@@ -73,21 +73,21 @@ This project provides firmware and API for the G.G. Controller Key functionaliti
 **New in v1.5:** The device now supports MQTT for robust, asynchronous telemetry and cloud integration.
 - **Broker:** Configurable in `include/mqtt_handler.hpp` (default: RUTX12 or local broker).
 - **Topics:**
-  - `prodino/gps/position`: Latitude and Longitude.
-  - `prodino/gps/velocity`: Ground speed.
-  - `prodino/gps/heading`: Absolute heading.
-  - `prodino/imu/accel`: Raw accelerometer data.
-  - `prodino/imu/gyro`: Raw gyroscope data.
-  - `prodino/imu/orientation`: Pitch, Roll, and Yaw.
-  - `prodino/sensors/optos`: Optocoupler states.
-  - `prodino/sensors/button_tech`: Technician button state.
-  - `prodino/relays/state`: Current relay states.
-  - `prodino/gps/satellites`: Number of GPS satellites.
-  - `prodino/gps/accuracy`: Position accuracy estimates (`hAcc`, `vAcc` in mm) and height above ellipsoid (`altEllipsoid` in mm).
+  - `grk/gps/position`: Latitude and Longitude.
+  - `grk/gps/velocity`: Ground speed.
+  - `grk/gps/heading`: Absolute heading.
+  - `grk/imu/accel`: Raw accelerometer data.
+  - `grk/imu/gyro`: Raw gyroscope data.
+  - `grk/imu/orientation`: Pitch, Roll, and Yaw.
+  - `grk/sensors/optos`: Optocoupler states.
+  - `grk/sensors/button_tech`: Technician button state.
+  - `grk/relays/state`: Current relay states.
+  - `grk/gps/satellites`: Number of GPS satellites.
+  - `grk/gps/accuracy`: Position accuracy estimates (`hAcc`, `vAcc` in mm) and height above ellipsoid (`altEllipsoid` in mm).
 
 ## GRK Mission Control (Web UI)
 
-A modern, real-time web dashboard located in `prodino_web_ui/`.
+A modern, real-time web dashboard located in `web_ui/`.
 - **Real-time Data:** Powered by Socket.io for sub-second latency.
 - **World Map:** Integrated Leaflet map for live GPS tracking and historical path plotting.
 - **Responsive Design:** Optimized for both desktop and mobile monitoring.
@@ -96,7 +96,7 @@ A modern, real-time web dashboard located in `prodino_web_ui/`.
 ## MQTT Debug Server
 
 Located in `mqtt_server/`, this Python-based utility provides:
-- **Live Subscription:** Monitors all `prodino/#` topics.
+- **Live Subscription:** Monitors all `grk/#` topics.
 - **Data Logging:** Useful for debugging telemetry streams without the full Web UI.
 - **Bridge Capabilities:** Can be extended to bridge local MQTT data to other services.
 

@@ -3,7 +3,7 @@
 2.  **General Settings:**
     *   **Enable:** On
     *   **Local Port:** `1883`
-    *   **Enable remote access:** `On` (Allows LAN connections from Prodino)
+    *   **Enable remote access:** `On` (Allows LAN connections from GRK)
 3.  **Security Settings (Broker):**
     *   **Use TLS/SSL:** `Off`
     *   **Require certificate:** `Off`
@@ -31,7 +31,7 @@
     *   **Insecure:** `Off`
     *   **Clean Session:** `On`
 5.  **Topics (Subscription/Forwarding):**
-    *   **Topic:** `prodino/SNxxxx/#`
+    *   **Topic:** `grk/SNxxxx/#`
     *   **Direction:** `Out`
     *   **QoS:** `1`
 6.  Click **Save & Apply**.
@@ -49,10 +49,10 @@ Look for these lines:
 
 ## 4. Verification (End-to-End)
 1.  Open the **AWS IoT Core Console -> Test -> MQTT Test Client**.
-2.  Subscribe to `prodino/#`.
+2.  Subscribe to `grk/#`.
 3.  From a laptop on the same network as the RUTX12 (using standard `mosquitto_pub`):
     ```bash
-    mosquitto_pub -h 192.168.100.131 -t "prodino/status" -m "RUTX12 Bridge is LIVE!"
+    mosquitto_pub -h 192.168.100.131 -t "grk/status" -m "RUTX12 Bridge is LIVE!"
     ```
     *Note: If local broker TLS is OFF (default), do not use --cafile arguments.*
 4.  If the message appears in AWS, the bridge is working.

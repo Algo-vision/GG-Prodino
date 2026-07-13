@@ -8,7 +8,7 @@
 
 ## Overview
 
-This document outlines the plan to extend the Prodino IoT system to support **multiple devices** identified by **unique serial numbers**. The serial numbers will be burned to flash memory separately from firmware uploads, ensuring device identity persists across updates.
+This document outlines the plan to extend the GRK IoT system to support **multiple devices** identified by **unique serial numbers**. The serial numbers will be burned to flash memory separately from firmware uploads, ensuring device identity persists across updates.
 
 ---
 
@@ -28,10 +28,10 @@ This document outlines the plan to extend the Prodino IoT system to support **mu
 ```mermaid
 graph LR
     subgraph "Single Device"
-        D1[Prodino Device]
+        D1[GRK Device]
     end
     
-    D1 -->|prodino/#| MB[MQTT Broker]
+    D1 -->|grk/#| MB[MQTT Broker]
     MB --> BE[Backend Server]
     BE -->|Socket.io| UI[Single Dashboard]
 ```
@@ -39,7 +39,7 @@ graph LR
 ### Current Limitations
 - Only supports **one device** at a time
 - No unique device identification
-- All MQTT topics use hardcoded `prodino/` prefix
+- All MQTT topics use hardcoded `grk/` prefix
 - Web UI displays single device state
 
 ---
@@ -48,10 +48,10 @@ graph LR
 
 ```mermaid
 graph TD
-    subgraph "Multiple Prodino Devices"
-        D1[Prodino SN0001]
-        D2[Prodino SN0002]
-        D3[Prodino SN0003]
+    subgraph "Multiple GRK Devices"
+        D1[GRK SN0001]
+        D2[GRK SN0002]
+        D3[GRK SN0003]
     end
     
     subgraph "MQTT Broker"
@@ -66,9 +66,9 @@ graph TD
         UI["Fleet Overview + Device Dashboards"]
     end
     
-    D1 -->|"prodino/SN0001/#"| MB
-    D2 -->|"prodino/SN0002/#"| MB
-    D3 -->|"prodino/SN0003/#"| MB
+    D1 -->|"grk/SN0001/#"| MB
+    D2 -->|"grk/SN0002/#"| MB
+    D3 -->|"grk/SN0003/#"| MB
     MB --> BE
     BE -->|Socket.io| UI
 ```
@@ -211,31 +211,31 @@ else if (msg_type == "get_serial_number") {
 ### Current Topics (Single Device)
 
 ```
-prodino/status
-prodino/gps/position
-prodino/gps/velocity
-prodino/imu/accel
-prodino/relays/state
+grk/status
+grk/gps/position
+grk/gps/velocity
+grk/imu/accel
+grk/relays/state
 ...
 ```
 
 ### New Topics (Multi-Device with Serial Number)
 
 ```
-prodino/{serial_number}/status
-prodino/{serial_number}/gps/position
-prodino/{serial_number}/gps/velocity
-prodino/{serial_number}/imu/accel
-prodino/{serial_number}/relays/state
+grk/{serial_number}/status
+grk/{serial_number}/gps/position
+grk/{serial_number}/gps/velocity
+grk/{serial_number}/imu/accel
+grk/{serial_number}/relays/state
 ...
 ```
 
 ### Example for Device SN0001
 
 ```
-prodino/SN0001/status
-prodino/SN0001/gps/position
-prodino/SN0001/imu/orientation
+grk/SN0001/status
+grk/SN0001/gps/position
+grk/SN0001/imu/orientation
 ```
 
 ### MQTT Handler Updates (`mqtt_handler.hpp`)
@@ -249,7 +249,7 @@ private:
 public:
     void begin(const String& sn) {
         serialNumber = sn;
-        topicPrefix = "prodino/" + serialNumber + "/";
+        topicPrefix = "grk/" + serialNumber + "/";
         
         mqttClient.setServer(MQTT_BROKER_IP, MQTT_BROKER_PORT);
         Serial.println("MQTT: Handler initialized for device: " + serialNumber);
@@ -353,7 +353,7 @@ public:
 ### Phase 2: Backend Updates
 
 - [ ] **2.1** Change `server.js` to use `Map<string, deviceState>` for multi-device
-- [ ] **2.2** Update MQTT subscription to `prodino/+/#` (wildcard for SN)
+- [ ] **2.2** Update MQTT subscription to `grk/+/#` (wildcard for SN)
 - [ ] **2.3** Parse serial number from topic path
 - [ ] **2.4** Add Socket.io events for device list and individual device updates
 - [ ] **2.5** Add API endpoints: `GET /api/devices`, `GET /api/devices/:sn`
@@ -381,11 +381,11 @@ public:
 |------|--------|-------------|
 | `src/main.cpp` | MODIFY | Add serial number to Config, add burning functions |
 | `include/mqtt_handler.hpp` | MODIFY | Dynamic topic prefix based on serial number |
-| `prodino_web_ui/server.js` | MODIFY | Multi-device state management |
-| `prodino_web_ui/public/index.html` | MODIFY | Add fleet view, navigation |
-| `prodino_web_ui/public/app.js` | MODIFY | Handle multiple devices |
-| `prodino_web_ui/public/style.css` | MODIFY | Device card styles |
-| `prodino_web_ui/public/fleet.html` | NEW | Fleet overview page |
+| `web_ui/server.js` | MODIFY | Multi-device state management |
+| `web_ui/public/index.html` | MODIFY | Add fleet view, navigation |
+| `web_ui/public/app.js` | MODIFY | Handle multiple devices |
+| `web_ui/public/style.css` | MODIFY | Device card styles |
+| `web_ui/public/fleet.html` | NEW | Fleet overview page |
 
 ---
 
@@ -421,14 +421,14 @@ Device SN0001 boots up
   → Reads serial number from flash: "SN0001"
   → Connects to MQTT broker
   → Publishes:
-      prodino/SN0001/status
-      prodino/SN0001/gps/position
-      prodino/SN0001/imu/orientation
+      grk/SN0001/status
+      grk/SN0001/gps/position
+      grk/SN0001/imu/orientation
       ...
 
 Backend server
-  → Subscribed to: prodino/+/#
-  → Receives message on: prodino/SN0001/gps/position
+  → Subscribed to: grk/+/#
+  → Receives message on: grk/SN0001/gps/position
   → Parses serial number: SN0001
   → Updates devices.get("SN0001").gps
   → Broadcasts to UI: { device: "SN0001", gps: {...} }

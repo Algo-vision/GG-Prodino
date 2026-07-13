@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-MQTT Subscriber Server for Prodino IoT Device
+MQTT Subscriber Server for GRK IoT Device
 
-This server subscribes to MQTT topics published by the Prodino device,
+This server subscribes to MQTT topics published by the GRK device,
 stores the latest sensor data, and exposes it via REST API and WebSocket.
 """
 
@@ -50,7 +50,7 @@ def on_connect(client, userdata, flags, rc):
     if rc == 0:
         print(f"✓ Connected to MQTT broker at {config.MQTT_BROKER}:{config.MQTT_PORT}")
         
-        # Subscribe to all prodino topics
+        # Subscribe to all grk topics
         for topic in config.SUBSCRIBE_TOPICS:
             client.subscribe(topic)
             print(f"✓ Subscribed to topic: {topic}")
@@ -98,49 +98,49 @@ def on_message(client, userdata, msg):
     with data_lock:
         latest_data["last_update"] = datetime.now().isoformat()
         
-        if topic == "prodino/status":
+        if topic == "grk/status":
             latest_data["status"] = data
             
-        elif topic == "prodino/gps/position":
+        elif topic == "grk/gps/position":
             latest_data["gps"]["position"] = data
             
-        elif topic == "prodino/gps/velocity":
+        elif topic == "grk/gps/velocity":
             latest_data["gps"]["velocity"] = data
             
-        elif topic == "prodino/gps/heading":
+        elif topic == "grk/gps/heading":
             latest_data["gps"]["heading"] = data
             
-        elif topic == "prodino/imu/accel":
+        elif topic == "grk/imu/accel":
             latest_data["imu"]["accel"] = data
             
-        elif topic == "prodino/imu/gyro":
+        elif topic == "grk/imu/gyro":
             latest_data["imu"]["gyro"] = data
             
-        elif topic == "prodino/imu/orientation":
+        elif topic == "grk/imu/orientation":
             latest_data["imu"]["orientation"] = data
             
-        elif topic == "prodino/relays/state":
+        elif topic == "grk/relays/state":
             latest_data["relays"] = data
             
-        elif topic == "prodino/leds/internal":
+        elif topic == "grk/leds/internal":
             latest_data["leds"]["internal"] = data
             
-        elif topic == "prodino/leds/io":
+        elif topic == "grk/leds/io":
             latest_data["leds"]["io"] = data
             
-        elif topic == "prodino/sensors/optos":
+        elif topic == "grk/sensors/optos":
             latest_data["sensors"]["optos"] = data
             
-        elif topic == "prodino/sensors/button_tech":
+        elif topic == "grk/sensors/button_tech":
             latest_data["sensors"]["button_tech"] = data
             
-        elif topic == "prodino/validity/gps":
+        elif topic == "grk/validity/gps":
             latest_data["validity"]["gps"] = data
             
-        elif topic == "prodino/validity/imu":
+        elif topic == "grk/validity/imu":
             latest_data["validity"]["imu"] = data
         
-        elif topic == "prodino/gps/accuracy":
+        elif topic == "grk/gps/accuracy":
             latest_data["gps"]["accuracy"] = data
         
         # Add to history
@@ -153,7 +153,7 @@ def on_message(client, userdata, msg):
         })
     
     # Broadcast update to WebSocket clients
-    socketio.emit('prodino_update', {
+    socketio.emit('grk_update', {
         "topic": topic,
         "data": data,
         "timestamp": latest_data["last_update"]
@@ -289,7 +289,7 @@ def setup_mqtt():
 
 if __name__ == '__main__':
     print("=" * 60)
-    print("Prodino MQTT Subscriber Server")
+    print("GRK MQTT Subscriber Server")
     print("=" * 60)
     
     # Setup MQTT
