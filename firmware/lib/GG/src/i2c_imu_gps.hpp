@@ -4,10 +4,15 @@
 #include <TinyGPSPlus.h>
 #include <SparkFun_u-blox_GNSS_v3.h>
 
-// IMU (LSM6DS3) I2C address
+// IMU (LSM6DS3) I2C addresses - two IMUs on the MSB, IMU2 mounted 180 deg
+// rotated from IMU1 in-plane (X/Y flip, Z/yaw unchanged) to cancel drift
+// when fused. IMU1 = U8, IMU2 = U7 on the MSB silkscreen.
 #define IMU_ADDR 0x6A
+#define IMU_2_ADDR 0x6B
 #define LSM6DS3_CTRL1_XL 0x10
 #define LSM6DS3_CTRL2_G 0x11
+#define LSM6DS3_CTRL3_C 0x12
+#define LSM6DS3_CTRL8_XL 0x17
 #define LSM6DS3_OUTX_L_XL 0x28
 #define LSM6DS3_OUTX_L_G 0x22
 
@@ -47,6 +52,11 @@ bool imuReadBytes(uint8_t reg, uint8_t *data, uint8_t len);
 bool readAccelerometer(float &ax, float &ay, float &az);
 bool readGyroscope(float &gx, float &gy, float &gz);
 void initIMU();
+
+// IMU2 helper functions
+bool readAccelerometer_2(float &ax, float &ay, float &az);
+bool readGyroscope_2(float &gx, float &gy, float &gz);
+void initIMU_2();
 
 // GPS helper function
 bool readGPSCoords(gps_data &data);

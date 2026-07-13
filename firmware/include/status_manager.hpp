@@ -55,7 +55,20 @@ struct DeviceStatus {
     
     // IMU validity
     bool imuValid = false;
-    
+
+    // IMU2 Accelerometer (g) - mounted 180 deg rotated from IMU1
+    float imu2X = 0;
+    float imu2Y = 0;
+    float imu2Z = 0;
+
+    // IMU2 Gyroscope (deg/s)
+    float imu2Gx = 0;
+    float imu2Gy = 0;
+    float imu2Gz = 0;
+
+    // IMU2 validity
+    bool imu2Valid = false;
+
     // GPS Position
     double gpsLat = 0;
     double gpsLng = 0;
@@ -125,6 +138,21 @@ extern float g_gyroYOffset;
 
 /** Gyroscope Z-axis offset */
 extern float g_gyroZOffset;
+
+/** IMU2 X-axis offset (set during calibration) */
+extern float g_imu2XOffset;
+
+/** IMU2 Y-axis offset */
+extern float g_imu2YOffset;
+
+/** IMU2 Gyroscope X-axis offset */
+extern float g_gyro2XOffset;
+
+/** IMU2 Gyroscope Y-axis offset */
+extern float g_gyro2YOffset;
+
+/** IMU2 Gyroscope Z-axis offset */
+extern float g_gyro2ZOffset;
 
 // ============================================================================
 // STATUS MANAGEMENT FUNCTIONS

@@ -36,6 +36,12 @@ float g_gyroXOffset = 0.0f;
 float g_gyroYOffset = 0.0f;
 float g_gyroZOffset = 0.0f;
 
+float g_imu2XOffset = 0.0f;
+float g_imu2YOffset = 0.0f;
+float g_gyro2XOffset = 0.0f;
+float g_gyro2YOffset = 0.0f;
+float g_gyro2ZOffset = 0.0f;
+
 // ============================================================================
 // INTERNAL STATE
 // ============================================================================
@@ -93,36 +99,68 @@ void statusInit() {
 }
 
 void statusUpdate() {
-    // Read IMU Accelerometer
+    // Read IMU1 Accelerometer
     float ax, ay, az;
     bool imuValid = readAccelerometer(ax, ay, az);
     g_status.imuX = ax;
     g_status.imuY = ay;
     g_status.imuZ = az;
-    
-    // Read Gyroscope
+
+    // Read IMU1 Gyroscope
     float gx, gy, gz;
     _gg_hal.get_gyro_data(gx, gy, gz);
     g_status.imuGx = gx - g_gyroXOffset;
     g_status.imuGy = gy - g_gyroYOffset;
     g_status.imuGz = gz - g_gyroZOffset;
-    
+
     g_status.imuValid = imuValid;
-    
+
+    // Read IMU2 Accelerometer
+    float ax2, ay2, az2;
+    bool imu2Valid = readAccelerometer_2(ax2, ay2, az2);
+    g_status.imu2X = ax2;
+    g_status.imu2Y = ay2;
+    g_status.imu2Z = az2;
+
+    // Read IMU2 Gyroscope
+    float gx2, gy2, gz2;
+    _gg_hal.get_gyro_data_2(gx2, gy2, gz2);
+    g_status.imu2Gx = gx2 - g_gyro2XOffset;
+    g_status.imu2Gy = gy2 - g_gyro2YOffset;
+    g_status.imu2Gz = gz2 - g_gyro2ZOffset;
+
+    g_status.imu2Valid = imu2Valid;
+
     // Calculate time delta
     unsigned long currentTime = millis();
     float dt = (currentTime - s_lastUpdateTime) / 1000.0f;
     s_lastUpdateTime = currentTime;
-    
-    // Calculate orientation from IMU if valid
-    if (g_status.imuValid) {
-        calculatePitchRoll(g_status.pitch, g_status.roll, 
+
+    // Calculate orientation from whichever IMU(s) are valid
+    if (g_status.imuValid && g_status.imu2Valid) {
+        // Both valid - fuse for a less noisy estimate
+        calculateMergedOrientation(g_status.pitch, g_status.roll, g_status.yaw,
                           g_status.imuX, g_status.imuY, g_status.imuZ,
-                          g_status.imuGx, g_status.imuGy, dt,
+                          g_status.imuGx, g_status.imuGy, g_status.imuGz,
+                          g_status.imu2X, g_status.imu2Y, g_status.imu2Z,
+                          g_status.imu2Gx, g_status.imu2Gy, g_status.imu2Gz, dt,
+                          g_imuXOffset, g_imuYOffset,
+                          g_imu2XOffset, g_imu2YOffset);
+    } else if (g_status.imuValid) {
+        // Only IMU1 valid
+        calculateOrientation_1(g_status.pitch, g_status.roll, g_status.yaw,
+                          g_status.imuX, g_status.imuY, g_status.imuZ,
+                          g_status.imuGx, g_status.imuGy, g_status.imuGz, dt,
                           g_imuXOffset, g_imuYOffset);
-        calculateYaw(g_status.yaw, g_status.imuGz, dt);
+    } else if (g_status.imu2Valid) {
+        // Only IMU2 valid
+        calculateOrientation_2(g_status.pitch, g_status.roll, g_status.yaw,
+                          g_status.imu2X, g_status.imu2Y, g_status.imu2Z,
+                          g_status.imu2Gx, g_status.imu2Gy, g_status.imu2Gz, dt,
+                          g_imu2XOffset, g_imu2YOffset);
     }
-    
+    // else: neither IMU valid - leave pitch/roll/yaw at their last known values
+
     // Read GPS data
     gps_data currentGpsData;
     _gg_hal.get_gps_data(currentGpsData);
@@ -235,7 +273,16 @@ JsonDocument statusGenerateJson(JsonDocument* requestDoc) {
     resp["pitch"] = g_status.pitch;
     resp["roll"] = g_status.roll;
     resp["yaw"] = g_status.yaw;
-    
+
+    // IMU2 data (mounted 180 deg rotated from IMU1)
+    resp["imu2X"] = g_status.imu2X;
+    resp["imu2Y"] = g_status.imu2Y;
+    resp["imu2Z"] = g_status.imu2Z;
+    resp["imu2Gx"] = g_status.imu2Gx;
+    resp["imu2Gy"] = g_status.imu2Gy;
+    resp["imu2Gz"] = g_status.imu2Gz;
+    resp["imu2Valid"] = g_status.imu2Valid;
+
     // GPS data
     resp["gpsLat"] = g_status.gpsLat;
     resp["gpsLng"] = g_status.gpsLng;
@@ -334,7 +381,24 @@ void statusWriteToSerial() {
     
     Serial.print(" | IMU Valid: ");
     Serial.print(g_status.imuValid ? "Yes" : "No");
-    
+
+    Serial.print(" | IMU2 Accel: ");
+    Serial.print(g_status.imu2X, 2);
+    Serial.print(", ");
+    Serial.print(g_status.imu2Y, 2);
+    Serial.print(", ");
+    Serial.print(g_status.imu2Z, 2);
+
+    Serial.print(" | IMU2 Gyro: ");
+    Serial.print(g_status.imu2Gx, 2);
+    Serial.print(", ");
+    Serial.print(g_status.imu2Gy, 2);
+    Serial.print(", ");
+    Serial.print(g_status.imu2Gz, 2);
+
+    Serial.print(" | IMU2 Valid: ");
+    Serial.print(g_status.imu2Valid ? "Yes" : "No");
+
     Serial.print(" | GPS: ");
     if (g_status.gpsValid) {
         Serial.print(g_status.gpsLat, 6);

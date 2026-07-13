@@ -21,6 +21,7 @@ public:
     void get_gps_data(gps_data &data);
     bool get_accel_data(float &ax, float &ay, float &az);
     bool get_gyro_data(float &gx, float &gy, float &gz);
+    bool get_gyro_data_2(float &gx, float &gy, float &gz);
     void get_relay_status(int relay_id);
     void set_relay(int relay_id, bool state);
     void set_indicator_led(LED_STATES state);

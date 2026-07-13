@@ -12,6 +12,7 @@ void GG_HAL::init()
     pinMode(LED_RED_LEG, OUTPUT);
     pinMode(button_tech_LEG, INPUT);
     initIMU();
+    initIMU_2();
 }
 void GG_HAL::get_gps_data(gps_data &data)
 {
@@ -24,6 +25,10 @@ bool GG_HAL::get_accel_data(float &ax, float &ay, float &az)
 bool GG_HAL::get_gyro_data(float &gx, float &gy, float &gz)
 {
     return readGyroscope(gx, gy, gz);
+}
+bool GG_HAL::get_gyro_data_2(float &gx, float &gy, float &gz)
+{
+    return readGyroscope_2(gx, gy, gz);
 }
 void GG_HAL::get_relay_status(int relay_id)
 {

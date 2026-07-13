@@ -9,6 +9,7 @@ char gpsBuffer[GPS_BUFFER_LEN]; // Declare gpsBuffer globally within this file
 SFE_UBLOX_GNSS myGNSS; // SparkFun u-blox GNSS for UBX protocol (hAcc/vAcc)
 
 bool imu_initialized = false;
+bool imu2_initialized = false;
 bool gps_conncted = false;
 bool gnss_initialized = false;
 
@@ -27,7 +28,7 @@ void initUbloxGNSS()
         Serial.println("WARNING: u-blox GNSS (UBX) init failed - accuracy data unavailable");
     }
 }
-// ---- Helper functions for IMU ----
+// ---- Helper functions for IMU1 (0x6A) ----
 void imuWriteByte(uint8_t reg, uint8_t value)
 {
     Wire.beginTransmission(IMU_ADDR);
@@ -37,10 +38,21 @@ void imuWriteByte(uint8_t reg, uint8_t value)
 }
 void initIMU()
 {
-    // Initialize IMU: 104 Hz, ±2g, 100 Hz filter
-    imuWriteByte(LSM6DS3_CTRL1_XL, 0x60);
-    // Initialize Gyro: 104 Hz, ±245 dps (not used now)
-    imuWriteByte(LSM6DS3_CTRL2_G, 0x60);
+    // Software reset to ensure clean state
+    imuWriteByte(LSM6DS3_CTRL3_C, 0x01); // SW_RESET bit
+    delay(20); // Wait for reset to complete
+
+    // CTRL3_C: BDU=1 (block data update, avoids reading torn samples), IF_INC=1 (auto-increment)
+    imuWriteByte(LSM6DS3_CTRL3_C, 0x04);
+
+    // Accel: 104 Hz, ±8g - harsh-terrain tuning (matches reference V1.3.2.1/V1.3.6)
+    imuWriteByte(LSM6DS3_CTRL1_XL, 0x4C);
+
+    // Enable hardware LPF2 anti-aliasing filter, cutoff at ODR/9 = 11.55 Hz
+    imuWriteByte(LSM6DS3_CTRL8_XL, 0xC0);
+
+    // Gyro: 104 Hz, ±500 dps
+    imuWriteByte(LSM6DS3_CTRL2_G, 0x44);
     imu_initialized = true;
 }
 
@@ -68,7 +80,7 @@ bool readAccelerometer(float &ax, float &ay, float &az)
     {
         initIMU();
     }
-    
+
     uint8_t rawData[6]={0,0,0,0,0,0};
     bool valid = imuReadBytes(LSM6DS3_OUTX_L_XL, rawData, 6);
     if (!valid) {
@@ -80,11 +92,10 @@ bool readAccelerometer(float &ax, float &ay, float &az)
     int16_t ay_raw = (int16_t)(rawData[3] << 8 | rawData[2]);
     int16_t az_raw = (int16_t)(rawData[5] << 8 | rawData[4]);
 
-
-    // Convert raw to g (±2g)
-    ax = ax_raw * 0.000061;
-    ay = ay_raw * 0.000061;
-    az = az_raw * 0.000061;
+    // Convert raw to g (±8g sensitivity: 0.244 mg/LSB = 0.000244 g/LSB)
+    ax = ax_raw * 0.000244;
+    ay = ay_raw * 0.000244;
+    az = az_raw * 0.000244;
     return true;
 }
 
@@ -106,11 +117,106 @@ bool readGyroscope(float &gx, float &gy, float &gz)
     int16_t gy_raw = (int16_t)(rawData[3] << 8 | rawData[2]);
     int16_t gz_raw = (int16_t)(rawData[5] << 8 | rawData[4]);
 
-    // Convert raw to dps (±245 dps)
-    // Sensitivity for ±245 dps is 8.75 mdps/LSB = 0.00875 dps/LSB
-    gx = gx_raw * 0.00875;
-    gy = gy_raw * 0.00875;
-    gz = gz_raw * 0.00875;
+    // Convert raw to dps (±500 dps sensitivity: 17.50 mdps/LSB = 0.0175 dps/LSB)
+    gx = gx_raw * 0.0175;
+    gy = gy_raw * 0.0175;
+    gz = gz_raw * 0.0175;
+    return true;
+}
+
+// ---- Helper functions for IMU2 (0x6B) - mounted 180 deg rotated from IMU1 ----
+void imu2WriteByte(uint8_t reg, uint8_t value)
+{
+    Wire.beginTransmission(IMU_2_ADDR);
+    Wire.write(reg);
+    Wire.write(value);
+    Wire.endTransmission();
+}
+void initIMU_2()
+{
+    // Software reset to ensure clean state
+    imu2WriteByte(LSM6DS3_CTRL3_C, 0x01); // SW_RESET bit
+    delay(20); // Wait for reset to complete
+
+    // CTRL3_C: BDU=1 (block data update, avoids reading torn samples), IF_INC=1 (auto-increment)
+    imu2WriteByte(LSM6DS3_CTRL3_C, 0x04);
+
+    // Accel: 104 Hz, ±8g - harsh-terrain tuning (matches reference V1.3.2.1/V1.3.6)
+    imu2WriteByte(LSM6DS3_CTRL1_XL, 0x4C);
+
+    // Enable hardware LPF2 anti-aliasing filter, cutoff at ODR/9 = 11.55 Hz
+    imu2WriteByte(LSM6DS3_CTRL8_XL, 0xC0);
+
+    // Gyro: 104 Hz, ±500 dps
+    imu2WriteByte(LSM6DS3_CTRL2_G, 0x44);
+    imu2_initialized = true;
+}
+
+bool imu2ReadBytes(uint8_t reg, uint8_t *data, uint8_t len)
+{
+    byte error;
+    Wire.beginTransmission(IMU_2_ADDR);
+    Wire.write(reg);
+    error = Wire.endTransmission(false);
+    Wire.requestFrom(IMU_2_ADDR, len);
+    if (error != 0) {
+        return false; // Error in communication
+    }
+    for (uint8_t i = 0; i < len; i++)
+    {
+        if (Wire.available())
+            data[i] = Wire.read();
+    }
+    return true;
+}
+
+bool readAccelerometer_2(float &ax, float &ay, float &az)
+{
+    if (!imu2_initialized)
+    {
+        initIMU_2();
+    }
+
+    uint8_t rawData[6]={0,0,0,0,0,0};
+    bool valid = imu2ReadBytes(LSM6DS3_OUTX_L_XL, rawData, 6);
+    if (!valid) {
+        ax = ay = az = 0.0;
+        imu2_initialized = false;
+        return valid; // Error reading data
+    }
+    int16_t ax_raw = (int16_t)(rawData[1] << 8 | rawData[0]);
+    int16_t ay_raw = (int16_t)(rawData[3] << 8 | rawData[2]);
+    int16_t az_raw = (int16_t)(rawData[5] << 8 | rawData[4]);
+
+    // Convert raw to g (±8g sensitivity: 0.244 mg/LSB = 0.000244 g/LSB)
+    ax = ax_raw * 0.000244;
+    ay = ay_raw * 0.000244;
+    az = az_raw * 0.000244;
+    return true;
+}
+
+bool readGyroscope_2(float &gx, float &gy, float &gz)
+{
+    if (!imu2_initialized)
+    {
+        initIMU_2();
+    }
+
+    uint8_t rawData[6]={0,0,0,0,0,0};
+    bool valid = imu2ReadBytes(LSM6DS3_OUTX_L_G, rawData, 6);
+    if (!valid) {
+        gx = gy = gz = 0.0;
+        imu2_initialized = false;
+        return valid; // Error reading data
+    }
+    int16_t gx_raw = (int16_t)(rawData[1] << 8 | rawData[0]);
+    int16_t gy_raw = (int16_t)(rawData[3] << 8 | rawData[2]);
+    int16_t gz_raw = (int16_t)(rawData[5] << 8 | rawData[4]);
+
+    // Convert raw to dps (±500 dps sensitivity: 17.50 mdps/LSB = 0.0175 dps/LSB)
+    gx = gx_raw * 0.0175;
+    gy = gy_raw * 0.0175;
+    gz = gz_raw * 0.0175;
     return true;
 }
 

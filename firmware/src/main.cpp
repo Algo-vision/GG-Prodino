@@ -372,11 +372,55 @@ void calibrateIMU() {
     g_gyroXOffset = gx_sum / 100.0f;
     g_gyroYOffset = gy_sum / 100.0f;
     g_gyroZOffset = gz_sum / 100.0f;
-    
+
     Serial.println("Gyroscope calibration complete.");
     Serial.print("Gyro Offsets: X="); Serial.print(g_gyroXOffset);
     Serial.print(", Y="); Serial.print(g_gyroYOffset);
     Serial.print(", Z="); Serial.println(g_gyroZOffset);
+
+    // Calibrate IMU2 Accelerometer (100 readings)
+    Serial.println("Calibrating IMU2... Keep the device flat and still.");
+    float ax2_sum = 0.0f, ay2_sum = 0.0f, az2_sum = 0.0f;
+
+    for (int i = 0; i < 100; i++) {
+        float ax2, ay2, az2;
+        if (readAccelerometer_2(ax2, ay2, az2)) {
+            ax2_sum += ax2;
+            ay2_sum += ay2;
+            az2_sum += az2;
+        }
+        delay(10);
+    }
+
+    g_imu2XOffset = ax2_sum / 100.0f;
+    g_imu2YOffset = ay2_sum / 100.0f;
+    // Note: Z offset not used in calculations (gravity component)
+
+    Serial.println("IMU2 accelerometer calibration complete.");
+    Serial.print("IMU2 Accel Offsets: X="); Serial.print(g_imu2XOffset);
+    Serial.print(", Y="); Serial.println(g_imu2YOffset);
+
+    // Calibrate IMU2 Gyroscope (100 readings)
+    Serial.println("Calibrating IMU2 gyroscope... Keep the device flat and still.");
+    float gx2_sum = 0.0f, gy2_sum = 0.0f, gz2_sum = 0.0f;
+
+    for (int i = 0; i < 100; i++) {
+        float gx2, gy2, gz2;
+        _gg_hal.get_gyro_data_2(gx2, gy2, gz2);
+        gx2_sum += gx2;
+        gy2_sum += gy2;
+        gz2_sum += gz2;
+        delay(10);
+    }
+
+    g_gyro2XOffset = gx2_sum / 100.0f;
+    g_gyro2YOffset = gy2_sum / 100.0f;
+    g_gyro2ZOffset = gz2_sum / 100.0f;
+
+    Serial.println("IMU2 gyroscope calibration complete.");
+    Serial.print("IMU2 Gyro Offsets: X="); Serial.print(g_gyro2XOffset);
+    Serial.print(", Y="); Serial.print(g_gyro2YOffset);
+    Serial.print(", Z="); Serial.println(g_gyro2ZOffset);
 }
 
 // ============================================================================
