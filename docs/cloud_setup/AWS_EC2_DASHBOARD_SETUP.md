@@ -63,15 +63,15 @@ sudo npm install -g pm2
 ```
 
 ## 4. Transfer Code and Certificates
-From your **local computer**, upload the `web_ui` folder (excluding `node_modules`):
+From your **local computer**, upload the `server/web_ui` folder (excluding `node_modules`):
 ```bash
-rsync -avz -e "ssh -i keys/remote_aws_grk-key.pem" --exclude 'node_modules' --exclude 'data' --exclude '*.db' ./web_ui ubuntu@<YOUR_PUBLIC_IP>:/home/ubuntu/
+rsync -avz -e "ssh -i keys/remote_aws_grk-key.pem" --exclude 'node_modules' --exclude 'data' --exclude '*.db' ./server/web_ui ubuntu@<YOUR_PUBLIC_IP>:/home/ubuntu/
 ```
 
 ### Upload Backend Certificates
 Ensure the certificates for the backend are uploaded to the `certs/` folder on the EC2 instance:
 ```bash
-rsync -avz -e "ssh -i keys/remote_aws_grk-key.pem" ./web_ui/certs ubuntu@<YOUR_PUBLIC_IP>:/home/ubuntu/web_ui/
+rsync -avz -e "ssh -i keys/remote_aws_grk-key.pem" ./server/web_ui/certs ubuntu@<YOUR_PUBLIC_IP>:/home/ubuntu/web_ui/
 ```
 
 ## 5. Configure and Run
@@ -171,7 +171,7 @@ After making code changes locally, follow these steps to deploy and restart:
 ### 1. Upload Updated Code
 From your **local computer**:
 ```bash
-rsync -avz -e "ssh -i keys/instance_gg_key.pem" --exclude 'node_modules' --exclude 'data' --exclude '*.db' ./web_ui ubuntu@<YOUR_PUBLIC_IP>:/home/ubuntu/
+rsync -avz -e "ssh -i keys/instance_gg_key.pem" --exclude 'node_modules' --exclude 'data' --exclude '*.db' ./server/web_ui ubuntu@<YOUR_PUBLIC_IP>:/home/ubuntu/
 ```
 
 ### 2. Restart the Server

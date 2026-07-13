@@ -97,7 +97,7 @@ ADMIN_EMAILS=ron@gg-el.com,haim.hadad@algowis.com
 
 ### Local:
 ```bash
-cd web_ui
+cd server/web_ui
 npm start
 ```
 

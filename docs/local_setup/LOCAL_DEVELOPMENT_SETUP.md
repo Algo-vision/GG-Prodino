@@ -27,7 +27,7 @@ The GRK must be pointed to your **laptop's local IP address**.
 1.  Find your laptop's IP address:
     *   **Windows:** `ipconfig` (Look for IPv4 Address under Ethernet/Wi-Fi).
     *   **Linux:** `hostname -I` or `ifconfig`.
-2.  Open `include/mqtt_handler.hpp` in the GRK project.
+2.  Open `firmware/include/mqtt_handler.hpp` in the GRK project.
 3.  Update the `MQTT_BROKER_IP` to your laptop's IP:
     ```cpp
     #define MQTT_BROKER_IP "192.168.x.x" // Your laptop IP
@@ -36,7 +36,7 @@ The GRK must be pointed to your **laptop's local IP address**.
 5.  Re-upload the code to the GRK.
 
 ## 3. Run the Web UI and Backend Locally
-1.  Open a terminal in the `web_ui` folder.
+1.  Open a terminal in the `server/web_ui` folder.
 2.  Install dependencies:
     ```bash
     npm install
