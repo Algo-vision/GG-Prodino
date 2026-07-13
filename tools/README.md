@@ -53,5 +53,17 @@ python orientation_viewer.py
 - `firmware_uploader.py` / `ota_uploader.py` - OTA firmware upload helpers.
 - `test_multi_client_fast_stagger.py`, `test_multi_ip_clients.py`, `test_read_speed_limit.py` - API load/stress test scripts.
 
+## Unit Tests
+
+`tests/` has pytest unit tests for `api_client.py`, `main_widget.py`'s IMU mount
+orientation control, and `orientation_viewer.py`'s rotation math - all with
+`requests`/API calls mocked (no real board needed). PyQt5 widgets are
+constructed headless via `QT_QPA_PLATFORM=offscreen` (set automatically by
+`tests/conftest.py`). Run with:
+```sh
+pip install -r requirements.txt
+pytest tests/
+```
+
 ## GUI Version
 The GUI version is displayed on the Login screen.
