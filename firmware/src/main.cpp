@@ -306,8 +306,8 @@ void loop() {
                 g_status.button_tech
             );
             
-            // Publish power monitoring (INA219)
-            mqttHandler.publishPower(g_status.inaConnected, g_status.busVoltage);
+            // Publish power monitoring
+            mqttHandler.publishPower(g_status.powerConnected, g_status.busVoltage);
         }
         lastMQTTPublish = millis();
     }

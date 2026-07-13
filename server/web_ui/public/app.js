@@ -348,7 +348,7 @@ function updateDashboard(state) {
     controllerIp.textContent = state.deviceInfo?.controllerIp || '--';
     routerIp.textContent = state.deviceInfo?.routerIp || '--';
 
-    // Power Monitoring (INA219)
+    // Power Monitoring
     if (busVoltage) {
         if (state.power?.connected && state.power.busVoltage > 0) {
             busVoltage.textContent = `${state.power.busVoltage.toFixed(2)} V`;

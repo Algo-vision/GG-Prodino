@@ -301,10 +301,10 @@ def format_status(status: Dict) -> str:
     # Motor hours
     lines.append(f"  Motor Hours:    {status.get('motorWorkHours', 0):.2f}h ({status.get('motorWorkSeconds', 0)}s)")
     
-    # INA219
-    ina_connected = status.get('inaConnected', False)
-    lines.append(f"  INA219:         {'Connected' if ina_connected else 'Not Connected'}")
-    if ina_connected:
+    # Power monitor
+    power_connected = status.get('powerConnected', False)
+    lines.append(f"  Power Monitor:  {'Connected' if power_connected else 'Not Connected'}")
+    if power_connected:
         lines.append(f"  Bus Voltage:    {status.get('busVoltage', 0):.2f}V")
     
     return "\n".join(lines)

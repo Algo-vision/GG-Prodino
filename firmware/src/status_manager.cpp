@@ -58,11 +58,11 @@ static const float SPEED_DOWN_FILTER_ALPHA = 0.2f;
 /** Flag indicating all devices are connected */
 static bool s_allDevicesConnected = false;
 
-/** INA219 power monitor instance */
-static Adafruit_INA219 s_ina219;
+/** Power monitor instance */
+static Adafruit_INA219 s_powerMonitor;
 
-/** INA219 connection status */
-static bool s_inaConnected = false;
+/** Power monitor connection status */
+static bool s_powerMonitorConnected = false;
 
 // External reference to technician_mode (defined in main.cpp)
 extern bool technician_mode;
@@ -81,12 +81,12 @@ void statusInit() {
     s_filteredGpsSpeedDown = 0.0f;
     s_allDevicesConnected = false;
     
-    // Initialize INA219 power monitor
-    s_inaConnected = s_ina219.begin();
-    if (s_inaConnected) {
-        Serial.println("INA219 power monitor initialized");
+    // Initialize power monitor
+    s_powerMonitorConnected = s_powerMonitor.begin();
+    if (s_powerMonitorConnected) {
+        Serial.println("Power monitor initialized");
     } else {
-        Serial.println("INA219 not found - power monitoring disabled");
+        Serial.println("Power monitor not found - power monitoring disabled");
     }
     
     Serial.println("Status manager initialized");
@@ -200,10 +200,10 @@ void statusUpdate() {
         g_status.technicianMode = true;
     }
     
-    // Read INA219 power monitor
-    g_status.inaConnected = s_inaConnected;
-    if (s_inaConnected) {
-        g_status.busVoltage = s_ina219.getBusVoltage_V();
+    // Read power monitor
+    g_status.powerConnected = s_powerMonitorConnected;
+    if (s_powerMonitorConnected) {
+        g_status.busVoltage = s_powerMonitor.getBusVoltage_V();
     } else {
         g_status.busVoltage = -1.0f;  // Indicate error
     }
@@ -287,8 +287,8 @@ JsonDocument statusGenerateJson(JsonDocument* requestDoc) {
     resp["motorWorkHours"] = round(g_motorWorkSeconds / 3600.0 * 100) / 100.0;  // 2 decimal places
     resp["motorWorkSeconds"] = g_motorWorkSeconds;
     
-    // INA219 power monitor
-    resp["inaConnected"] = g_status.inaConnected;
+    // Power monitor
+    resp["powerConnected"] = g_status.powerConnected;
     resp["busVoltage"] = g_status.busVoltage;
     
     return resp;
@@ -376,9 +376,9 @@ void statusWriteToSerial() {
     
     Serial.print(" | IP: ");
     Serial.print(Ethernet.localIP());
-    Serial.print(" | INA219: ");
-    Serial.print(g_status.inaConnected ? "Yes" : "No");
-    if (g_status.inaConnected) {
+    Serial.print(" | Power: ");
+    Serial.print(g_status.powerConnected ? "Yes" : "No");
+    if (g_status.powerConnected) {
         Serial.print(" | Bus V: ");
         Serial.print(g_status.busVoltage, 2);
         Serial.print("V");

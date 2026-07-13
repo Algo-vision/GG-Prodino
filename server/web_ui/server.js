@@ -335,8 +335,8 @@ client.on('message', (topic, message) => {
                     device.gps.altEllipsoid = data.gpsAltEllipsoid;
                 }
                 // Update power monitoring from status if present
-                if (data.inaConnected !== undefined) {
-                    device.power.connected = data.inaConnected;
+                if (data.powerConnected !== undefined) {
+                    device.power.connected = data.powerConnected;
                 }
                 if (data.busVoltage !== undefined) {
                     device.power.busVoltage = data.busVoltage;

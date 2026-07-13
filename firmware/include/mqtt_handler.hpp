@@ -282,7 +282,7 @@ public:
         mqttClient.publish(getTopic("sensors/button_tech").c_str(), buttonStr.c_str());
     }
     
-    // Publish power monitoring data (INA219)
+    // Publish power monitoring data
     void publishPower(bool connected, float busVoltage) {
         if (!isConnected()) return;
         
