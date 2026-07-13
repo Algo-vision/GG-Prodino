@@ -347,6 +347,7 @@ void calibrateIMU() {
     for (int i = 0; i < 100; i++) {
         float ax, ay, az;
         if (readAccelerometer(ax, ay, az)) {
+            applyMountOrientationRemap(ax, ay, az, g_imuMountOrientation);
             ax_sum += ax;
             ay_sum += ay;
             az_sum += az;
@@ -369,6 +370,7 @@ void calibrateIMU() {
     for (int i = 0; i < 100; i++) {
         float gx, gy, gz;
         _gg_hal.get_gyro_data(gx, gy, gz);
+        applyMountOrientationRemap(gx, gy, gz, g_imuMountOrientation);
         gx_sum += gx;
         gy_sum += gy;
         gz_sum += gz;
@@ -391,6 +393,7 @@ void calibrateIMU() {
     for (int i = 0; i < 100; i++) {
         float ax2, ay2, az2;
         if (readAccelerometer_2(ax2, ay2, az2)) {
+            applyMountOrientationRemap(ax2, ay2, az2, g_imuMountOrientation);
             ax2_sum += ax2;
             ay2_sum += ay2;
             az2_sum += az2;
@@ -413,6 +416,7 @@ void calibrateIMU() {
     for (int i = 0; i < 100; i++) {
         float gx2, gy2, gz2;
         _gg_hal.get_gyro_data_2(gx2, gy2, gz2);
+        applyMountOrientationRemap(gx2, gy2, gz2, g_imuMountOrientation);
         gx2_sum += gx2;
         gy2_sum += gy2;
         gz2_sum += gz2;

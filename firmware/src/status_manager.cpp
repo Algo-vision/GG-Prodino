@@ -130,6 +130,7 @@ void statusUpdate() {
     // Read IMU1 Accelerometer
     float ax, ay, az;
     bool imuValid = readAccelerometer(ax, ay, az);
+    applyMountOrientationRemap(ax, ay, az, g_imuMountOrientation);
     g_status.imuX = ax;
     g_status.imuY = ay;
     g_status.imuZ = az;
@@ -137,6 +138,7 @@ void statusUpdate() {
     // Read IMU1 Gyroscope
     float gx, gy, gz;
     _gg_hal.get_gyro_data(gx, gy, gz);
+    applyMountOrientationRemap(gx, gy, gz, g_imuMountOrientation);
     g_status.imuGx = gx - g_gyroXOffset;
     g_status.imuGy = gy - g_gyroYOffset;
     g_status.imuGz = gz - g_gyroZOffset;
@@ -146,6 +148,7 @@ void statusUpdate() {
     // Read IMU2 Accelerometer
     float ax2, ay2, az2;
     bool imu2Valid = readAccelerometer_2(ax2, ay2, az2);
+    applyMountOrientationRemap(ax2, ay2, az2, g_imuMountOrientation);
     g_status.imu2X = ax2;
     g_status.imu2Y = ay2;
     g_status.imu2Z = az2;
@@ -153,6 +156,7 @@ void statusUpdate() {
     // Read IMU2 Gyroscope
     float gx2, gy2, gz2;
     _gg_hal.get_gyro_data_2(gx2, gy2, gz2);
+    applyMountOrientationRemap(gx2, gy2, gz2, g_imuMountOrientation);
     g_status.imu2Gx = gx2 - g_gyro2XOffset;
     g_status.imu2Gy = gy2 - g_gyro2YOffset;
     g_status.imu2Gz = gz2 - g_gyro2ZOffset;

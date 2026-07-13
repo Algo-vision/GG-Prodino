@@ -65,11 +65,15 @@ struct Config {
     // Burned Hours Counter
     uint32_t burned_hours_seconds;            ///< Total operational seconds since serial number burn
 
+    // IMU Mount Orientation
+    uint8_t imu_mount_orientation;            ///< ImuMountOrientation enum value (see i2c_imu_gps.hpp)
+
     /**
      * @brief Constructor - initializes with default values
      */
     Config() : whitelist_count(0), serial_number_set(false),
-               validation_marker(0), motor_work_seconds(0), burned_hours_seconds(0) {
+               validation_marker(0), motor_work_seconds(0), burned_hours_seconds(0),
+               imu_mount_orientation(0) {
         // Default controller IP: 192.168.1.198
         controller_ip_bytes[0] = 192;
         controller_ip_bytes[1] = 168;
@@ -123,6 +127,9 @@ extern uint32_t g_motorWorkSeconds;
 
 /** Seconds of operation since the serial number was burned */
 extern uint32_t g_burnedHoursSeconds;
+
+/** Current IMU mount orientation (ImuMountOrientation enum value, see i2c_imu_gps.hpp) */
+extern uint8_t g_imuMountOrientation;
 
 /** Flag to indicate a reboot is pending */
 extern bool g_rebootPending;
@@ -191,6 +198,12 @@ void configSetControllerIP(const IPAddress& ip);
  * @param ip New router IP address
  */
 void configSetRouterIP(const IPAddress& ip);
+
+/**
+ * @brief Set IMU mount orientation
+ * @param orientation ImuMountOrientation enum value (see i2c_imu_gps.hpp)
+ */
+void configSetImuMountOrientation(uint8_t orientation);
 
 /**
  * @brief Set whitelist IPs

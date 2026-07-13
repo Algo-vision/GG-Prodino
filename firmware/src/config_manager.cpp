@@ -26,6 +26,7 @@ IPAddress g_routerIP;
 String g_serialNumber = "UNCONFIGURED";
 uint32_t g_motorWorkSeconds = 0;
 uint32_t g_burnedHoursSeconds = 0;
+uint8_t g_imuMountOrientation = 0;
 
 // Reboot scheduling globals
 bool g_rebootPending = false;
@@ -80,6 +81,9 @@ void configSave() {
 
     // Save burned hours
     configData.burned_hours_seconds = g_burnedHoursSeconds;
+
+    // Save IMU mount orientation
+    configData.imu_mount_orientation = g_imuMountOrientation;
 
     // Preserve serial number from existing flash data
     Config existingData = g_configStore.read();
@@ -140,6 +144,7 @@ void configLoad() {
         
         g_motorWorkSeconds = 0;
         g_burnedHoursSeconds = 0;
+        g_imuMountOrientation = 0;
 
         // Save defaults to flash
         configSave();
@@ -176,6 +181,9 @@ void configLoad() {
 
         // Load burned hours
         g_burnedHoursSeconds = configData.burned_hours_seconds;
+
+        // Load IMU mount orientation
+        g_imuMountOrientation = configData.imu_mount_orientation;
     }
 
     // Initialize work hours timing
@@ -263,6 +271,10 @@ void configSetControllerIP(const IPAddress& ip) {
 
 void configSetRouterIP(const IPAddress& ip) {
     g_routerIP = ip;
+}
+
+void configSetImuMountOrientation(uint8_t orientation) {
+    g_imuMountOrientation = orientation;
 }
 
 bool configSetWhitelist(const IPAddress* ips, int count) {

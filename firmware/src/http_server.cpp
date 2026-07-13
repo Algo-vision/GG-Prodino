@@ -110,6 +110,28 @@ static void trackActiveIP(const IPAddress& ip) {
     Serial.println(ip);
 }
 
+/** Convert an ImuMountOrientation enum value to its string form */
+static String imuMountOrientationToString(uint8_t orientation) {
+    switch (orientation) {
+        case MOUNT_TILT_FORWARD:  return "TILT_FORWARD";
+        case MOUNT_TILT_BACKWARD: return "TILT_BACKWARD";
+        case MOUNT_TILT_LEFT:     return "TILT_LEFT";
+        case MOUNT_TILT_RIGHT:    return "TILT_RIGHT";
+        case MOUNT_STANDING:
+        default:                  return "STANDING";
+    }
+}
+
+/** Parse an orientation string into an ImuMountOrientation value, or -1 if invalid */
+static int imuMountOrientationFromString(const String& orientation) {
+    if (orientation == "STANDING")       return MOUNT_STANDING;
+    if (orientation == "TILT_FORWARD")  return MOUNT_TILT_FORWARD;
+    if (orientation == "TILT_BACKWARD") return MOUNT_TILT_BACKWARD;
+    if (orientation == "TILT_LEFT")     return MOUNT_TILT_LEFT;
+    if (orientation == "TILT_RIGHT")    return MOUNT_TILT_RIGHT;
+    return -1;
+}
+
 // Get list of active IPs (not timed out)
 int httpGetActiveIPs(IPAddress* outIPs, int maxCount) {
     unsigned long now = millis();
@@ -509,6 +531,27 @@ void httpServerLoop() {
                         case RED:    resp["techLedColor"] = "RED";    break;
                         case ORANGE: resp["techLedColor"] = "ORANGE"; break;
                         default:     resp["techLedColor"] = "OFF";    break;
+                    }
+
+                    resp["imuMountOrientation"] = imuMountOrientationToString(g_imuMountOrientation);
+                }
+                else if (msgType == "set_imu_mount_orientation") {
+                    String orientationStr = doc["orientation"];
+                    int newOrientation = imuMountOrientationFromString(orientationStr);
+
+                    if (newOrientation >= 0) {
+                        configSetImuMountOrientation((uint8_t)newOrientation);
+                        configSave();
+
+                        resp["success"] = true;
+                        resp["message"] = "IMU mount orientation set to: " + orientationStr;
+                        resp["reboot_required"] = true;
+
+                        Serial.println("IMU mount orientation saved: " + orientationStr);
+                        Serial.println("Reboot required to recalibrate for the new orientation.");
+                    } else {
+                        resp["type"] = "error";
+                        resp["message"] = "Invalid IMU mount orientation";
                     }
                 }
                 else if (msgType == "get_overview") {

@@ -7,6 +7,19 @@ import socket
 import threading
 import json
 
+# Display label -> firmware wire value, for the IMU Mount Orientation control.
+# See firmware/include/i2c_imu_gps.hpp (ImuMountOrientation) for what each
+# orientation means; the "Forward/Backward/Left/Right" labels are a naming
+# convention that should be verified against the real MSB hardware.
+IMU_ORIENTATION_LABELS = {
+    "Standing (Default)": "STANDING",
+    "Tilted Forward": "TILT_FORWARD",
+    "Tilted Backward": "TILT_BACKWARD",
+    "Tilted Left": "TILT_LEFT",
+    "Tilted Right": "TILT_RIGHT",
+}
+IMU_ORIENTATION_LABELS_REVERSE = {v: k for k, v in IMU_ORIENTATION_LABELS.items()}
+
 class MainWidget(QWidget):
     reconnect_requested = pyqtSignal()
     upload_finished_signal = pyqtSignal(bool, str)
@@ -28,6 +41,9 @@ class MainWidget(QWidget):
         self.timer.timeout.connect(self.update_status)
         self.status_ignore_deadline = 0  # Timestamp until which to ignore status updates (for reboot)
         self.init_ui()
+        # One-shot sync of slow-changing config (currently just IMU mount
+        # orientation) - not part of the fast get_status/UDP polling loop.
+        QTimer.singleShot(0, self.sync_imu_mount_orientation)
         # Start polling with offset (if specified) for multi-client scenarios
         if self.client_offset_ms > 0:
             print(f"MainWidget: Starting polling with {self.client_offset_ms}ms offset...")
@@ -250,6 +266,19 @@ class MainWidget(QWidget):
         self.tech_mode_box.setEnabled(False)  # Disabled until technician mode is active
         layout.addWidget(self.tech_mode_box)
 
+        # IMU Mount Orientation - lets a technician correct axis interpretation
+        # if the HLC is mounted lying down instead of standing (the default).
+        imu_orientation_box = QGroupBox("IMU Mount Orientation")
+        imu_orientation_layout = QHBoxLayout()
+        self.imu_orientation_combo = QComboBox()
+        self.imu_orientation_combo.addItems(list(IMU_ORIENTATION_LABELS.keys()))
+        self.imu_orientation_btn = QPushButton("Set Orientation")
+        self.imu_orientation_btn.clicked.connect(self.set_imu_mount_orientation)
+        imu_orientation_layout.addWidget(self.imu_orientation_combo)
+        imu_orientation_layout.addWidget(self.imu_orientation_btn)
+        imu_orientation_box.setLayout(imu_orientation_layout)
+        layout.addWidget(imu_orientation_box)
+
         # Relay controls
         relay_box = QGroupBox("Relays")
         relay_layout = QHBoxLayout()
@@ -416,6 +445,32 @@ class MainWidget(QWidget):
     def set_internal_led(self, state):
         self.api_client.set_internal_led(state)
         self.update_status()
+
+    def set_imu_mount_orientation(self):
+        label = self.imu_orientation_combo.currentText()
+        orientation = IMU_ORIENTATION_LABELS.get(label, "STANDING")
+
+        ok, msg = self.api_client.set_imu_mount_orientation(orientation)
+        if ok:
+            QMessageBox.information(self, "IMU Mount Orientation",
+                f"{msg}\n\nNote: Reboot the device to recalibrate for the new orientation.")
+        else:
+            if msg == "Authentication Error":
+                self.timer.stop()
+                QMessageBox.warning(self, "Authentication Error", "Invalid session token. Please log in again.")
+                self.reconnect_requested.emit()
+            else:
+                QMessageBox.critical(self, "IMU Mount Orientation Failed", f"Failed to set IMU mount orientation: {msg}")
+
+    def sync_imu_mount_orientation(self):
+        """One-shot sync of the orientation combo from the device's current config."""
+        config = self.api_client.get_config()
+        if config and not config.get("error"):
+            orientation = config.get("imuMountOrientation", "STANDING")
+            label = IMU_ORIENTATION_LABELS_REVERSE.get(orientation, "Standing (Default)")
+            index = self.imu_orientation_combo.findText(label)
+            if index >= 0:
+                self.imu_orientation_combo.setCurrentIndex(index)
 
     def select_firmware(self):
         path, _ = QFileDialog.getOpenFileName(self, "Select Firmware", "", "Binary Files (*.bin)")

@@ -227,3 +227,37 @@ class ApiClient:
         except Exception as e:
             print(f"Error getting router IP: {e}")
             return None
+
+    def set_imu_mount_orientation(self, orientation):
+        payload = {"type": "set_imu_mount_orientation", "token": self.token, "orientation": orientation}
+        try:
+            response = self.session.post(self.base_url, data=json.dumps(payload), timeout=5)
+            if response.status_code == 200:
+                data = response.json()
+                if data.get("success"):
+                    return True, data.get("message", "IMU mount orientation updated")
+                else:
+                    return False, data.get("message", "Unknown error")
+            if response.status_code == 401:
+                return False, "Authentication Error"
+            return False, f"HTTP Error: {response.status_code}"
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
+            return False, "Connection Error"
+        except Exception as e:
+            print(f"Error setting IMU mount orientation: {e}")
+            return False, str(e)
+
+    def get_config(self):
+        payload = {"type": "get_config", "token": self.token}
+        try:
+            response = self.session.post(self.base_url, data=json.dumps(payload), timeout=5)
+            if response.status_code == 200:
+                return response.json()
+            if response.status_code == 401:
+                return {"error": "AUTH_ERROR"}
+            return None
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
+            return None
+        except Exception as e:
+            print(f"Error getting config: {e}")
+            return None
