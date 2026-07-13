@@ -149,6 +149,9 @@ void setup() {
     _server.begin();
     _gg_hal.init();
     
+    // Initialize u-blox GNSS for UBX protocol (hAcc/vAcc/altEllipsoid)
+    initUbloxGNSS();
+    
     // Check for technician mode (button held for 5 seconds during startup)
     unsigned long techStart = millis();
     bool techButtonHeld = false;
@@ -271,7 +274,8 @@ void loop() {
                 g_status.gpsSpeedDown, g_status.gpsGroundSpeed,
                 g_status.gpsHeading,
                 g_status.gpsValid, g_status.gpsConnected,
-                g_status.gpsTime, g_status.gpsSatellites
+                g_status.gpsTime, g_status.gpsSatellites,
+                g_status.gpsHAcc, g_status.gpsVAcc, g_status.gpsAltEllipsoid
             );
             
             // Publish IMU data

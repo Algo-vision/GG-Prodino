@@ -34,6 +34,9 @@ const gpsHeading = document.getElementById('gps-heading');
 const gpsValid = document.getElementById('gps-valid');
 const gpsConnected = document.getElementById('gps-connected');
 const gpsSatellites = document.getElementById('gps-satellites');
+const gpsHAcc = document.getElementById('gps-hacc');
+const gpsVAcc = document.getElementById('gps-vacc');
+const gpsAltEllipsoid = document.getElementById('gps-alt-ellipsoid');
 const gpsTime = document.getElementById('gps-time');
 
 // Device Info Elements
@@ -292,6 +295,14 @@ function updateDashboard(state) {
     gpsSpeed.textContent = `${state.gps.speed.toFixed(1)} km/h`;
     gpsHeading.textContent = `${state.gps.heading.toFixed(1)}°`;
     gpsSatellites.textContent = state.gps.satellites || 0;
+
+    // GPS Accuracy (from UBX NAV-PVT)
+    if (gpsHAcc) gpsHAcc.textContent = `${(state.gps.hAcc || 0).toFixed(0)} mm`;
+    if (gpsVAcc) gpsVAcc.textContent = `${(state.gps.vAcc || 0).toFixed(0)} mm`;
+    if (gpsAltEllipsoid) {
+        const altEllipsoidM = (state.gps.altEllipsoid || 0) / 1000;
+        gpsAltEllipsoid.textContent = `${altEllipsoidM.toFixed(1)} m`;
+    }
 
     if (state.gps.valid || DEBUG_TEL_AVIV) {
         gpsValid.textContent = DEBUG_TEL_AVIV ? 'DEBUG: TEL AVIV' : 'FIX ACQUIRED';

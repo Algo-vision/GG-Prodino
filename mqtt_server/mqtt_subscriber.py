@@ -26,7 +26,7 @@ socketio = SocketIO(app, cors_allowed_origins="*")
 data_lock = Lock()
 latest_data = {
     "status": None,
-    "gps": {"position": None, "velocity": None, "heading": None},
+    "gps": {"position": None, "velocity": None, "heading": None, "accuracy": None},
     "imu": {"accel": None, "gyro": None, "orientation": None},
     "relays": None,
     "leds": {"internal": None, "io": None},
@@ -139,6 +139,9 @@ def on_message(client, userdata, msg):
             
         elif topic == "prodino/validity/imu":
             latest_data["validity"]["imu"] = data
+        
+        elif topic == "prodino/gps/accuracy":
+            latest_data["gps"]["accuracy"] = data
         
         # Add to history
         if len(data_history) >= config.MAX_HISTORY_SIZE:

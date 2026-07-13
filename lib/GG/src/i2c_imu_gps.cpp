@@ -2,12 +2,31 @@
 #include "i2c_imu_gps.hpp"
 #include <cmath>
 #include <TinyGPSPlus.h> // Include TinyGPSPlus header
+#include <SparkFun_u-blox_GNSS_v3.h>
 
 TinyGPSPlus gps; // Declare the TinyGPSPlus object globally within this file
 char gpsBuffer[GPS_BUFFER_LEN]; // Declare gpsBuffer globally within this file
+SFE_UBLOX_GNSS myGNSS; // SparkFun u-blox GNSS for UBX protocol (hAcc/vAcc)
 
 bool imu_initialized = false;
 bool gps_conncted = false;
+bool gnss_initialized = false;
+
+void initUbloxGNSS()
+{
+    if (myGNSS.begin(Wire, GPS_ADDR)) {
+        // Disable NMEA output on I2C to avoid conflicts with TinyGPSPlus
+        // We only want UBX NAV-PVT for accuracy data
+        myGNSS.setI2COutput(COM_TYPE_UBX | COM_TYPE_NMEA);
+        myGNSS.setNavigationFrequency(5); // 5Hz to match our update rate
+        myGNSS.setAutoPVT(true); // Enable automatic NAV-PVT messages
+        gnss_initialized = true;
+        Serial.println("u-blox GNSS (UBX) initialized for accuracy data");
+    } else {
+        gnss_initialized = false;
+        Serial.println("WARNING: u-blox GNSS (UBX) init failed - accuracy data unavailable");
+    }
+}
 // ---- Helper functions for IMU ----
 void imuWriteByte(uint8_t reg, uint8_t value)
 {
@@ -114,6 +133,9 @@ bool readGPSCoords(gps_data &data)
         data.heading = 0.0;
         data.valid = false;
         data.satellites = 0;
+        data.hAcc = 0.0;
+        data.vAcc = 0.0;
+        data.altEllipsoid = 0.0;
         return false; // GPS not connected
     }
     gps_conncted = true;
@@ -184,5 +206,20 @@ bool readGPSCoords(gps_data &data)
     bool dateReasonable = gps.date.isValid() && gps.date.year() > 2020;
 
     data.valid = locationValid && hasEnoughSatellites && dateReasonable;
+
+    // Read accuracy data from UBX protocol (SparkFun library)
+    if (gnss_initialized) {
+        // getPVT() returns true if fresh NAV-PVT data is available
+        if (myGNSS.getPVT()) {
+            data.hAcc = (float)myGNSS.getHorizontalAccEst(); // mm
+            data.vAcc = (float)myGNSS.getVerticalAccEst();   // mm
+            data.altEllipsoid = (double)myGNSS.getAltitude(); // mm
+        }
+    } else {
+        data.hAcc = 0.0;
+        data.vAcc = 0.0;
+        data.altEllipsoid = 0.0;
+    }
+
     return data.valid;
 }

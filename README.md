@@ -20,7 +20,7 @@ This project provides firmware and API for the G.G. Controller Key functionaliti
 - Internal LED
 - Button for enabling technician mode
 - **IMU (LSM6DS3) Data:** Linear acceleration (X, Y, Z), Angular velocity (X, Y, Z).
-- **GPS (u-blox) Data:** Longitude, Latitude, Altitude, Time, Linear velocity (North, East, Down), Horizontal velocity (Ground speed), Absolute heading.
+- **GPS (u-blox) Data:** Longitude, Latitude, Altitude, Time, Linear velocity (North, East, Down), Horizontal velocity (Ground speed), Absolute heading, Horizontal accuracy (hAcc), Vertical accuracy (vAcc), Height above ellipsoid.
 - **Calculated Outputs:** Pitch, Roll, Yaw.
 
 ## Installation Instructions
@@ -82,6 +82,8 @@ This project provides firmware and API for the G.G. Controller Key functionaliti
   - `prodino/sensors/optos`: Optocoupler states.
   - `prodino/sensors/button_tech`: Technician button state.
   - `prodino/relays/state`: Current relay states.
+  - `prodino/gps/satellites`: Number of GPS satellites.
+  - `prodino/gps/accuracy`: Position accuracy estimates (`hAcc`, `vAcc` in mm) and height above ellipsoid (`altEllipsoid` in mm).
 
 ## GRK Mission Control (Web UI)
 
@@ -248,7 +250,11 @@ or
 - **gpsGroundSpeed:** GPS Horizontal velocity ("Speedometer") [km/hr].
 - **gpsHeading:** GPS Absolute heading ("Azimuth") [º].
 - **gpsValid:** True if GPS fix is valid.
-- **gpsConnected:** True if GPS module is communicating
+- **gpsConnected:** True if GPS module is communicating.
+- **gpsSatellites:** Number of satellites used for position fix.
+- **gpsHAcc:** GPS horizontal position accuracy estimate [mm].
+- **gpsVAcc:** GPS vertical position accuracy estimate [mm].
+- **gpsAltEllipsoid:** GPS height above WGS84 ellipsoid [mm].
 - **ledInternal:** Status of the LED on the MCU.
 - **ledIo:** Status of the indication LED on the HLC.
 - **button_tech:** True if the button on the HLC is pressed.

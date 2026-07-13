@@ -145,7 +145,8 @@ public:
     void publishGPS(double lat, double lng, double alt, 
                     float speedNorth, float speedEast, float speedDown, float groundSpeed,
                     float heading, bool valid, bool connected_status,
-                    const char* timeStr, int satellites) {
+                    const char* timeStr, int satellites,
+                    float hAcc, float vAcc, double altEllipsoid) {
         if (!isConnected()) return;
         
         // GPS Position
@@ -186,6 +187,15 @@ public:
         
         // GPS Satellites
         mqttClient.publish(getTopic("gps/satellites").c_str(), String(satellites).c_str());
+        
+        // GPS Accuracy (from UBX NAV-PVT)
+        JsonDocument accDoc;
+        accDoc["hAcc"] = hAcc;
+        accDoc["vAcc"] = vAcc;
+        accDoc["altEllipsoid"] = altEllipsoid;
+        String accJson;
+        serializeJson(accDoc, accJson);
+        mqttClient.publish(getTopic("gps/accuracy").c_str(), accJson.c_str());
     }
     
     void publishIMU(float ax, float ay, float az,

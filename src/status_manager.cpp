@@ -129,6 +129,9 @@ void statusUpdate() {
     g_status.gpsValid = currentGpsData.valid;
     g_status.gpsConnected = gps_conncted;  // Global from i2c_imu_gps.cpp
     g_status.gpsSatellites = currentGpsData.satellites;
+    g_status.gpsHAcc = currentGpsData.hAcc;
+    g_status.gpsVAcc = currentGpsData.vAcc;
+    g_status.gpsAltEllipsoid = currentGpsData.altEllipsoid;
     
     if (g_status.gpsValid) {
         g_status.gpsLat = currentGpsData.latitude;
@@ -168,6 +171,9 @@ void statusUpdate() {
         g_status.gpsSpeedDown = 0;
         g_status.gpsGroundSpeed = 0;
         g_status.gpsHeading = 0;
+        g_status.gpsHAcc = 0;
+        g_status.gpsVAcc = 0;
+        g_status.gpsAltEllipsoid = 0;
         s_previousGpsAltitude = 0.0;
         s_previousGpsTime = 0;
     }
@@ -257,6 +263,9 @@ JsonDocument statusGenerateJson(JsonDocument* requestDoc) {
     resp["imuValid"] = g_status.imuValid;
     resp["GPSConnected"] = g_status.gpsConnected;
     resp["gpsSatellites"] = g_status.gpsSatellites;
+    resp["gpsHAcc"] = g_status.gpsHAcc;
+    resp["gpsVAcc"] = g_status.gpsVAcc;
+    resp["gpsAltEllipsoid"] = g_status.gpsAltEllipsoid;
     resp["technicianMode"] = g_status.technicianMode;
     
     // Opto inputs array

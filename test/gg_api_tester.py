@@ -288,6 +288,8 @@ def format_status(status: Dict) -> str:
         lines.append(f"  GPS Position:   Lat={status.get('gpsLat', 0):.6f} Lng={status.get('gpsLng', 0):.6f} Alt={status.get('gpsAlt', 0):.1f}m")
         lines.append(f"  GPS Speed:      Ground={status.get('gpsGroundSpeed', 0):.1f}km/h Heading={status.get('gpsHeading', 0):.1f}deg")
         lines.append(f"  GPS Satellites: {status.get('gpsSatellites', 0)}")
+        lines.append(f"  GPS Accuracy:   H={status.get('gpsHAcc', 0):.0f}mm V={status.get('gpsVAcc', 0):.0f}mm")
+        lines.append(f"  GPS Alt (Ellipsoid): {status.get('gpsAltEllipsoid', 0):.0f}mm")
         lines.append(f"  GPS Time:       {status.get('gpsTime', 'N/A')}")
     
     # LEDs and buttons

@@ -105,7 +105,8 @@ function createDefaultDeviceState(serialNumber) {
             lat: 0, lng: 0, alt: 0, speed: 0, heading: 0,
             valid: false, connected: false, satellites: 0,
             velocityNorth: 0, velocityEast: 0, velocityDown: 0,
-            time: '--:--:--'
+            time: '--:--:--',
+            hAcc: 0, vAcc: 0, altEllipsoid: 0
         },
         imu: {
             accel: { x: 0, y: 0, z: 0 },
@@ -303,6 +304,13 @@ client.on('message', (topic, message) => {
         case 'gps/satellites':
             device.gps.satellites = parseInt(data) || 0;
             break;
+        case 'gps/accuracy':
+            if (typeof data === 'object') {
+                device.gps.hAcc = data.hAcc || 0;
+                device.gps.vAcc = data.vAcc || 0;
+                device.gps.altEllipsoid = data.altEllipsoid || 0;
+            }
+            break;
         case 'status':
             // Full status message from device - extract deviceInfo fields
             if (typeof data === 'object') {
@@ -315,6 +323,16 @@ client.on('message', (topic, message) => {
                 // Also update satellites from status message if present
                 if (data.gpsSatellites !== undefined) {
                     device.gps.satellites = data.gpsSatellites;
+                }
+                // Update GPS accuracy from status if present
+                if (data.gpsHAcc !== undefined) {
+                    device.gps.hAcc = data.gpsHAcc;
+                }
+                if (data.gpsVAcc !== undefined) {
+                    device.gps.vAcc = data.gpsVAcc;
+                }
+                if (data.gpsAltEllipsoid !== undefined) {
+                    device.gps.altEllipsoid = data.gpsAltEllipsoid;
                 }
                 // Update power monitoring from status if present
                 if (data.inaConnected !== undefined) {

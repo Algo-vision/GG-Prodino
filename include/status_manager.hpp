@@ -76,6 +76,11 @@ struct DeviceStatus {
     // GPS Satellite count
     uint8_t gpsSatellites = 0;
     
+    // GPS Accuracy (from UBX NAV-PVT)
+    float gpsHAcc = 0;         // Horizontal accuracy estimate (mm)
+    float gpsVAcc = 0;         // Vertical accuracy estimate (mm)
+    double gpsAltEllipsoid = 0; // Height above WGS84 ellipsoid (mm)
+    
     // GPS validity flags
     bool gpsValid = false;
     bool gpsConnected = false;

@@ -2,6 +2,7 @@
 
 #include <Wire.h>
 #include <TinyGPSPlus.h>
+#include <SparkFun_u-blox_GNSS_v3.h>
 
 // IMU (LSM6DS3) I2C address
 #define IMU_ADDR 0x6A
@@ -27,12 +28,19 @@ struct gps_data {
   float heading;
   bool valid;
   uint8_t satellites;  // Number of satellites used for position fix
+  float hAcc;          // Horizontal accuracy estimate (mm)
+  float vAcc;          // Vertical accuracy estimate (mm)
+  double altEllipsoid; // Height above WGS84 ellipsoid (mm)
 };
 
 // Externally defined TinyGPSPlus object and buffer
 extern TinyGPSPlus gps;
 extern char gpsBuffer[GPS_BUFFER_LEN];
 extern bool gps_conncted;
+extern SFE_UBLOX_GNSS myGNSS;
+
+// u-blox GNSS initialization (for UBX protocol - hAcc/vAcc)
+void initUbloxGNSS();
 // IMU helper functions
 void imuWriteByte(uint8_t reg, uint8_t value);
 bool imuReadBytes(uint8_t reg, uint8_t *data, uint8_t len);

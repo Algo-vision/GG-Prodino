@@ -15,3 +15,4 @@ prodino_web_ui/certs
 keys/
 prodino_web_ui/.env
 prodino_web_ui/data/grk_users.db
+code_example_versions
