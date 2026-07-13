@@ -70,6 +70,30 @@ static Adafruit_INA219 s_powerMonitor;
 /** Power monitor connection status */
 static bool s_powerMonitorConnected = false;
 
+// ============================================================================
+// SANITY-CHECK STATE ("not all zero, not stuck" - see statusUpdate())
+// ============================================================================
+
+/** Consecutive identical-reading counts, per sensor group */
+static uint8_t s_powerStuckCount = 0;
+static uint8_t s_imu1StuckCount = 0;
+static uint8_t s_imu2StuckCount = 0;
+static uint8_t s_angleStuckCount = 0;
+static uint8_t s_gpsStuckCount = 0;
+
+/** Previous readings, per sensor group, for stuck-value comparison */
+static float s_prevBusVoltage = 0, s_prevBusCurrent = 0;
+static float s_prevImu1[6] = {0, 0, 0, 0, 0, 0};
+static float s_prevImu2[6] = {0, 0, 0, 0, 0, 0};
+static float s_prevAngle[3] = {0, 0, 0};
+static double s_prevGps[3] = {0, 0, 0};
+
+/** N consecutive identical readings are treated as a frozen/stuck sensor */
+static const uint8_t SANITY_STUCK_THRESHOLD = 3;
+
+/** Timestamp of the last safe->unsafe transition (0 while safe) */
+static unsigned long s_unsafeSinceMs = 0;
+
 // External reference to technician_mode (defined in main.cpp)
 extern bool technician_mode;
 
@@ -79,6 +103,10 @@ extern GG_HAL _gg_hal;
 // ============================================================================
 // IMPLEMENTATION
 // ============================================================================
+
+const char* statusGetFirmwareVersion() {
+    return FIRMWARE_VERSION;
+}
 
 void statusInit() {
     s_lastUpdateTime = millis();
@@ -175,7 +203,14 @@ void statusUpdate() {
         g_status.gpsLat = currentGpsData.latitude;
         g_status.gpsLng = currentGpsData.longitude;
         g_status.gpsAlt = currentGpsData.altitude;
-        
+
+        // Retain last known-good position separately - gpsLat/Lng/Alt get
+        // cleared below when the fix is lost, these don't.
+        g_status.lastGpsLat = currentGpsData.latitude;
+        g_status.lastGpsLng = currentGpsData.longitude;
+        g_status.lastGpsAlt = currentGpsData.altitude;
+
+
         // Calculate vertical speed from GPS altitude changes
         if (s_previousGpsTime > 0 && dt > 0.0f) {
             float verticalSpeedMs = (s_previousGpsAltitude - currentGpsData.altitude) / dt;
@@ -232,20 +267,96 @@ void statusUpdate() {
     for (uint8_t i = 0; i < OPTOIN_COUNT; i++) {
         g_status.optos_status[i] = _gg_hal.get_optoin_state(i);
     }
-    
+
+    // Safety mode: both optocoupler safety inputs must be active
+    g_status.safetyMode = g_status.optos_status[0] && g_status.optos_status[1];
+    if (g_status.safetyMode) {
+        s_unsafeSinceMs = 0;
+    } else if (s_unsafeSinceMs == 0) {
+        s_unsafeSinceMs = currentTime;
+    }
+    g_status.safetyModeUnsafeDurationMs = (s_unsafeSinceMs == 0) ? 0 : (currentTime - s_unsafeSinceMs);
+
     // Update technician mode flag
     if (technician_mode) {
         g_status.technicianMode = true;
     }
-    
+
     // Read power monitor
     g_status.powerConnected = s_powerMonitorConnected;
     if (s_powerMonitorConnected) {
         g_status.busVoltage = s_powerMonitor.getBusVoltage_V();
+        g_status.busCurrent_mA = s_powerMonitor.getCurrent_mA();
     } else {
         g_status.busVoltage = -1.0f;  // Indicate error
+        g_status.busCurrent_mA = -1.0f;
     }
-    
+
+    // ------------------------------------------------------------------
+    // Sanity checks: not all zero, not stuck at the same value for
+    // several consecutive reads. Power monitor additionally requires no
+    // negative values (voltage/current are never legitimately negative
+    // on this hardware) - that check is skipped for IMU/angle/GPS since
+    // negative values are physically normal for those signed quantities.
+    // ------------------------------------------------------------------
+
+    // Power monitor
+    bool powerStuck = (g_status.busVoltage == s_prevBusVoltage && g_status.busCurrent_mA == s_prevBusCurrent);
+    s_powerStuckCount = powerStuck ? (s_powerStuckCount + 1) : 0;
+    s_prevBusVoltage = g_status.busVoltage;
+    s_prevBusCurrent = g_status.busCurrent_mA;
+    bool powerAllZero = (g_status.busVoltage == 0 && g_status.busCurrent_mA == 0);
+    bool powerNegative = (g_status.busVoltage < 0 || g_status.busCurrent_mA < 0);
+    g_status.powerSane = s_powerMonitorConnected && !powerAllZero && !powerNegative &&
+                          s_powerStuckCount < SANITY_STUCK_THRESHOLD;
+
+    // IMU1 raw readings (accel + gyro)
+    float imu1Now[6] = {g_status.imuX, g_status.imuY, g_status.imuZ,
+                         g_status.imuGx, g_status.imuGy, g_status.imuGz};
+    bool imu1AllZero = true, imu1Stuck = true;
+    for (uint8_t i = 0; i < 6; i++) {
+        if (imu1Now[i] != 0) imu1AllZero = false;
+        if (imu1Now[i] != s_prevImu1[i]) imu1Stuck = false;
+        s_prevImu1[i] = imu1Now[i];
+    }
+    s_imu1StuckCount = imu1Stuck ? (s_imu1StuckCount + 1) : 0;
+    g_status.imu1Sane = g_status.imuValid && !imu1AllZero && s_imu1StuckCount < SANITY_STUCK_THRESHOLD;
+
+    // IMU2 raw readings (accel + gyro)
+    float imu2Now[6] = {g_status.imu2X, g_status.imu2Y, g_status.imu2Z,
+                         g_status.imu2Gx, g_status.imu2Gy, g_status.imu2Gz};
+    bool imu2AllZero = true, imu2Stuck = true;
+    for (uint8_t i = 0; i < 6; i++) {
+        if (imu2Now[i] != 0) imu2AllZero = false;
+        if (imu2Now[i] != s_prevImu2[i]) imu2Stuck = false;
+        s_prevImu2[i] = imu2Now[i];
+    }
+    s_imu2StuckCount = imu2Stuck ? (s_imu2StuckCount + 1) : 0;
+    g_status.imu2Sane = g_status.imu2Valid && !imu2AllZero && s_imu2StuckCount < SANITY_STUCK_THRESHOLD;
+
+    // Calculated angle data (pitch/roll/yaw)
+    float angleNow[3] = {g_status.pitch, g_status.roll, g_status.yaw};
+    bool angleAllZero = true, angleStuck = true;
+    for (uint8_t i = 0; i < 3; i++) {
+        if (angleNow[i] != 0) angleAllZero = false;
+        if (angleNow[i] != s_prevAngle[i]) angleStuck = false;
+        s_prevAngle[i] = angleNow[i];
+    }
+    s_angleStuckCount = angleStuck ? (s_angleStuckCount + 1) : 0;
+    g_status.angleSane = (g_status.imuValid || g_status.imu2Valid) && !angleAllZero &&
+                          s_angleStuckCount < SANITY_STUCK_THRESHOLD;
+
+    // GPS position
+    double gpsNow[3] = {g_status.gpsLat, g_status.gpsLng, g_status.gpsAlt};
+    bool gpsAllZero = true, gpsStuck = true;
+    for (uint8_t i = 0; i < 3; i++) {
+        if (gpsNow[i] != 0) gpsAllZero = false;
+        if (gpsNow[i] != s_prevGps[i]) gpsStuck = false;
+        s_prevGps[i] = gpsNow[i];
+    }
+    s_gpsStuckCount = gpsStuck ? (s_gpsStuckCount + 1) : 0;
+    g_status.gpsSane = g_status.gpsValid && !gpsAllZero && s_gpsStuckCount < SANITY_STUCK_THRESHOLD;
+
     // Debug removed - was printing every 200ms on UDP broadcast
 }
 

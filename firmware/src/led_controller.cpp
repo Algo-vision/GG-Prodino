@@ -38,7 +38,7 @@ void ledControllerUpdate() {
     }
     
     // Get current states from global status
-    bool isSafeState = g_status.optos_status[0] && g_status.optos_status[1];
+    bool isSafeState = g_status.safetyMode;
     bool imuConnected = g_status.imuValid;
     bool gpsConnected = g_status.gpsConnected;
     bool allSensorsConnected = imuConnected && gpsConnected;

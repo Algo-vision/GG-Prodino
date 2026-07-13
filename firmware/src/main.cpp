@@ -40,6 +40,7 @@
 #include "http_server.hpp"
 #include "led_controller.hpp"
 #include "relay_controller.hpp"
+#include "ocu_monitor.hpp"
 #include "mqtt_handler.hpp"
 
 // ============================================================================
@@ -203,7 +204,8 @@ void setup() {
     httpServerInit(_server);
     ledControllerInit();
     relayControllerInit();
-    
+    ocuMonitorInit();
+
     // Start UDP broadcast
     udp.begin(UDP_PORT);
     Serial.println("UDP Broadcast started on port " + String(UDP_PORT));
@@ -248,7 +250,14 @@ void loop() {
     
     // Update motor work hours counter (saves to flash every 5 minutes)
     configUpdateWorkHours();
-    
+
+    // Update burned-hours counter (saves to flash every 5 minutes)
+    configUpdateBurnedHours();
+
+    // Send/check OCU heartbeat
+    ocuMonitorUpdate();
+
+
     // 1. Handle MQTT connection maintenance
     mqttHandler.loop();  // Re-enabled
     

@@ -69,10 +69,21 @@ struct DeviceStatus {
     // IMU2 validity
     bool imu2Valid = false;
 
+    // Sanity checks ("not all zero, not stuck") - IMU1/IMU2 raw readings and
+    // the calculated angle data
+    bool imu1Sane = false;
+    bool imu2Sane = false;
+    bool angleSane = false;
+
     // GPS Position
     double gpsLat = 0;
     double gpsLng = 0;
     double gpsAlt = 0;
+
+    // Last known-good GPS position (retained when the current fix is lost)
+    double lastGpsLat = 0;
+    double lastGpsLng = 0;
+    double lastGpsAlt = 0;
     
     // GPS Time (YYYY-MM-DD hh:mm:ss)
     char gpsTime[20] = "";
@@ -97,6 +108,16 @@ struct DeviceStatus {
     // GPS validity flags
     bool gpsValid = false;
     bool gpsConnected = false;
+    bool gpsSane = false;
+
+    // Safety mode: true when both optocoupler safety inputs are active
+    // (optos_status[0] && optos_status[1])
+    bool safetyMode = false;
+
+    // How long the system has been continuously unsafe (0 while safe;
+    // resets to 0 as soon as safetyMode becomes true again, and naturally
+    // resets on reboot since it's millis()-based)
+    unsigned long safetyModeUnsafeDurationMs = 0;
     
     // LED states
     bool ledInternal = false;
@@ -110,7 +131,9 @@ struct DeviceStatus {
     
     // Power Monitor (voltage/current sensor)
     bool powerConnected = false;
+    bool powerSane = false;
     float busVoltage = 0.0;
+    float busCurrent_mA = 0.0;
 };
 
 // ============================================================================
@@ -159,8 +182,14 @@ extern float g_gyro2ZOffset;
 // ============================================================================
 
 /**
+ * @brief Get the firmware version string
+ * @return Firmware version (e.g. "1.5.0")
+ */
+const char* statusGetFirmwareVersion();
+
+/**
  * @brief Initialize status manager
- * 
+ *
  * Call in setup() after HAL initialization.
  */
 void statusInit();

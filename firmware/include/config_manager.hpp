@@ -59,14 +59,17 @@ struct Config {
     bool serial_number_set;                   ///< True if serial number has been programmed
     uint32_t validation_marker;               ///< Set to CONFIG_VALID_MARKER when valid
     
-    // Motor Work Hours Counter 
+    // Motor Work Hours Counter
     uint32_t motor_work_seconds;              ///< Total operational seconds since first boot
-    
+
+    // Burned Hours Counter
+    uint32_t burned_hours_seconds;            ///< Total operational seconds since serial number burn
+
     /**
      * @brief Constructor - initializes with default values
      */
-    Config() : whitelist_count(0), serial_number_set(false), 
-               validation_marker(0), motor_work_seconds(0) {
+    Config() : whitelist_count(0), serial_number_set(false),
+               validation_marker(0), motor_work_seconds(0), burned_hours_seconds(0) {
         // Default controller IP: 192.168.1.198
         controller_ip_bytes[0] = 192;
         controller_ip_bytes[1] = 168;
@@ -118,6 +121,9 @@ extern String g_serialNumber;
 /** Current motor work seconds counter */
 extern uint32_t g_motorWorkSeconds;
 
+/** Seconds of operation since the serial number was burned */
+extern uint32_t g_burnedHoursSeconds;
+
 /** Flag to indicate a reboot is pending */
 extern bool g_rebootPending;
 
@@ -158,6 +164,21 @@ void configUpdateWorkHours();
  * @return Work hours with decimal precision
  */
 float configGetWorkHoursFloat();
+
+/**
+ * @brief Update burned-hours counter
+ *
+ * Should be called periodically in loop() to track operational time
+ * since the serial number was burned. Automatically saves to flash
+ * every WORK_HOURS_SAVE_INTERVAL_MS.
+ */
+void configUpdateBurnedHours();
+
+/**
+ * @brief Get burned hours as a float
+ * @return Hours since serial number burn, with decimal precision
+ */
+float configGetBurnedHoursFloat();
 
 /**
  * @brief Set controller IP address

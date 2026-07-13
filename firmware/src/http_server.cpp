@@ -9,6 +9,7 @@
 #include "status_manager.hpp"
 #include "led_controller.hpp"
 #include "relay_controller.hpp"
+#include "ocu_monitor.hpp"
 #include "KMPProDinoMKRZero.h"
 #include "gg_hal.hpp"
 #include <Arduino_DebugUtils.h>  // For NVIC_SystemReset()
@@ -485,6 +486,105 @@ void httpServerLoop() {
                     ledControllerSetManualMode(false);
                     _gg_hal.set_indicator_led(OFF);
                     resp = statusGenerateJson(&doc);
+                }
+                else if (msgType == "get_config") {
+                    statusUpdate();
+                    resp["type"] = "config";
+                    resp["firmwareVersion"] = statusGetFirmwareVersion();
+                    resp["serialNumber"] = serialNumberGet();
+                    resp["controllerIp"] = g_controllerIP.toString();
+
+                    JsonArray whitelistArray = resp["whitelistIps"].to<JsonArray>();
+                    for (int i = 0; i < g_whitelistCount; ++i) {
+                        whitelistArray.add(g_whitelist[i].toString());
+                    }
+
+                    resp["technicianMode"] = technician_mode;
+                    resp["burnedHours"] = round(configGetBurnedHoursFloat() * 100) / 100.0;
+                    resp["sessionHours"] = round((millis() / 3600000.0) * 100) / 100.0;
+
+                    switch (g_status.ledIo) {
+                        case OFF:    resp["techLedColor"] = "OFF";    break;
+                        case GREEN:  resp["techLedColor"] = "GREEN";  break;
+                        case RED:    resp["techLedColor"] = "RED";    break;
+                        case ORANGE: resp["techLedColor"] = "ORANGE"; break;
+                        default:     resp["techLedColor"] = "OFF";    break;
+                    }
+                }
+                else if (msgType == "get_overview") {
+                    statusUpdate();
+                    resp["type"] = "overview";
+
+                    resp["powerConnected"] = g_status.powerConnected;
+                    resp["powerSane"] = g_status.powerSane;
+                    resp["busVoltage"] = g_status.busVoltage;
+                    resp["busCurrent_mA"] = g_status.busCurrent_mA;
+
+                    JsonArray relaysArray = resp["relays_status"].to<JsonArray>();
+                    for (uint8_t i = 0; i < RELAY_COUNT; i++) {
+                        relaysArray.add(KMPProDinoMKRZero.GetRelayState(i));
+                    }
+                    JsonArray optosArray = resp["optoin_status"].to<JsonArray>();
+                    for (uint8_t i = 0; i < OPTOIN_COUNT; i++) {
+                        optosArray.add(g_status.optos_status[i]);
+                    }
+
+                    resp["safetyMode"] = g_status.safetyMode;
+                    resp["safetyModeDurationMs"] = g_status.safetyModeUnsafeDurationMs;
+
+                    resp["ocuConnected"] = ocuMonitorIsConnected();
+                    resp["ocuDisconnectedDurationMs"] = ocuMonitorDisconnectedDurationMs();
+
+                    // No Jetson communication channel exists yet - this is the
+                    // documented "no comm" fallback value, not a placeholder.
+                    resp["jetsonCpuTemp"] = -1;
+                }
+                else if (msgType == "get_imu") {
+                    statusUpdate();
+                    resp["type"] = "imu";
+
+                    resp["angleSane"] = g_status.angleSane;
+                    resp["pitch"] = g_status.pitch;
+                    resp["roll"] = g_status.roll;
+                    resp["yaw"] = g_status.yaw;
+
+                    resp["imuValid"] = g_status.imuValid;
+                    resp["imu1Sane"] = g_status.imu1Sane;
+                    resp["imuX"] = g_status.imuX;
+                    resp["imuY"] = g_status.imuY;
+                    resp["imuZ"] = g_status.imuZ;
+                    resp["imuGx"] = g_status.imuGx;
+                    resp["imuGy"] = g_status.imuGy;
+                    resp["imuGz"] = g_status.imuGz;
+
+                    resp["imu2Valid"] = g_status.imu2Valid;
+                    resp["imu2Sane"] = g_status.imu2Sane;
+                    resp["imu2X"] = g_status.imu2X;
+                    resp["imu2Y"] = g_status.imu2Y;
+                    resp["imu2Z"] = g_status.imu2Z;
+                    resp["imu2Gx"] = g_status.imu2Gx;
+                    resp["imu2Gy"] = g_status.imu2Gy;
+                    resp["imu2Gz"] = g_status.imu2Gz;
+                }
+                else if (msgType == "get_gps") {
+                    statusUpdate();
+                    resp["type"] = "gps";
+
+                    resp["gpsConnected"] = g_status.gpsConnected;
+                    resp["gpsSane"] = g_status.gpsSane;
+                    resp["gpsSatellites"] = g_status.gpsSatellites;
+                    resp["gpsLat"] = g_status.gpsLat;
+                    resp["gpsLng"] = g_status.gpsLng;
+                    resp["gpsAlt"] = g_status.gpsAlt;
+                    resp["gpsHeading"] = g_status.gpsHeading;
+                    resp["gpsGroundSpeed"] = g_status.gpsGroundSpeed;
+                    resp["gpsSpeedNorth"] = g_status.gpsSpeedNorth;
+                    resp["gpsSpeedEast"] = g_status.gpsSpeedEast;
+                    resp["gpsSpeedDown"] = g_status.gpsSpeedDown;
+                    resp["gpsTime"] = g_status.gpsTime;
+                    resp["lastGpsLat"] = g_status.lastGpsLat;
+                    resp["lastGpsLng"] = g_status.lastGpsLng;
+                    resp["lastGpsAlt"] = g_status.lastGpsAlt;
                 }
                 else {
                     resp["type"] = "error";

@@ -25,6 +25,7 @@ int g_whitelistCount = 0;
 IPAddress g_routerIP;
 String g_serialNumber = "UNCONFIGURED";
 uint32_t g_motorWorkSeconds = 0;
+uint32_t g_burnedHoursSeconds = 0;
 
 // Reboot scheduling globals
 bool g_rebootPending = false;
@@ -39,6 +40,12 @@ static unsigned long s_workHoursLastUpdateMs = 0;
 
 /** Last time we saved work hours to flash (millis) */
 static unsigned long s_workHoursLastSaveMs = 0;
+
+/** Last time we updated the burned-hours counter (millis) */
+static unsigned long s_burnedHoursLastUpdateMs = 0;
+
+/** Last time we saved burned hours to flash (millis) */
+static unsigned long s_burnedHoursLastSaveMs = 0;
 
 // ============================================================================
 // CONFIGURATION MANAGEMENT IMPLEMENTATION
@@ -70,7 +77,10 @@ void configSave() {
     
     // Save work hours
     configData.motor_work_seconds = g_motorWorkSeconds;
-    
+
+    // Save burned hours
+    configData.burned_hours_seconds = g_burnedHoursSeconds;
+
     // Preserve serial number from existing flash data
     Config existingData = g_configStore.read();
     if (existingData.serial_number_set && existingData.validation_marker == CONFIG_VALID_MARKER) {
@@ -129,7 +139,8 @@ void configLoad() {
         );
         
         g_motorWorkSeconds = 0;
-        
+        g_burnedHoursSeconds = 0;
+
         // Save defaults to flash
         configSave();
     } else {
@@ -162,11 +173,18 @@ void configLoad() {
         
         // Load motor work hours
         g_motorWorkSeconds = configData.motor_work_seconds;
+
+        // Load burned hours
+        g_burnedHoursSeconds = configData.burned_hours_seconds;
     }
-    
+
     // Initialize work hours timing
     s_workHoursLastUpdateMs = millis();
     s_workHoursLastSaveMs = millis();
+
+    // Initialize burned hours timing
+    s_burnedHoursLastUpdateMs = millis();
+    s_burnedHoursLastSaveMs = millis();
     
     // Log loaded configuration
     Serial.println("Configuration loaded from FlashStorage.");
@@ -211,6 +229,32 @@ void configUpdateWorkHours() {
 
 float configGetWorkHoursFloat() {
     return g_motorWorkSeconds / 3600.0f;
+}
+
+void configUpdateBurnedHours() {
+    unsigned long now = millis();
+
+    // Calculate elapsed seconds since last update
+    unsigned long elapsedMs = now - s_burnedHoursLastUpdateMs;
+    unsigned long elapsedSeconds = elapsedMs / 1000;
+
+    if (elapsedSeconds > 0) {
+        g_burnedHoursSeconds += elapsedSeconds;
+        // Keep remainder for accuracy
+        s_burnedHoursLastUpdateMs = now - (elapsedMs % 1000);
+    }
+
+    // Save to flash periodically to preserve flash life
+    if (now - s_burnedHoursLastSaveMs >= WORK_HOURS_SAVE_INTERVAL_MS) {
+        Config configData = g_configStore.read();
+        configData.burned_hours_seconds = g_burnedHoursSeconds;
+        g_configStore.write(configData);
+        s_burnedHoursLastSaveMs = now;
+    }
+}
+
+float configGetBurnedHoursFloat() {
+    return g_burnedHoursSeconds / 3600.0f;
 }
 
 void configSetControllerIP(const IPAddress& ip) {
@@ -288,8 +332,13 @@ bool serialNumberBurn(const char* input) {
     configData.serial_number[MAX_SERIAL_NUMBER_LENGTH - 1] = '\0';
     configData.serial_number_set = true;
     configData.validation_marker = CONFIG_VALID_MARKER;
+
+    // Reset burned-hours counter - it tracks time since this exact burn event
+    configData.burned_hours_seconds = 0;
+    g_burnedHoursSeconds = 0;
+
     g_configStore.write(configData);
-    
+
     // Update global
     g_serialNumber = String(formattedSN);
     
