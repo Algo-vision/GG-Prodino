@@ -405,7 +405,7 @@ The IO LED provides critical system status feedback based on OCU (Operator Contr
 | **Blinking Red**    | OCU disconnected & safety mode active               | No heartbeat reply from the OCU within the timeout window, but the optocoupler safety inputs are both TRUE. |
 | **Solid Red**       | OCU disconnected & safety mode not active           | No heartbeat reply from the OCU, and at least one optocoupler safety input is FALSE.             |
 
-See [`include/ocu_monitor.hpp`](include/ocu_monitor.hpp) for the OCU heartbeat protocol - note the OCU's own script needs a matching UDP responder for `ocuConnected` to ever read true.
+See [`include/ocu_monitor.hpp`](include/ocu_monitor.hpp) for the OCU heartbeat protocol. The board is a **passive responder**: it only listens on UDP port 5001 and replies to heartbeats the OCU sends — it never initiates traffic (doing so would block the HTTP server on ARP retries whenever the OCU is offline). For `ocuConnected` to read true, the OCU's own script must **send** a UDP packet to the board on port 5001 roughly once per second.
 
 ## OTA Firmware Updates
 Firmware can be updated Over-The-Air (OTA) through the desktop GUI (see [`tools/README.md`](../tools/README.md)) in Technician Mode. Select a `.bin` file and initiate upload.

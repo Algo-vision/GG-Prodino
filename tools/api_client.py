@@ -1,6 +1,5 @@
 import requests
 import json
-import time
 
 class ApiClient:
     def __init__(self, base_ip):
@@ -12,8 +11,6 @@ class ApiClient:
         self._password = None
         # Use session for connection pooling (reuses TCP connections)
         self.session = requests.Session()
-        # Timing debug
-        self.last_call_time = None
 
     def login(self, username, password):
         # Store credentials for auto re-login
@@ -53,19 +50,10 @@ class ApiClient:
 
     def get_status(self):
         payload = {"type": "get_status", "token": self.token}
-        
-        # Timing debug - time since last call
-        now = time.time()
-        if self.last_call_time:
-            time_since_last = (now - self.last_call_time) * 1000  # ms
-        self.last_call_time = now
-        
+
         try:
-            start_time = time.time()
             response = self.session.post(self.base_url, data=json.dumps(payload), timeout=5)
-            end_time = time.time()
-            request_duration = (end_time - start_time) * 1000  # ms
-            
+
             if response.status_code == 200:
                 return response.json()
             if response.status_code == 401:

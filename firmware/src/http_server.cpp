@@ -22,6 +22,11 @@
 /** Auto-reset duration for relays 0 and 1 (5 seconds) */
 constexpr unsigned long RELAY_AUTO_RESET_DURATION = 5000;
 
+/** Max ms to wait for a client socket to close gracefully before force-closing.
+ *  Kept small so a slow/lingering TCP close can't stall the main loop (and thus
+ *  the next request). The default library value is 1000ms - far too long here. */
+constexpr uint16_t HTTP_CLIENT_CLOSE_TIMEOUT_MS = 20;
+
 // ============================================================================
 // INTERNAL STATE
 // ============================================================================
@@ -248,17 +253,19 @@ void httpServerLoop() {
     while (clientsProcessed < MAX_CLIENTS_PER_LOOP) {
         EthernetClient client = s_server->available();
         if (!client) break;  // No more clients waiting
-        
+
+        // Cap the socket-close wait. The Ethernet library's stop() blocks up to
+        // _timeout ms (default 1000!) waiting for a graceful FIN handshake before
+        // force-closing. Since every response is sent with "Connection: close" and
+        // we stop() immediately, that full-second wait would freeze loop() - and
+        // therefore delay the NEXT request's pickup by up to ~1s. A short wait then
+        // force-close keeps request latency low. (See EthernetClient::stop().)
+        client.setConnectionTimeout(HTTP_CLIENT_CLOSE_TIMEOUT_MS);
+
         clientsProcessed++;
-        unsigned long httpStartTime = millis();
-        
-        // Log when request is received (shows queue order)
+
         IPAddress remoteIP = client.remoteIP();
-        Serial.print("[HTTP] Request #");
-        Serial.print(clientsProcessed);
-        Serial.print(" from ");
-        Serial.println(remoteIP);
-        
+
         // Check IP whitelist
         if (!authIsIPWhitelisted(remoteIP)) {
             String out = "{\"type\":\"error\",\"message\":\"IP not allowed\"}";
@@ -270,7 +277,7 @@ void httpServerLoop() {
     // Read first line of request
     String req = client.readStringUntil('\r');
     client.flush();
-    
+
     if (req.startsWith("POST /")) {
         // Wait for data with timeout (prevents infinite blocking)
         unsigned long waitStart = millis();
@@ -278,8 +285,8 @@ void httpServerLoop() {
             // Small delay to prevent busy-waiting
             delay(1);
         }
-        
-        
+
+
         // Check if we got data
         if (client.available() == 0) {
             // No data received within timeout
@@ -287,16 +294,15 @@ void httpServerLoop() {
             client.stop();
             continue;  // Process next client
         }
-        
+
         // Read full request
         String request = httpReadRequest(client);
         String body = httpExtractBody(request);
-        
-        
+
         // Parse JSON
         JsonDocument doc;
         deserializeJson(doc, body.c_str());
-        
+
         String msgType = doc["type"];
         JsonDocument resp;
         int httpStatusCode = 200;
@@ -620,16 +626,15 @@ void httpServerLoop() {
         String out;
         serializeJson(resp, out);
         httpSendResponse(client, httpStatusCode, out);
-        
-        
+
         if (msgType == "login") {
             Serial.println(resp["success"] ? "Client logged in" : "Client login failed");
         }
     }
-    
+
     delay(1);
     client.stop();
-    
+
     }  // End of while loop
 }
 

@@ -13,6 +13,30 @@ bool imu2_initialized = false;
 bool gps_conncted = false;
 bool gnss_initialized = false;
 
+// Rate-limit IMU (re)initialization. initIMU() does a software reset with a
+// blocking delay; without this, a missing or intermittently-failing IMU would
+// re-run that reset on *every* read (each failed read clears the init flag),
+// costing ~20ms per read and stalling statusUpdate/HTTP. With a real IMU
+// present, init succeeds once and this never triggers again.
+static const unsigned long IMU_INIT_RETRY_MS = 2000;
+static unsigned long s_lastImu1InitAttempt = 0;
+static unsigned long s_lastImu2InitAttempt = 0;
+
+// Ensure an IMU is initialized before a read, but only retry init at most once
+// per IMU_INIT_RETRY_MS. Returns false if init is not (yet) done and it's too
+// soon to retry - in which case the caller should skip the read.
+static bool ensureImuInit(bool &initFlag, unsigned long &lastAttempt, void (*initFn)())
+{
+    if (initFlag) return true;
+    unsigned long now = millis();
+    if (lastAttempt != 0 && (now - lastAttempt) < IMU_INIT_RETRY_MS) {
+        return false; // too soon to retry
+    }
+    lastAttempt = (now == 0) ? 1 : now; // avoid the 0 "never attempted" sentinel
+    initFn();                            // sets initFlag = true
+    return true;
+}
+
 void initUbloxGNSS()
 {
     if (myGNSS.begin(Wire, GPS_ADDR)) {
@@ -76,9 +100,10 @@ bool imuReadBytes(uint8_t reg, uint8_t *data, uint8_t len)
 
 bool readAccelerometer(float &ax, float &ay, float &az)
 {
-    if (!imu_initialized)
+    if (!ensureImuInit(imu_initialized, s_lastImu1InitAttempt, initIMU))
     {
-        initIMU();
+        ax = ay = az = 0.0;
+        return false; // not initialized and too soon to retry
     }
 
     uint8_t rawData[6]={0,0,0,0,0,0};
@@ -101,9 +126,10 @@ bool readAccelerometer(float &ax, float &ay, float &az)
 
 bool readGyroscope(float &gx, float &gy, float &gz)
 {
-    if (!imu_initialized)
+    if (!ensureImuInit(imu_initialized, s_lastImu1InitAttempt, initIMU))
     {
-        initIMU();
+        gx = gy = gz = 0.0;
+        return false; // not initialized and too soon to retry
     }
 
     uint8_t rawData[6]={0,0,0,0,0,0};
@@ -172,9 +198,10 @@ bool imu2ReadBytes(uint8_t reg, uint8_t *data, uint8_t len)
 
 bool readAccelerometer_2(float &ax, float &ay, float &az)
 {
-    if (!imu2_initialized)
+    if (!ensureImuInit(imu2_initialized, s_lastImu2InitAttempt, initIMU_2))
     {
-        initIMU_2();
+        ax = ay = az = 0.0;
+        return false; // not initialized and too soon to retry
     }
 
     uint8_t rawData[6]={0,0,0,0,0,0};
@@ -197,9 +224,10 @@ bool readAccelerometer_2(float &ax, float &ay, float &az)
 
 bool readGyroscope_2(float &gx, float &gy, float &gz)
 {
-    if (!imu2_initialized)
+    if (!ensureImuInit(imu2_initialized, s_lastImu2InitAttempt, initIMU_2))
     {
-        initIMU_2();
+        gx = gy = gz = 0.0;
+        return false; // not initialized and too soon to retry
     }
 
     uint8_t rawData[6]={0,0,0,0,0,0};

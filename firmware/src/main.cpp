@@ -60,12 +60,6 @@ byte _mac[] = {0x00, 0x08, 0xDC, 0x53, 0x09, 0x72};
 /** HTTP server port */
 constexpr uint16_t LOCAL_PORT = 80;
 
-/** UDP broadcast port */
-constexpr unsigned int UDP_PORT = 5000;
-
-/** UDP broadcast interval (ms) */
-constexpr unsigned long UDP_BROADCAST_INTERVAL = 200;
-
 // MQTT_PUBLISH_INTERVAL is defined in mqtt_handler.hpp
 
 // ============================================================================
@@ -74,9 +68,6 @@ constexpr unsigned long UDP_BROADCAST_INTERVAL = 200;
 
 /** Ethernet HTTP server */
 EthernetServer _server(LOCAL_PORT);
-
-/** UDP socket for broadcasting */
-EthernetUDP udp;
 
 /** Hardware Abstraction Layer */
 GG_HAL _gg_hal;
@@ -147,7 +138,7 @@ void setup() {
     // Start servers
     _server.begin();
     _gg_hal.init();
-    
+
     // Initialize u-blox GNSS for UBX protocol (hAcc/vAcc/altEllipsoid)
     initUbloxGNSS();
     
@@ -204,10 +195,6 @@ void setup() {
     relayControllerInit();
     ocuMonitorInit();
 
-    // Start UDP broadcast
-    udp.begin(UDP_PORT);
-    Serial.println("UDP Broadcast started on port " + String(UDP_PORT));
-    
     // Initialize MQTT Handler with device serial number and router IP
     mqttHandler.begin(g_serialNumber, g_routerIP);
     Serial.println("MQTT handler initialized. Will attempt connection in loop()...");
@@ -257,7 +244,7 @@ void loop() {
 
 
     // 1. Handle MQTT connection maintenance
-    mqttHandler.loop();  // Re-enabled
+    mqttHandler.loop();
     
     // 2. Handle HTTP requests
     httpServerLoop();

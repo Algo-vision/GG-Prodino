@@ -260,15 +260,15 @@ void statusUpdate() {
     // Read button and LED states
     g_status.button_tech = _gg_hal.get_button_tech_state();
     g_status.ledIo = _gg_hal.get_indicator_led_state();
-    
+
     // Update all devices connected flag
     s_allDevicesConnected = gps_conncted && imuValid;
-    
+
     // Read relay states
     for (uint8_t i = 0; i < RELAY_COUNT; i++) {
         g_status.relays_status[i] = KMPProDinoMKRZero.GetRelayState(i);
     }
-    
+
     // Read opto-isolator inputs
     for (uint8_t i = 0; i < OPTOIN_COUNT; i++) {
         g_status.optos_status[i] = _gg_hal.get_optoin_state(i);
@@ -333,14 +333,12 @@ void statusUpdate() {
     double gpsNow[3] = {g_status.gpsLat, g_status.gpsLng, g_status.gpsAlt};
     bool gpsSaneCheck = checkSane(gpsNow, s_prevGps, 3, s_gpsStuckCount, SANITY_STUCK_THRESHOLD);
     g_status.gpsSane = g_status.gpsValid && gpsSaneCheck;
-
-    // Debug removed - was printing every 200ms on UDP broadcast
 }
 
 JsonDocument statusGenerateJson(JsonDocument* requestDoc) {
     // Update hardware status first
     statusUpdate();
-    
+
     JsonDocument resp;
     resp["type"] = "status";
     resp["firmwareVersion"] = FIRMWARE_VERSION;
