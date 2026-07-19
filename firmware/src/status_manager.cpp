@@ -512,6 +512,8 @@ void statusWriteToSerial() {
     Serial.print(g_status.gpsConnected ? "Yes" : "No");
     Serial.print(" | button_tech: ");
     Serial.print(g_status.button_tech ? "Pressed" : "Released");
+    Serial.print(" | Tech Mode: ");
+    Serial.print(g_status.technicianMode ? "ON" : "OFF");
     Serial.print(" | LED Internal: ");
     Serial.print(g_status.ledInternal ? "ON" : "OFF");
     Serial.print(" | LED IO: ");

@@ -20,3 +20,8 @@ code_example_versions
 HLC1-IMU_Directions.jpg
 MSB IMUs Oriantations (U8-1,U7-2,U7-Combined).jpeg
 new_task_12_07.txt
+GRK_Board_Direct_keys/
+# AWS IoT device credentials embedded for the firmware (contains a PRIVATE KEY - never commit)
+firmware/src/aws_client_certs.h
+GRK_Board_Direct_keys/
+firmware/src/aws_certs_store.h

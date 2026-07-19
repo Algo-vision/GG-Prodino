@@ -13,6 +13,7 @@
 #include "imu_mount_orientation.hpp"
 #include "KMPProDinoMKRZero.h"
 #include "gg_hal.hpp"
+#include "aws_certs_store.h"     // AWS device cert/key/CA the board serves to the gateway
 #include <Arduino_DebugUtils.h>  // For NVIC_SystemReset()
 
 // ============================================================================
@@ -306,7 +307,8 @@ void httpServerLoop() {
         String msgType = doc["type"];
         JsonDocument resp;
         int httpStatusCode = 200;
-        
+        bool rawResponseSent = false;  // set by handlers that stream their own body
+
         if (msgType == "login") {
             Serial.println("Login type detected");
             resp = httpHandleLogin(doc);
@@ -520,6 +522,28 @@ void httpServerLoop() {
 
                     resp["imuMountOrientation"] = imuMountOrientationToString(g_imuMountOrientation);
                 }
+                else if (msgType == "get_aws_certs") {
+                    // A5: the board holds the AWS device credentials; the in-HLC
+                    // gateway (Jetson/RPi) fetches them here so its OS image stays
+                    // generic. Token-authed + IP-whitelisted (gateway is on the
+                    // whitelist). Served ONE part per request as raw text/plain -
+                    // the full ~4.5KB bundle in a single JSON response overruns
+                    // this MCU's memory/HTTP path and hard-faults it.
+                    String part = doc["part"];  // cert | key | ca | endpoint
+                    if (part == "cert") {
+                        httpSendResponse(client, 200, AWS_DEV_CERT, "text/plain");
+                    } else if (part == "key") {
+                        httpSendResponse(client, 200, AWS_DEV_KEY, "text/plain");
+                    } else if (part == "ca") {
+                        httpSendResponse(client, 200, AWS_ROOT_CA, "text/plain");
+                    } else if (part == "endpoint") {
+                        httpSendResponse(client, 200,
+                            String(AWS_ENDPOINT) + ":" + String(AWS_PORT), "text/plain");
+                    } else {
+                        httpSendResponse(client, 400, "unknown part", "text/plain");
+                    }
+                    rawResponseSent = true;  // skip the JSON response below
+                }
                 else if (msgType == "set_imu_mount_orientation") {
                     String orientationStr = doc["orientation"];
                     int newOrientation = imuMountOrientationFromString(orientationStr.c_str());
@@ -622,10 +646,12 @@ void httpServerLoop() {
         }
         
         
-        // Send response
-        String out;
-        serializeJson(resp, out);
-        httpSendResponse(client, httpStatusCode, out);
+        // Send response (unless a handler already streamed its own raw body)
+        if (!rawResponseSent) {
+            String out;
+            serializeJson(resp, out);
+            httpSendResponse(client, httpStatusCode, out);
+        }
 
         if (msgType == "login") {
             Serial.println(resp["success"] ? "Client logged in" : "Client login failed");

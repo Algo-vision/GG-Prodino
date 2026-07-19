@@ -45,6 +45,24 @@
 #include "mqtt_handler.hpp"
 
 // ============================================================================
+// MQTT TRANSPORT (plain, to the local gateway broker)
+// ============================================================================
+// The board publishes PLAIN MQTT to a local Mosquitto broker on the gateway
+// (the Jetson/RPi inside the HLC). The gateway bridges to AWS IoT over TLS with
+// the device certificate. Direct board->AWS TLS was proven working but exceeds
+// this 32KB MCU's RAM under full firmware load, so TLS lives on the gateway
+// instead. See SESSION_SUMMARY_2026-07-15.md.
+
+/** Local MQTT broker = the in-HLC gateway's LAN IP. Here it's the Jetson
+ *  standing in for the production RPi. TODO: make configurable (reuse the
+ *  existing router-IP config field). */
+static const char MQTT_BROKER_HOST[] = "192.168.1.152";
+constexpr uint16_t MQTT_BROKER_PORT = 1883;
+
+/** Plain TCP transport for MQTT to the local broker */
+static EthernetClient s_mqttTcp;
+
+// ============================================================================
 // FIRMWARE VERSION
 // ============================================================================
 
@@ -73,7 +91,7 @@ EthernetServer _server(LOCAL_PORT);
 GG_HAL _gg_hal;
 
 /** MQTT Handler */
-MQTTHandler mqttHandler;
+MQTTHandler mqttHandler(s_mqttTcp);
 
 // ============================================================================
 // OPERATING MODE FLAGS
@@ -195,9 +213,9 @@ void setup() {
     relayControllerInit();
     ocuMonitorInit();
 
-    // Initialize MQTT Handler with device serial number and router IP
-    mqttHandler.begin(g_serialNumber, g_routerIP);
-    Serial.println("MQTT handler initialized. Will attempt connection in loop()...");
+    // Plain MQTT to the local gateway broker (the gateway does the AWS TLS bridge).
+    mqttHandler.begin(g_serialNumber, MQTT_BROKER_HOST, MQTT_BROKER_PORT);
+    Serial.println("MQTT handler initialized. Will connect to the local broker in loop()...");
     
     // Print startup info
     Serial.println("Starting up...");
@@ -256,22 +274,22 @@ void loop() {
         statusUpdate();
         
         if (mqttHandler.isConnected()) {
-            
+
             // Publish complete status
             JsonDocument statusDoc = statusGenerateJsonSimple();
             mqttHandler.publishStatus(statusDoc);
-            
+
             // Publish GPS data
             mqttHandler.publishGPS(
                 g_status.gpsLat, g_status.gpsLng, g_status.gpsAlt,
-                g_status.gpsSpeedNorth, g_status.gpsSpeedEast, 
+                g_status.gpsSpeedNorth, g_status.gpsSpeedEast,
                 g_status.gpsSpeedDown, g_status.gpsGroundSpeed,
                 g_status.gpsHeading,
                 g_status.gpsValid, g_status.gpsConnected,
                 g_status.gpsTime, g_status.gpsSatellites,
                 g_status.gpsHAcc, g_status.gpsVAcc, g_status.gpsAltEllipsoid
             );
-            
+
             // Publish IMU data
             mqttHandler.publishIMU(
                 g_status.imuX, g_status.imuY, g_status.imuZ,
@@ -279,27 +297,27 @@ void loop() {
                 g_status.pitch, g_status.roll, g_status.yaw,
                 g_status.imuValid
             );
-            
+
             // Publish relay states
             mqttHandler.publishRelays(
                 g_status.relays_status[0], g_status.relays_status[1],
                 g_status.relays_status[2], g_status.relays_status[3]
             );
-            
+
             // Publish LED states
             const char* ledIoStr = "OFF";
             if (g_status.ledIo == GREEN) ledIoStr = "GREEN";
             else if (g_status.ledIo == RED) ledIoStr = "RED";
             else if (g_status.ledIo == ORANGE) ledIoStr = "ORANGE";
             mqttHandler.publishLEDs(g_status.ledInternal, ledIoStr);
-            
+
             // Publish sensor states
             mqttHandler.publishSensors(
                 g_status.optos_status[0], g_status.optos_status[1],
                 g_status.optos_status[2], g_status.optos_status[3],
                 g_status.button_tech
             );
-            
+
             // Publish power monitoring
             mqttHandler.publishPower(g_status.powerConnected, g_status.busVoltage);
         }

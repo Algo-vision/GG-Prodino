@@ -80,16 +80,20 @@ struct Config {
         controller_ip_bytes[2] = 1;
         controller_ip_bytes[3] = 198;
         
-        // Default whitelist IPs: 192.168.1.20, 192.168.1.169, 192.168.1.33
-        whitelist_ip_bytes[0][0] = 192; whitelist_ip_bytes[0][1] = 168; 
+        // Default whitelist IPs: 192.168.1.20, 192.168.1.169, 192.168.1.33,
+        // 192.168.1.152 (the in-HLC gateway / Jetson - fetches AWS certs from us)
+        whitelist_ip_bytes[0][0] = 192; whitelist_ip_bytes[0][1] = 168;
         whitelist_ip_bytes[0][2] = 1;   whitelist_ip_bytes[0][3] = 20;
-        
-        whitelist_ip_bytes[1][0] = 192; whitelist_ip_bytes[1][1] = 168; 
+
+        whitelist_ip_bytes[1][0] = 192; whitelist_ip_bytes[1][1] = 168;
         whitelist_ip_bytes[1][2] = 1;   whitelist_ip_bytes[1][3] = 169;
-        
-        whitelist_ip_bytes[2][0] = 192; whitelist_ip_bytes[2][1] = 168; 
+
+        whitelist_ip_bytes[2][0] = 192; whitelist_ip_bytes[2][1] = 168;
         whitelist_ip_bytes[2][2] = 1;   whitelist_ip_bytes[2][3] = 33;
-        whitelist_count = 3;
+
+        whitelist_ip_bytes[3][0] = 192; whitelist_ip_bytes[3][1] = 168;
+        whitelist_ip_bytes[3][2] = 1;   whitelist_ip_bytes[3][3] = 152;
+        whitelist_count = 4;
         
         // Default router/MQTT broker IP: 192.168.1.1 (Teltonika default)
         router_ip_bytes[0] = 192;

@@ -1,9 +1,13 @@
 /*
  * mqtt_handler.hpp
- * 
+ *
  * MQTT publishing handler for GRK IoT device
  * Publishes sensor data to MQTT broker on configured topics
  * Topics include device serial number for multi-device support
+ *
+ * Transport-agnostic: the network client (plain EthernetClient for a local
+ * broker, or an SSLClient-based TLS client for AWS IoT) is supplied by the
+ * caller, so this class only deals with MQTT itself.
  */
 
 #ifndef MQTT_HANDLER_HPP
@@ -11,11 +15,10 @@
 
 #include <Arduino.h>
 #include <PubSubClient.h>
-#include <Ethernet.h>
+#include <Client.h>
 #include <ArduinoJson.h>
 
 // MQTT Broker Configuration
-#define MQTT_BROKER_PORT 1883
 #define MQTT_USERNAME ""  // Empty for anonymous, set when authentication enabled
 #define MQTT_PASSWORD ""  // Empty for anonymous
 const unsigned long MQTT_PUBLISH_INTERVAL = 1000; // Publish every 1 second
@@ -23,71 +26,58 @@ const unsigned long MQTT_RECONNECT_INTERVAL = 30000; // Try reconnect every 30 s
 
 class MQTTHandler {
 private:
-    EthernetClient ethClient;
+    Client& netClient;         // underlying transport (kept for stop()/error reset)
     PubSubClient mqttClient;
     unsigned long lastPublishTime;
     unsigned long lastReconnectAttempt;
+    bool firstAttemptDone;
     bool connected;
-    
+
     // Serial number and dynamic topic prefix
     String serialNumber;
     String topicPrefix;
     String clientId;
-    
-    // Dynamic broker IP
-    IPAddress brokerIp;
-    
+
+    // Broker endpoint (hostname, e.g. the AWS IoT device data endpoint)
+    String brokerHost;
+    uint16_t brokerPort;
+
     // Build a complete topic path
     String getTopic(const char* suffix) {
         return topicPrefix + String(suffix);
     }
-    
+
 public:
-    MQTTHandler() : mqttClient(ethClient), lastPublishTime(0), lastReconnectAttempt(0), connected(false) {}
-    
-    // Begin with serial number and broker IP
-    void begin(const String& sn, const IPAddress& brokerIpAddr) {
+    // netClient: the transport to use (e.g. TLS client for AWS IoT)
+    MQTTHandler(Client& client)
+        : netClient(client), mqttClient(client), lastPublishTime(0),
+          lastReconnectAttempt(0), firstAttemptDone(false), connected(false),
+          brokerPort(0) {}
+
+    // Begin with serial number and broker hostname + port
+    void begin(const String& sn, const char* host, uint16_t port) {
         serialNumber = sn;
         topicPrefix = "grk/" + serialNumber + "/";
         clientId = "grk_" + serialNumber;
-        brokerIp = brokerIpAddr;
-        
-        // Set socket timeout to prevent blocking on connection failures
-        // This reduces the delay when broker is unreachable from ~5s to ~500ms
-        ethClient.setConnectionTimeout(500);  // 500ms timeout
-        
-        mqttClient.setServer(brokerIp, MQTT_BROKER_PORT);
+        brokerHost = host;
+        brokerPort = port;
+
+        // NOTE: setServer stores the pointer, so keep the hostname in a
+        // String member and hand PubSubClient its stable c_str().
+        mqttClient.setServer(brokerHost.c_str(), brokerPort);
         Serial.println("MQTT: Handler initialized for device: " + serialNumber);
-        Serial.print("MQTT: Broker configured at ");
-        Serial.print(brokerIp.toString());
-        Serial.print(":");
-        Serial.println(MQTT_BROKER_PORT);
-        
+        Serial.println("MQTT: Broker configured at " + brokerHost + ":" + String(brokerPort));
+
         // Increase buffer size to handle full status JSON (~1040 bytes)
         // Default is 256 bytes. We use 2048 to be safe and allow for future growth.
         mqttClient.setBufferSize(2048);
-        
+
         Serial.println("MQTT: Topic prefix: " + topicPrefix);
     }
-    
-    // Legacy begin() for backward compatibility - uses default IP
-    void begin(const String& sn) {
-        begin(sn, IPAddress(192, 168, 1, 1));  // Default Teltonika router IP
-    }
-    
-    // Legacy begin() for backward compatibility
-    void begin() {
-        begin("DEFAULT", IPAddress(192, 168, 1, 1));
-    }
-    
-    // Get current broker IP
-    IPAddress getBrokerIp() {
-        return brokerIp;
-    }
-    
+
     bool connectToMQTTBroker() {
         Serial.print("MQTT: Attempting connection to broker as " + clientId + "... ");
-        
+
         // Try to connect with device-specific client ID
         bool result;
         if (strlen(MQTT_USERNAME) > 0) {
@@ -95,7 +85,7 @@ public:
         } else {
             result = mqttClient.connect(clientId.c_str());
         }
-        
+
         if (result) {
             Serial.println("connected!");
             connected = true;
@@ -103,27 +93,42 @@ public:
         } else {
             Serial.print("failed, rc=");
             Serial.println(mqttClient.state());
+            // Fully reset the transport. SSLClient latches a write-error flag
+            // after any failure; until stop() clears it, every subsequent
+            // connect()/connected() call fails instantly (and spams errors).
+            netClient.stop();
             connected = false;
             return false;
         }
     }
-    
+
     void loop() {
-        if (!mqttClient.connected()) {
-            connected = false;
-            unsigned long now = millis();
-            if (now - lastReconnectAttempt > MQTT_RECONNECT_INTERVAL) {
+        unsigned long now = millis();
+
+        if (!connected) {
+            // Disconnected: retry on the interval (first attempt immediately).
+            // Deliberately avoid calling mqttClient.connected() here - on a
+            // failed TLS transport every call logs an error, flooding Serial.
+            if (!firstAttemptDone || (now - lastReconnectAttempt > MQTT_RECONNECT_INTERVAL)) {
+                firstAttemptDone = true;
                 lastReconnectAttempt = now;
-                if (connectToMQTTBroker()) {
-                    lastReconnectAttempt = 0;
-                }
+                connectToMQTTBroker();
             }
-        } else {
-            mqttClient.loop(); // Maintain MQTT connection
+            return;
+        }
+
+        // Connected: service the MQTT client; detect connection loss once.
+        if (!mqttClient.loop()) {
+            Serial.println("MQTT: Connection lost");
+            netClient.stop();     // reset transport for a clean reconnect
+            connected = false;
+            lastReconnectAttempt = now;
         }
     }
-    
+
     bool isConnected() {
+        // Order matters: when the flag is false, short-circuit so we never
+        // poke a failed TLS client (each call would log an error).
         return connected && mqttClient.connected();
     }
     
