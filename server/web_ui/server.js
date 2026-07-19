@@ -118,6 +118,7 @@ function createDefaultDeviceState(serialNumber) {
         leds: { internal: false, io: 'OFF' },
         sensors: { optos: [false, false, false, false], button: false },
         power: { connected: false, busVoltage: 0 },
+        jetson: { cpuTemp: null },  // gateway (Jetson/RPi) CPU temp, from grk/<SN>/jetson/cpu_temp
         deviceInfo: { motorWorkHours: 0, firmwareVersion: '--', controllerIp: '--', routerIp: '--', serialNumber: serialNumber }
     };
 }
@@ -348,6 +349,13 @@ client.on('message', (topic, message) => {
             break;
         case 'power/bus_voltage':
             device.power.busVoltage = parseFloat(data) || 0;
+            break;
+        case 'jetson/cpu_temp':
+            // Gateway (Jetson/RPi) publishes {"cpu_temp":X,"unit":"C"} under the
+            // same serial as the board - a "system" = board + gateway.
+            if (data && typeof data === 'object' && data.cpu_temp !== undefined) {
+                device.jetson.cpuTemp = data.cpu_temp;
+            }
             break;
     }
 

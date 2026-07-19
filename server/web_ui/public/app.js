@@ -359,6 +359,13 @@ function updateDashboard(state) {
         }
     }
 
+    // Gateway (Jetson/RPi) CPU temperature
+    const jetsonCpuTemp = document.getElementById('jetson-cpu-temp');
+    if (jetsonCpuTemp) {
+        const t = state.jetson?.cpuTemp;
+        jetsonCpuTemp.textContent = (t !== null && t !== undefined) ? `${t.toFixed(1)} °C` : '--';
+    }
+
     // IMU
     const { pitch, roll, yaw } = state.imu.orientation;
     pitchVal.textContent = `${pitch.toFixed(1)}°`;
