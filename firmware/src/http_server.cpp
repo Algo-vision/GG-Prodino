@@ -199,17 +199,26 @@ void httpSendResponse(EthernetClient& client, int statusCode,
         default:  statusText = "Unknown"; break;
     }
     
-    client.print("HTTP/1.1 ");
-    client.print(statusCode);
-    client.print(" ");
-    client.println(statusText);
-    client.print("Content-Type: ");
-    client.println(contentType);
-    client.println("Connection: close");
-    client.print("Content-Length: ");
-    client.println(content.length());
-    client.println();
-    client.print(content);
+    // Build the whole response (status line + headers + body) in one buffer and
+    // send it with a SINGLE write, instead of ~10 small client.print() calls.
+    // Each small write was a separate TCP segment that could stall on Nagle +
+    // the client's delayed-ACK; coalescing helps most on larger responses
+    // (measured: get_status p50 ~106ms -> ~61ms). The remaining per-request floor
+    // (~40ms) is the connection-per-request model (setup + stop() teardown), which
+    // is intentional for the 8-socket W5500 - see the accept loop below.
+    String resp;
+    resp.reserve(content.length() + 128);
+    resp += "HTTP/1.1 ";
+    resp += statusCode;
+    resp += ' ';
+    resp += statusText;
+    resp += "\r\nContent-Type: ";
+    resp += contentType;
+    resp += "\r\nConnection: close\r\nContent-Length: ";
+    resp += content.length();
+    resp += "\r\n\r\n";
+    resp += content;
+    client.print(resp);
 }
 
 JsonDocument httpHandleLogin(JsonDocument& doc) {
