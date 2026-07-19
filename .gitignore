@@ -25,3 +25,10 @@ GRK_Board_Direct_keys/
 firmware/src/aws_client_certs.h
 GRK_Board_Direct_keys/
 firmware/src/aws_certs_store.h
+
+# TEMPORARY - Option-A (on-board TLS) leftovers, not used by the current Option-B
+# firmware (SSLClient is lib_ignore'd; aws_root_ca.h isn't included anywhere).
+# Ignored for now to keep them out of git. TODO: if/when on-board TLS is revisited
+# (needs more-RAM hardware), REMOVE these two lines and commit both.
+firmware/lib/SSLClient/
+firmware/src/aws_root_ca.h
