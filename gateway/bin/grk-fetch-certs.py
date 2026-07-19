@@ -6,7 +6,9 @@ generic. Fetched over HTTP:
     raw text (the board can't build a single big multi-KB response), and
   - the HLC serial number, written to /etc/grk/hlc_serial so every gateway-side
     publisher (e.g. the CPU-temp service) can use the SAME grk/<serial>/... topic
-    namespace as the board. A "system" = board + Jetson under one serial.
+    namespace as the board. A "system" = board + gateway under one serial.
+Hardware-agnostic: runs unchanged on any Linux gateway (Jetson, RPi, ...) - it
+only shells out to standard tools and writes standard paths.
 Runs before mosquitto on boot.
 """
 import os, re, sys, time, json, subprocess, urllib.request

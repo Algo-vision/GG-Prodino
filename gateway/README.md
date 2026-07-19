@@ -63,10 +63,19 @@ grep remote_clientid /etc/mosquitto/conf.d/grk.conf     # grk-bridge-<serial>
 mosquitto_sub -h localhost -p 1883 -t 'grk/#' -v        # board + jetson topics
 ```
 
+## Portability (Jetson / RPi / any Linux gateway)
+
+The **broker + bridge + cert-fetch** (`grk.conf`, `grk-fetch-certs.py`, and their
+systemd units) are **hardware-agnostic** — pure Mosquitto config, Python 3 stdlib,
+and standard paths/users. They run unchanged on a Jetson or an RPi (or any
+systemd Linux with Mosquitto). Install steps above are identical.
+
+The **only** Jetson-specific piece is the **CPU-temp** publisher's thermal zone
+(`thermal_zone0` = cpu-thermal on Tegra). On an RPi confirm/adjust the zone:
+`for z in /sys/class/thermal/thermal_zone*; do echo "$z $(cat $z/type)"; done`
+and set `ZONE` in `grk-jetson-temp.sh` accordingly.
+
 ## Notes
 
-- Thermal zone: `/sys/class/thermal/thermal_zone0/temp` (cpu-thermal on Tegra).
-  On other hardware confirm with
-  `for z in /sys/class/thermal/thermal_zone*; do echo "$z $(cat $z/type)"; done`.
 - The bridge certs come from the board via `grk-fetch-certs`; they are never
   stored in this repo.
