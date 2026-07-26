@@ -96,6 +96,51 @@ extern "C" char* sbrk(int);
 static int freeRam() { char t; return &t - reinterpret_cast<char*>(sbrk(0)); }
 
 // ============================================================================
+// 50 ms REAL-TIME ISR (TC4) - keeps time-critical GPIO tasks alive even while
+// the main loop is blocked for ~16 s inside the TLS publish window.
+// RULES: ISR tasks must be GPIO/state-only. NO SPI, NO I2C, NO heap - the main
+// loop owns the W5500/SPI bus; touching it from here would corrupt transfers.
+// (ledControllerUpdate/relayControllerUpdate end in digitalWrite - verified.)
+// ============================================================================
+volatile bool     g_isrTasksEnabled = false;
+volatile uint32_t g_isrTicks = 0;
+volatile uint32_t g_isrLastMs = 0;
+volatile uint32_t g_isrMaxGapMs = 0;
+
+extern "C" void TC4_Handler() {
+    if (TC4->COUNT16.INTFLAG.bit.MC0) {
+        TC4->COUNT16.INTFLAG.reg = TC_INTFLAG_MC0;
+        uint32_t now = millis();
+        if (g_isrLastMs) {
+            uint32_t gap = now - g_isrLastMs;
+            if (gap > g_isrMaxGapMs) g_isrMaxGapMs = gap;
+        }
+        g_isrLastMs = now;
+        g_isrTicks++;
+        if (g_isrTasksEnabled) {
+            ledControllerUpdate();      // GPIO-only: technician LED state machine
+            relayControllerUpdate();    // GPIO-only: relay auto-reset timers
+        }
+    }
+}
+
+static void startRtIsr50ms() {
+    GCLK->CLKCTRL.reg = GCLK_CLKCTRL_CLKEN | GCLK_CLKCTRL_GEN_GCLK0 | GCLK_CLKCTRL_ID_TC4_TC5;
+    while (GCLK->STATUS.bit.SYNCBUSY);
+    TC4->COUNT16.CTRLA.reg = TC_CTRLA_SWRST;
+    while (TC4->COUNT16.CTRLA.bit.SWRST);
+    // 48 MHz / 1024 = 46875 Hz; MFRQ resets on CC0 -> CC0 = 2343 -> 50 ms
+    TC4->COUNT16.CTRLA.reg = TC_CTRLA_MODE_COUNT16 | TC_CTRLA_WAVEGEN_MFRQ | TC_CTRLA_PRESCALER_DIV1024;
+    TC4->COUNT16.CC[0].reg = 2343;
+    while (TC4->COUNT16.STATUS.bit.SYNCBUSY);
+    TC4->COUNT16.INTENSET.reg = TC_INTENSET_MC0;
+    NVIC_SetPriority(TC4_IRQn, 3);      // low priority: never preempt SysTick/USB
+    NVIC_EnableIRQ(TC4_IRQn);
+    TC4->COUNT16.CTRLA.bit.ENABLE = 1;
+    while (TC4->COUNT16.STATUS.bit.SYNCBUSY);
+}
+
+// ============================================================================
 // FIRMWARE VERSION
 // ============================================================================
 
@@ -276,6 +321,12 @@ void setup() {
     Serial.println(Ethernet.subnetMask());
     Serial.print("MQTT Broker (Router) IP: ");
     Serial.println(g_routerIP);
+
+    // Start the 50 ms real-time ISR (LED + relay tasks live there now, so they
+    // keep running even while the TLS publish window blocks the main loop).
+    startRtIsr50ms();
+    g_isrTasksEnabled = true;
+    Serial.println("[ISR] 50ms real-time tick started (LED + relay tasks)");
 }
 
 // ============================================================================
@@ -382,6 +433,11 @@ void loop() {
         lastRamPrint = millis();
         Serial.print("[RAM] freeRam="); Serial.print(freeRam());
         Serial.print("  mqtt="); Serial.println(mqttHandler.isConnected() ? "CONNECTED" : "down");
+        // ISR health: maxGap should stay ~50-51 ms even THROUGH a publish window
+        uint32_t ticks = g_isrTicks, maxGap = g_isrMaxGapMs;
+        g_isrMaxGapMs = 0;
+        Serial.print("[ISR] ticks="); Serial.print(ticks);
+        Serial.print("  maxGap="); Serial.print(maxGap); Serial.println(" ms");
         // [DIAG] W5500 socket table: who owns every socket? (0x14=LISTEN,
         // 0x17=ESTABLISHED, 0x00=CLOSED, 0x22=UDP, 0x1C=CLOSE_WAIT)
         Serial.print("[SOCK] ");
@@ -408,15 +464,13 @@ void loop() {
         statusWriteToSerial();
         lastSerialOutput = millis();
     }
-    relayControllerUpdate();
-    
+    // NOTE: relayControllerUpdate() + ledControllerUpdate() moved to the 50 ms
+    // TC4 ISR - they keep running even while the TLS window blocks this loop.
+
     // Update user connection status
     if (millis() - httpGetLastUserConnectedTime() > 5000) {
         user_connected = false;
     }
-    
-    // Update LED status
-    ledControllerUpdate();
 }
 
 // ============================================================================
