@@ -97,11 +97,11 @@ public:
         if (result) {
             Serial.println("connected!");
             connected = true;
-            // Settle: service the session for ~1.5 s before the first publish.
-            // Publishing the instant CONNACK arrives is a known AWS-IoT
-            // insta-disconnect pattern.
+            // Settle: brief session service before the first publish (publishing
+            // the instant CONNACK arrives is a known AWS insta-disconnect
+            // pattern). Trimmed 1500 -> 300 ms to shorten the publish window.
             unsigned long settleStart = millis();
-            while (millis() - settleStart < 1500) {
+            while (millis() - settleStart < 300) {
                 mqttClient.loop();
                 delay(50);
             }

@@ -382,11 +382,12 @@ void loop() {
         Serial.println(freeRam());
         unsigned long t0 = millis();
         if (mqttHandler.connectToMQTTBroker()) {
-            statusUpdate();
+            // no statusUpdate() here - the 1 Hz loop keeps g_status fresh, and
+            // skipping it removes I2C time from the window
             JsonDocument doc = statusGenerateJsonSimple();
             mqttHandler.publishStatus(doc);
             // pump the SSL engine so the record is fully on the wire before close
-            for (int i = 0; i < 10; i++) { s_flushing.available(); delay(10); }
+            for (int i = 0; i < 5; i++) { s_flushing.available(); delay(10); }
             Serial.print("[PUB] *** published to AWS, window took ");
             Serial.print(millis() - t0); Serial.println(" ms ***");
         } else {
