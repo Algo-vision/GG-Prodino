@@ -221,6 +221,42 @@ void httpSendResponse(EthernetClient& client, int statusCode,
     client.print(resp);
 }
 
+/**
+ * @brief Send a JSON response with ZERO heap allocation (RAM-safe).
+ *
+ * The String-based path costs ~2 KB of transient heap for a big response
+ * (serialize-to-String + header+body copy). With the TLS stack resident only
+ * ~2.4 KB is free, so a large get_status response could collide and wedge the
+ * board. This variant serializes into a STACK buffer (reclaimed on return, no
+ * heap high-water) and sends header+body as one write. Oversized responses
+ * fall back to streaming chunks directly into the socket.
+ */
+void httpStreamJsonResponse(EthernetClient& client, int statusCode, JsonDocument& doc) {
+    const char* statusText = "OK";
+    switch (statusCode) {
+        case 200: statusText = "OK"; break;
+        case 401: statusText = "Unauthorized"; break;
+        case 403: statusText = "Forbidden"; break;
+        case 404: statusText = "Not Found"; break;
+        case 500: statusText = "Internal Server Error"; break;
+        default:  statusText = "Unknown"; break;
+    }
+    size_t bodyLen = measureJson(doc);
+    char buf[1408];                     // stack: freed on return, no heap growth
+    int hdrLen = snprintf(buf, sizeof(buf),
+        "HTTP/1.1 %d %s\r\nContent-Type: application/json\r\n"
+        "Connection: close\r\nContent-Length: %u\r\n\r\n",
+        statusCode, statusText, (unsigned)bodyLen);
+    if (hdrLen + bodyLen < sizeof(buf)) {
+        serializeJson(doc, buf + hdrLen, sizeof(buf) - hdrLen);
+        client.write((const uint8_t*)buf, hdrLen + bodyLen);   // one segment
+    } else {
+        // response bigger than the buffer: send header, then stream the body
+        client.write((const uint8_t*)buf, hdrLen);
+        serializeJson(doc, client);
+    }
+}
+
 JsonDocument httpHandleLogin(JsonDocument& doc) {
     String user = doc["user"];
     String pass = doc["pass"];
@@ -655,11 +691,11 @@ void httpServerLoop() {
         }
         
         
-        // Send response (unless a handler already streamed its own raw body)
+        // Send response (unless a handler already streamed its own raw body).
+        // RAM-safe path: no String copies - big responses (get_status ~950 B)
+        // were colliding with the TLS heap and wedging the board.
         if (!rawResponseSent) {
-            String out;
-            serializeJson(resp, out);
-            httpSendResponse(client, httpStatusCode, out);
+            httpStreamJsonResponse(client, httpStatusCode, resp);
         }
 
         if (msgType == "login") {
