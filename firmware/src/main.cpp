@@ -25,6 +25,7 @@
 #include "KMPCommon.h"
 #include <Ethernet.h>
 #include <EthernetUdp.h>
+#include <utility/w5100.h>   // [DIAG] socket table dump
 #include <ArduinoOTA.h>
 #include <ArduinoJson.h>
 
@@ -43,24 +44,56 @@
 #include "relay_controller.hpp"
 #include "ocu_monitor.hpp"
 #include "mqtt_handler.hpp"
+#include <SSLClient.h>
+#include "aws_certs_store.h"   // AWS_ENDPOINT, AWS_PORT, AWS_DEV_CERT, AWS_DEV_KEY
+#include "aws_root_ca.h"       // TAs, TAs_NUM (AWS server trust anchor)
 
 // ============================================================================
-// MQTT TRANSPORT (plain, to the local gateway broker)
+// MQTT TRANSPORT - TLS DIRECT TO AWS IoT  *** TEST BUILD (do not commit) ***
 // ============================================================================
-// The board publishes PLAIN MQTT to a local Mosquitto broker on the gateway
-// (the Jetson/RPi inside the HLC). The gateway bridges to AWS IoT over TLS with
-// the device certificate. Direct board->AWS TLS was proven working but exceeds
-// this 32KB MCU's RAM under full firmware load, so TLS lives on the gateway
-// instead. See SESSION_SUMMARY_2026-07-15.md.
+// RAM/CPU stress test: the FULL production firmware + the FULL TLS stack, to see
+// if board-direct AWS IoT fits on this 32KB SAMD21. Publishes to AWS_ENDPOINT.
 
-/** Local MQTT broker = the in-HLC gateway's LAN IP. Here it's the Jetson
- *  standing in for the production RPi. TODO: make configurable (reuse the
- *  existing router-IP config field). */
-static const char MQTT_BROKER_HOST[] = "192.168.1.152";
-constexpr uint16_t MQTT_BROKER_PORT = 1883;
-
-/** Plain TCP transport for MQTT to the local broker */
+/** Plain TCP -> wrapped in SSLClient(BearSSL) -> AWS IoT over mutual TLS */
 static EthernetClient s_mqttTcp;
+static SSLClient      s_ssl(s_mqttTcp, TAs, TAs_NUM, A5);
+
+// Packet-granular SEND PUMP. SSLClient buffers writes; the send must be driven
+// by the caller. CRITICAL: SSLClient::flush() is broken for QoS-0 MQTT - it
+// waits for BR_SSL_RECVAPP (application data FROM the server) after sending,
+// but a QoS-0 publish gets no reply -> flush() blocks the full 30 s timeout,
+// latches a write error and kills the connection (root cause of every drop we
+// saw). SSLClient::available() instead pumps the engine ONCE, non-blocking:
+// it encrypts + sends the buffered record and returns. So: after each complete
+// MQTT packet (one bulk write), pump with available() - never call flush().
+class PacketClient : public Client {
+    SSLClient& c;
+public:
+    PacketClient(SSLClient& s) : c(s) {}
+    int connect(IPAddress ip, uint16_t p) override { return c.connect(ip, p); }
+    int connect(const char* h, uint16_t p) override { return c.connect(h, p); }
+    size_t write(uint8_t b) override { return c.write(b); }        // buffer only
+    size_t write(const uint8_t* b, size_t s) override {
+        size_t n = c.write(b, s);
+        c.available();                    // pump: encrypt + send, non-blocking
+        return n;
+    }
+    int available() override { return c.available(); }
+    int read() override { return c.read(); }
+    int read(uint8_t* b, size_t s) override { return c.read(b, s); }
+    int peek() override { return c.peek(); }
+    void flush() override { c.available(); }   // never SSLClient::flush() (see above)
+    void stop() override { c.stop(); }
+    uint8_t connected() override { return c.connected(); }
+    operator bool() override { return (bool)c; }
+};
+static PacketClient s_flushing(s_ssl);
+static SSLClientParameters s_mTLS =
+    SSLClientParameters::fromPEM(AWS_DEV_CERT, strlen(AWS_DEV_CERT),
+                                 AWS_DEV_KEY,  strlen(AWS_DEV_KEY));
+
+extern "C" char* sbrk(int);
+static int freeRam() { char t; return &t - reinterpret_cast<char*>(sbrk(0)); }
 
 // ============================================================================
 // FIRMWARE VERSION
@@ -90,8 +123,8 @@ EthernetServer _server(LOCAL_PORT);
 /** Hardware Abstraction Layer */
 GG_HAL _gg_hal;
 
-/** MQTT Handler */
-MQTTHandler mqttHandler(s_mqttTcp);
+/** MQTT Handler (over the TLS transport, to AWS IoT) */
+MQTTHandler mqttHandler(s_flushing);
 
 // ============================================================================
 // OPERATING MODE FLAGS
@@ -147,9 +180,11 @@ void setup() {
     // Initialize board hardware
     KMPProDinoMKRZero.init(ProDino_MKR_Zero_Ethernet);
     
-    // Configure network
-    IPAddress subnet(255, 255, 0, 0);
-    IPAddress gateway(192, 168, 100, 1);
+    Serial.print("[RAM] freeRam at boot = "); Serial.println(freeRam());
+
+    // Configure network (home router = internet path to AWS when online)
+    IPAddress subnet(255, 255, 255, 0);
+    IPAddress gateway(192, 168, 1, 1);
     IPAddress dns(8, 8, 8, 8);
     Ethernet.begin(_mac, g_controllerIP, dns, gateway, subnet);
     
@@ -181,9 +216,11 @@ void setup() {
         delay(10);
     }
     
+    techButtonHeld = false;   // *** TEST: force normal mode (button floats PRESSED,
+                              // and OTA eats ~1.5KB + a socket we need for the TLS test)
     if (techButtonHeld) {
         technician_mode = true;
-        
+
         // Initialize OTA in technician mode
         ArduinoOTA.onStart([]() {
             ota_in_progress = true;
@@ -205,6 +242,8 @@ void setup() {
     // Calibrate IMU sensors
     calibrateIMU();
     
+    Serial.print("[RAM] freeRam after Ethernet+servers = "); Serial.println(freeRam());
+
     // Initialize application modules
     authInit();
     statusInit();
@@ -213,9 +252,17 @@ void setup() {
     relayControllerInit();
     ocuMonitorInit();
 
-    // Plain MQTT to the local gateway broker (the gateway does the AWS TLS bridge).
-    mqttHandler.begin(g_serialNumber, MQTT_BROKER_HOST, MQTT_BROKER_PORT);
-    Serial.println("MQTT handler initialized. Will connect to the local broker in loop()...");
+    Serial.print("[RAM] freeRam after all modules init = "); Serial.println(freeRam());
+
+    // TLS DIRECT to AWS IoT (TEST): full firmware + full TLS stack.
+    g_serialNumber = "SN2003";     // *** TEST: hardcode serial so AWS/webserver recognizes it
+    s_ssl.setMutualAuthParams(s_mTLS);
+    mqttHandler.begin(g_serialNumber, AWS_ENDPOINT, AWS_PORT);
+    Serial.print("[RAM] freeRam after TLS/MQTT setup = "); Serial.println(freeRam());
+    Serial.print("[RAM] target = "); Serial.print(AWS_ENDPOINT); Serial.print(":"); Serial.println(AWS_PORT);
+    Serial.println("MQTT handler initialized. Will connect to AWS over TLS in loop()...");
+
+    Serial.println("[TEST] will attempt the REAL AWS TLS handshake + publish in loop()");
     
     // Print startup info
     Serial.println("Starting up...");
@@ -261,69 +308,100 @@ void loop() {
     ocuMonitorUpdate();
 
 
-    // 1. Handle MQTT connection maintenance
-    mqttHandler.loop();
-    
-    // 2. Handle HTTP requests
-    httpServerLoop();
-    
-    // 3. Update status and publish MQTT data (1Hz)
-    static unsigned long lastMQTTPublish = 0;
-    if (millis() - lastMQTTPublish > MQTT_PUBLISH_INTERVAL) {
-        // Always update hardware status (ensures Serial output has fresh data)
-        statusUpdate();
-        
-        if (mqttHandler.isConnected()) {
-
-            // Publish complete status
-            JsonDocument statusDoc = statusGenerateJsonSimple();
-            mqttHandler.publishStatus(statusDoc);
-
-            // Publish GPS data
-            mqttHandler.publishGPS(
-                g_status.gpsLat, g_status.gpsLng, g_status.gpsAlt,
-                g_status.gpsSpeedNorth, g_status.gpsSpeedEast,
-                g_status.gpsSpeedDown, g_status.gpsGroundSpeed,
-                g_status.gpsHeading,
-                g_status.gpsValid, g_status.gpsConnected,
-                g_status.gpsTime, g_status.gpsSatellites,
-                g_status.gpsHAcc, g_status.gpsVAcc, g_status.gpsAltEllipsoid
-            );
-
-            // Publish IMU data
-            mqttHandler.publishIMU(
-                g_status.imuX, g_status.imuY, g_status.imuZ,
-                g_status.imuGx, g_status.imuGy, g_status.imuGz,
-                g_status.pitch, g_status.roll, g_status.yaw,
-                g_status.imuValid
-            );
-
-            // Publish relay states
-            mqttHandler.publishRelays(
-                g_status.relays_status[0], g_status.relays_status[1],
-                g_status.relays_status[2], g_status.relays_status[3]
-            );
-
-            // Publish LED states
-            const char* ledIoStr = "OFF";
-            if (g_status.ledIo == GREEN) ledIoStr = "GREEN";
-            else if (g_status.ledIo == RED) ledIoStr = "RED";
-            else if (g_status.ledIo == ORANGE) ledIoStr = "ORANGE";
-            mqttHandler.publishLEDs(g_status.ledInternal, ledIoStr);
-
-            // Publish sensor states
-            mqttHandler.publishSensors(
-                g_status.optos_status[0], g_status.optos_status[1],
-                g_status.optos_status[2], g_status.optos_status[3],
-                g_status.button_tech
-            );
-
-            // Publish power monitoring
-            mqttHandler.publishPower(g_status.powerConnected, g_status.busVoltage);
+    // ========================================================================
+    // *** PERSISTENT TLS CONNECTION (test) ***
+    // Handshake ONCE (mqttHandler.loop() reconnects only if the link drops),
+    // ========================================================================
+    // PLAN B: PUBLISH WINDOW every interval - connect -> publish -> DISCONNECT.
+    // Measured fact on this 32KB chip: a LIVE TLS session holds ~1.6KB of heap,
+    // leaving ~719B free -> an HTTP request (~1.5KB of allocations) hard-faults.
+    // With the session CLOSED, HTTP has ~2.3KB and runs at 99.8% / 24ms.
+    // So TLS and HTTP take turns: brief publish window, then HTTP gets all the
+    // RAM back. Each piece was measured working today (connect 10s, publish
+    // 42ms, HTTP 99.8% between windows).
+    // ========================================================================
+    const unsigned long PUBLISH_EVERY_MS = 600000;  // PRODUCTION: publish every 10 min
+    static unsigned long lastPubWindow = 0;
+    static bool firstWindowDone = false;
+    unsigned long windowDue = firstWindowDone ? PUBLISH_EVERY_MS : 15000;
+    if (millis() - lastPubWindow >= windowDue) {
+        lastPubWindow = millis();
+        firstWindowDone = true;
+        Serial.print("\n[PUB] window OPEN (HTTP pauses). freeRam=");
+        Serial.println(freeRam());
+        unsigned long t0 = millis();
+        if (mqttHandler.connectToMQTTBroker()) {
+            statusUpdate();
+            JsonDocument doc = statusGenerateJsonSimple();
+            mqttHandler.publishStatus(doc);
+            // pump the SSL engine so the record is fully on the wire before close
+            for (int i = 0; i < 10; i++) { s_flushing.available(); delay(10); }
+            Serial.print("[PUB] *** published to AWS, window took ");
+            Serial.print(millis() - t0); Serial.println(" ms ***");
+        } else {
+            Serial.print("[PUB] connect FAILED after ");
+            Serial.print(millis() - t0); Serial.println(" ms (will retry next window)");
         }
-        lastMQTTPublish = millis();
+        mqttHandler.forceDisconnect();   // release the TLS heap -> HTTP gets it back
+        Serial.print("[PUB] window CLOSED (HTTP resumes). freeRam=");
+        Serial.println(freeRam());
     }
-    
+
+    httpServerLoop();            // HTTP served every iteration between windows
+
+    // FIX 2 (v2): ZOMBIE-LISTENER WATCHDOG. Measured fact: the W5500 can report
+    // Sn_SR=LISTEN on :80 while its connection engine RSTs every SYN (zombie).
+    // The register cannot be trusted, so every 10 s force-CLOSE the :80 socket;
+    // httpServerLoop's server.available() then recreates a FRESH listener.
+    // POLITE MODE: skip the refresh while HTTP traffic is actively being served
+    // (a refresh mid-request caused a rare connection reset) - only refresh when
+    // the server has been idle, which is exactly when a zombie needs curing.
+    static unsigned long lastListenRecreate = 0;
+    bool httpActive = (millis() - httpGetLastUserConnectedTime()) < 10000;
+    if (!httpActive && millis() - lastListenRecreate >= 10000) {
+        lastListenRecreate = millis();
+        for (uint8_t s = 0; s < 8; s++) {
+            SPI.beginTransaction(SPI_ETHERNET_SETTINGS);
+            uint8_t st = W5100.readSnSR(s);
+            uint16_t port = W5100.readSnPORT(s);
+            SPI.endTransaction();
+            if (port == 80 && st == 0x14 /*LISTEN*/) {
+                SPI.beginTransaction(SPI_ETHERNET_SETTINGS);
+                W5100.execCmdSn(s, Sock_CLOSE);   // kill the (possibly zombie) listener
+                SPI.endTransaction();
+                Serial.print("[HTTPWD] force-recreated :80 listener (was socket ");
+                Serial.print(s); Serial.println(")");
+                break;
+            }
+        }
+        // httpServerLoop -> server.available() reopens the listener within ms
+    }
+
+    static unsigned long lastRamPrint = 0;
+    if (millis() - lastRamPrint > 5000) {
+        lastRamPrint = millis();
+        Serial.print("[RAM] freeRam="); Serial.print(freeRam());
+        Serial.print("  mqtt="); Serial.println(mqttHandler.isConnected() ? "CONNECTED" : "down");
+        // [DIAG] W5500 socket table: who owns every socket? (0x14=LISTEN,
+        // 0x17=ESTABLISHED, 0x00=CLOSED, 0x22=UDP, 0x1C=CLOSE_WAIT)
+        Serial.print("[SOCK] ");
+        for (uint8_t s = 0; s < 8; s++) {
+            SPI.beginTransaction(SPI_ETHERNET_SETTINGS);
+            uint8_t st = W5100.readSnSR(s);
+            uint16_t port = W5100.readSnPORT(s);
+            SPI.endTransaction();
+            Serial.print(s); Serial.print(":0x"); Serial.print(st, HEX);
+            Serial.print("/"); Serial.print(port); Serial.print(" ");
+        }
+        Serial.println();
+    }
+
+    static unsigned long lastStat = 0;
+    if (millis() - lastStat > MQTT_PUBLISH_INTERVAL) {
+        lastStat = millis();
+        statusUpdate();          // keep local status fresh (HTTP consumers)
+    }
+
     // 4. Regular maintenance tasks
     static unsigned long lastSerialOutput = 0;
     if (millis() - lastSerialOutput > 1000) {

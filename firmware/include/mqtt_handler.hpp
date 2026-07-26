@@ -68,9 +68,17 @@ public:
         Serial.println("MQTT: Handler initialized for device: " + serialNumber);
         Serial.println("MQTT: Broker configured at " + brokerHost + ":" + String(brokerPort));
 
-        // Increase buffer size to handle full status JSON (~1040 bytes)
-        // Default is 256 bytes. We use 2048 to be safe and allow for future growth.
-        mqttClient.setBufferSize(2048);
+        // RAM diet for the on-board TLS build: publishes are STREAMED via
+        // beginPublish/serializeJson/endPublish, so the packet buffer only needs
+        // to hold the CONNECT packet and publish headers - 256 B instead of 2048.
+        // (Revert to 2048 + buffered publish for the gateway build.)
+        mqttClient.setBufferSize(256);
+
+        // Persistent-connection design: AWS IoT accepts keepalive up to 1200 s
+        // and RESETS the timer on every PUBLISH - so a 10-minute publish cadence
+        // keeps the connection alive with no pings and NO re-handshakes.
+        mqttClient.setKeepAlive(1200);
+        mqttClient.setSocketTimeout(15);
 
         Serial.println("MQTT: Topic prefix: " + topicPrefix);
     }
@@ -89,6 +97,14 @@ public:
         if (result) {
             Serial.println("connected!");
             connected = true;
+            // Settle: service the session for ~1.5 s before the first publish.
+            // Publishing the instant CONNACK arrives is a known AWS-IoT
+            // insta-disconnect pattern.
+            unsigned long settleStart = millis();
+            while (millis() - settleStart < 1500) {
+                mqttClient.loop();
+                delay(50);
+            }
             return true;
         } else {
             Serial.print("failed, rc=");
@@ -126,6 +142,14 @@ public:
         }
     }
 
+    // Fully tear down the connection + transport so its RAM is released
+    // (used by the time-multiplex publish window).
+    void forceDisconnect() {
+        mqttClient.disconnect();
+        netClient.stop();
+        connected = false;
+    }
+
     bool isConnected() {
         // Order matters: when the flag is false, short-circuit so we never
         // poke a failed TLS client (each call would log an error).
@@ -138,12 +162,17 @@ public:
     
     void publishStatus(JsonDocument& statusDoc) {
         if (!isConnected()) return;
-        
-        String jsonString;
-        serializeJson(statusDoc, jsonString);
-        
-        if (mqttClient.publish(getTopic("status").c_str(), jsonString.c_str())) {
-            Serial.println("MQTT: Published status");
+
+        // STREAMED publish: serialize the JSON directly into the (TLS) socket.
+        // No ~1 KB String copy and no big packet buffer -> saves ~2 KB of heap
+        // high-water, which on the 32 KB board is the difference between HTTP
+        // surviving after a publish window (needs ~2 KB gap) or hard-faulting.
+        size_t len = measureJson(statusDoc);
+        if (mqttClient.beginPublish(getTopic("status").c_str(), len, false)) {
+            serializeJson(statusDoc, mqttClient);   // PubSubClient is a Print
+            if (mqttClient.endPublish()) {
+                Serial.println("MQTT: Published status (streamed)");
+            }
         }
     }
     
