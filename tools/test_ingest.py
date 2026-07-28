@@ -8,12 +8,9 @@ for a board.
 
 Expects:  valid -> 204,  tampered -> 401,  replayed -> 409,  unknown serial -> 401
 
-Defaults to the throwaway serial SNTEST, never a real board. Each run uses a
-fresh boot_epoch derived from the clock, which advances that serial's replay
-counter past anything a device could send - so pointing this at a real board's
-serial would make the server reject that board until the backend restarts.
+Defaults to the throwaway serial SNTEST, never a real board.
 """
-import json, os, struct, sys, time, urllib.request, urllib.error
+import json, os, secrets, struct, sys, urllib.request, urllib.error
 
 try:
     from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
@@ -30,16 +27,16 @@ if SERIAL not in keys:
     sys.exit(f"no key for {SERIAL} in {KEYS_FILE}")
 KEY = bytes.fromhex(keys[SERIAL])
 
-# A distinct epoch per run keeps the replay counter moving forward, so repeated
-# runs against a long-lived server don't collide with their own history.
-EPOCH = int(time.time()) & 0xFFFFFFFF
+# A fresh boot id per run, exactly as the board draws one at every boot, so
+# repeated runs never collide with their own history.
+BOOT_ID = secrets.token_bytes(8)
 
 
-def build(seq, epoch=EPOCH, serial=SERIAL, payload=None):
+def build(seq, boot_id=None, serial=SERIAL, payload=None):
     header = bytearray(29)
-    header[0] = 1
+    header[0] = 2
     header[1:1 + len(serial.encode())] = serial.encode()
-    nonce = struct.pack(">IQ", epoch, seq)
+    nonce = (boot_id or BOOT_ID) + struct.pack(">I", seq)
     header[17:29] = nonce
     body = json.dumps(payload or {
         "type": "status", "firmwareVersion": "test-ingest",
@@ -71,7 +68,7 @@ def check(name, got, want):
     return ok
 
 
-print(f"testing {BASE}/api/ingest as {SERIAL} (epoch {EPOCH})\n")
+print(f"testing {BASE}/api/ingest as {SERIAL} (boot {BOOT_ID.hex()})\n")
 results = []
 
 good = build(seq=1)
@@ -93,6 +90,12 @@ results.append(check("unknown serial", post(build(seq=3, serial="SN9999")), 401)
 
 # a fresh higher sequence still works after all that
 results.append(check("next valid packet", post(build(seq=10)), 204))
+
+# REGRESSION: a reflashed board draws a NEW boot id and restarts at seq=1. Under
+# the old stored-counter scheme the server saw a lower number and rejected the
+# board until the backend was restarted. It must be accepted.
+results.append(check("reflashed board (new boot)",
+                     post(build(seq=1, boot_id=secrets.token_bytes(8))), 204))
 
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)

@@ -8,9 +8,9 @@ board's crypto against.
 
 Wire format (see firmware/include/secure_telemetry.hpp):
     off  size  field
-    0    1     version = 0x01
+    0    1     version = 0x02
     1    16    serial (ASCII, NUL-padded)
-    17   12    nonce = boot_epoch(4 BE) || msg_seq(8 BE)
+    17   12    nonce = boot_id(8, random per boot) || msg_seq(4 BE)
     29   N     ciphertext (ChaCha20)
     29+N 16    Poly1305 tag
     AAD = bytes 0..28
@@ -39,7 +39,9 @@ def load_keys():
         return {k: bytes.fromhex(v) for k, v in json.load(f).items()}
 
 KEYS = load_keys()
-LAST_SEEN = {}          # serial -> (boot_epoch, msg_seq) of the last accepted packet
+# serial -> {boot_id_hex: highest msg_seq}. Boot ids are random per boot, so an
+# unseen one is a genuine restart; only a repeat within a boot is a replay.
+SEEN = {}
 STATS = {"ok": 0, "bad_auth": 0, "replay": 0, "unknown": 0}
 
 class Handler(BaseHTTPRequestHandler):
@@ -59,11 +61,12 @@ class Handler(BaseHTTPRequestHandler):
         version = header[0]
         serial = header[1:17].split(b"\x00")[0].decode("ascii", "replace")
         nonce = header[17:29]
-        boot_epoch, msg_seq = struct.unpack(">IQ", nonce)
+        boot_id = nonce[:8].hex()
+        (msg_seq,) = struct.unpack(">I", nonce[8:])
         ct_and_tag = pkt[HEADER_LEN:]
 
         key = KEYS.get(serial)
-        if version != 1 or key is None:
+        if version != 2 or key is None:
             STATS["unknown"] += 1
             print(f"  UNKNOWN serial={serial!r} version={version}")
             return self._reply(401, "no")
@@ -73,16 +76,16 @@ class Handler(BaseHTTPRequestHandler):
             plaintext = ChaCha20Poly1305(key).decrypt(nonce, ct_and_tag, header)
         except Exception:
             STATS["bad_auth"] += 1
-            print(f"  BAD AUTH serial={serial} epoch={boot_epoch} seq={msg_seq}")
+            print(f"  BAD AUTH serial={serial} boot={boot_id} seq={msg_seq}")
             return self._reply(401, "no")
 
-        # replay: (epoch, seq) must be strictly increasing per board
-        last = LAST_SEEN.get(serial)
-        if last is not None and (boot_epoch, msg_seq) <= last:
+        # replay: the sequence must advance within this boot
+        boots = SEEN.setdefault(serial, {})
+        if msg_seq <= boots.get(boot_id, 0):
             STATS["replay"] += 1
-            print(f"  REPLAY   serial={serial} epoch={boot_epoch} seq={msg_seq} (last={last})")
+            print(f"  REPLAY   serial={serial} boot={boot_id} seq={msg_seq}")
             return self._reply(409, "old")
-        LAST_SEEN[serial] = (boot_epoch, msg_seq)
+        boots[boot_id] = msg_seq
 
         STATS["ok"] += 1
         try:
@@ -92,7 +95,7 @@ class Handler(BaseHTTPRequestHandler):
                        f"ip={data.get('controllerIp')} motorS={data.get('motorWorkSeconds')}")
         except Exception:
             summary = f"{len(plaintext)}B (not JSON)"
-        print(f"OK #{STATS['ok']:<4} {serial} epoch={boot_epoch} seq={msg_seq} "
+        print(f"OK #{STATS['ok']:<4} {serial} boot={boot_id[:8]} seq={msg_seq} "
               f"{len(pkt)}B  {summary}")
         self._reply(204, "")
 

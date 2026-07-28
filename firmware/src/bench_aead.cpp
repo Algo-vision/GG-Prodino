@@ -32,19 +32,19 @@
 static const char* SERIAL_NUMBER = "SN2003";
 
 // Wire format (must match tools/ingest_test_server.py):
-//   [0]      version = 0x01
+//   [0]      version = 0x02
 //   [1..16]  serial (ASCII, NUL-padded)
-//   [17..28] nonce = boot_epoch(4 BE) || msg_seq(8 BE)
+//   [17..28] nonce = boot_id(8, random per boot) || msg_seq(4 BE)
 //   [29..]   ciphertext, then the 16-byte Poly1305 tag
 //   AAD      = bytes 0..28
-static constexpr uint8_t VERSION    = 0x01;
+static constexpr uint8_t VERSION    = 0x02;
 static constexpr size_t  SERIAL_LEN = 16;
 static constexpr size_t  HEADER_LEN = 29;
 static constexpr size_t  TAG_LEN    = 16;
 
 static uint8_t  s_key[32];
-static uint32_t s_bootEpoch = 0;      // no flash here: the bench uses millis at boot
-static uint64_t s_msgSeq    = 0;
+static uint8_t  s_bootId[8];          // random per boot, exactly like the firmware
+static uint32_t s_msgSeq = 0;
 
 static bench::Stats s_stats;
 
@@ -74,11 +74,10 @@ static void doSend() {
     pkt[0] = VERSION;
     memset(pkt + 1, 0, SERIAL_LEN);
     strncpy((char*)(pkt + 1), SERIAL_NUMBER, SERIAL_LEN);
-    uint64_t seq = ++s_msgSeq;
+    uint32_t seq = ++s_msgSeq;
     uint8_t* nonce = pkt + 1 + SERIAL_LEN;
-    nonce[0] = (uint8_t)(s_bootEpoch >> 24); nonce[1] = (uint8_t)(s_bootEpoch >> 16);
-    nonce[2] = (uint8_t)(s_bootEpoch >> 8);  nonce[3] = (uint8_t)(s_bootEpoch);
-    for (int i = 0; i < 8; i++) nonce[4 + i] = (uint8_t)(seq >> (56 - 8 * i));
+    memcpy(nonce, s_bootId, sizeof(s_bootId));
+    for (int i = 0; i < 4; i++) nonce[8 + i] = (uint8_t)(seq >> (24 - 8 * i));
 
     uint32_t tTotal = millis();
 
@@ -181,8 +180,15 @@ void setup() {
         Serial.println(F("[AEAD] FATAL: bad TELEM_KEY_HEX"));
         while (1) { }
     }
-    s_bootEpoch = millis();      // unique-per-boot enough for a bench run
-    Serial.print(F("[AEAD] key loaded, bootEpoch=")); Serial.println(s_bootEpoch);
+    for (size_t i = 0; i < sizeof(s_bootId); i++) {
+        s_bootId[i] = (uint8_t)(analogRead(A5) ^ micros());   // bench-grade entropy
+    }
+    Serial.print(F("[AEAD] key loaded, bootId="));
+    for (size_t i = 0; i < sizeof(s_bootId); i++) {
+        if (s_bootId[i] < 0x10) Serial.print('0');
+        Serial.print(s_bootId[i], HEX);
+    }
+    Serial.println();
     Serial.print(F("[AEAD] freeRam after init: ")); Serial.println(bench::freeRam());
     Serial.print(F("[AEAD] send interval: ")); Serial.print(BENCH_INTERVAL_MS);
     Serial.println(F(" ms\n"));

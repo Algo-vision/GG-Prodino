@@ -441,6 +441,10 @@ void loop() {
 #endif
     }
 
+#if defined(TELEMETRY_MODE_AEAD)
+    telemetryPump();             // finishes an in-flight send; ~0 when idle
+#endif
+
     httpServerLoop();            // HTTP served every iteration between windows
 
     // FIX 2 (v2): ZOMBIE-LISTENER WATCHDOG. Measured fact: the W5500 can report

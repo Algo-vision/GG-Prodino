@@ -380,18 +380,30 @@ client.on('message', (topic, message) => {
 // Wire format (mirrors firmware/include/secure_telemetry.hpp and
 // tools/ingest_test_server.py, which is the reference implementation):
 //   off  size  field
-//   0    1     version = 0x01
+//   0    1     version = 0x02
 //   1    16    serial (ASCII, NUL-padded)
-//   17   12    nonce = boot_epoch(4 BE) || msg_seq(8 BE)
+//   17   12    nonce = boot_id(8, random per boot) || msg_seq(4 BE)
 //   29   N     ciphertext
 //   29+N 16    Poly1305 tag
 //   AAD = bytes 0..28 (the header is authenticated but not encrypted, because
 //         the server must read the serial in clear to pick the key)
+//
+// v1 used a flash-stored boot counter, which every firmware upload erased - a
+// reflashed board restarted at 1 and got rejected as a replay until the backend
+// was restarted. v2's boot id is 64 random bits drawn at boot, so there is no
+// stored state to lose and technicians can reflash freely.
 // ===========================================================================
 const crypto = require('crypto');
 
+const TELEM_VERSION = 2;
 const TELEM_HEADER_LEN = 29;
 const TELEM_TAG_LEN = 16;
+
+// How many distinct boots to remember per device. A boot id is only ever seen
+// again if an attacker replays that session, so this bounds how far back replay
+// protection reaches: 512 boots is far more than a board sees in service, and
+// costs ~20 KB per device.
+const REPLAY_BOOT_HISTORY = 512;
 
 // Per-board keys: { "SN2003": "<64 hex>" }. Gitignored - it holds secrets.
 // Deleting an entry revokes that board instantly; replacing it rotates the key.
@@ -408,10 +420,27 @@ try {
                  `Generate one with tools/gen_device_key.py <SERIAL>`);
 }
 
-// Last accepted (boot_epoch, msg_seq) per board. A packet is accepted only if
-// the pair is strictly greater, which rejects replays and survives reboots
-// without any per-message flash wear on the board.
-const lastSeenNonce = new Map();
+// Replay state per board: serial -> Map(bootIdHex -> highest msg_seq accepted).
+// A packet is accepted when its boot id has never been seen (a genuine new boot,
+// since boot ids are random) or when its sequence advances that boot's counter.
+// Ordering between boots is deliberately NOT required - that is what let a
+// reflashed board be mistaken for an attacker under v1.
+const replayState = new Map();
+
+function checkAndRecordNonce(serial, bootIdHex, msgSeq) {
+    let boots = replayState.get(serial);
+    if (!boots) { boots = new Map(); replayState.set(serial, boots); }
+
+    const highest = boots.get(bootIdHex);
+    if (highest !== undefined && msgSeq <= highest) return false;   // replay
+
+    boots.set(bootIdHex, msgSeq);
+    // Map preserves insertion order, so the first key is the oldest boot.
+    while (boots.size > REPLAY_BOOT_HISTORY) {
+        boots.delete(boots.keys().next().value);
+    }
+    return true;
+}
 
 // Map the board's flat status JSON onto the device state, using the same field
 // names the MQTT 'status' branch and the board's HTTP API already use.
@@ -468,13 +497,13 @@ app.post('/api/ingest',
         const version = header[0];
         const serial = header.subarray(1, 17).toString('ascii').replace(/\0.*$/, '');
         const nonce = header.subarray(17, 29);
-        const bootEpoch = nonce.readUInt32BE(0);
-        const msgSeq = nonce.readBigUInt64BE(4);
+        const bootIdHex = nonce.subarray(0, 8).toString('hex');
+        const msgSeq = nonce.readUInt32BE(8);
         const ciphertext = pkt.subarray(TELEM_HEADER_LEN, pkt.length - TELEM_TAG_LEN);
         const tag = pkt.subarray(pkt.length - TELEM_TAG_LEN);
 
         const key = deviceKeys[serial.toUpperCase()];
-        if (version !== 1 || !key) {
+        if (version !== TELEM_VERSION || !key) {
             console.warn(`🚫 ingest: unknown device serial="${serial}" version=${version}`);
             return res.sendStatus(401);
         }
@@ -488,18 +517,14 @@ app.post('/api/ingest',
             decipher.setAuthTag(tag);
             plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
         } catch (err) {
-            console.warn(`🚫 ingest: BAD AUTH from ${serial} epoch=${bootEpoch} seq=${msgSeq}`);
+            console.warn(`🚫 ingest: BAD AUTH from ${serial} boot=${bootIdHex} seq=${msgSeq}`);
             return res.sendStatus(401);
         }
 
-        // Replay: (boot_epoch, msg_seq) must be strictly increasing per board.
-        const last = lastSeenNonce.get(serial);
-        if (last && (bootEpoch < last.bootEpoch ||
-                    (bootEpoch === last.bootEpoch && msgSeq <= last.msgSeq))) {
-            console.warn(`🚫 ingest: REPLAY from ${serial} epoch=${bootEpoch} seq=${msgSeq}`);
+        if (!checkAndRecordNonce(serial, bootIdHex, msgSeq)) {
+            console.warn(`🚫 ingest: REPLAY from ${serial} boot=${bootIdHex} seq=${msgSeq}`);
             return res.sendStatus(409);
         }
-        lastSeenNonce.set(serial, { bootEpoch, msgSeq });
 
         let data;
         try {
@@ -518,7 +543,7 @@ app.post('/api/ingest',
         device.connected = true;
         applyStatusToDevice(device, data);
 
-        console.log(`🔐 [${serial}] ingest seq=${msgSeq} ${pkt.length}B ` +
+        console.log(`🔐 [${serial}] ingest boot=${bootIdHex.slice(0, 8)} seq=${msgSeq} ${pkt.length}B ` +
                     `pitch=${data.pitch} roll=${data.roll} ip=${data.controllerIp}`);
 
         broadcastDeviceUpdate(serial, device);
