@@ -93,7 +93,18 @@ void configSave() {
         configData.serial_number_set = true;
         configData.validation_marker = CONFIG_VALID_MARKER;
     }
-    
+
+    // Preserve the telemetry key + replay counter too. configSave() builds a
+    // FRESH Config, so without this any save (IP change, or the 5-minute
+    // work-hours autosave) would silently wipe the provisioned key and reset
+    // the boot epoch - which would also break nonce uniqueness.
+    if (existingData.device_key_set && existingData.validation_marker == CONFIG_VALID_MARKER) {
+        memcpy(configData.device_key, existingData.device_key, sizeof(configData.device_key));
+        configData.device_key_set = true;
+        configData.validation_marker = CONFIG_VALID_MARKER;
+    }
+    configData.telemetry_boot_epoch = existingData.telemetry_boot_epoch;
+
     g_configStore.write(configData);
     Serial.println("Configuration saved to FlashStorage.");
 }
