@@ -33,3 +33,4 @@ firmware/src/aws_ecc_certs.h
 # Per-board telemetry keys (secrets - never commit)
 tools/device_keys.json
 server/web_ui/device_keys.json
+firmware/src/telemetry_key.h

@@ -12,6 +12,35 @@
 #include <ArduinoJson.h>
 #include <bearssl.h>
 
+// Optional compiled-in key for bench builds. telemetry_key.h is GITIGNORED and
+// holds a single line:  #define TELEM_KEY_HEX "<64 hex chars>"
+// Generate it with:  python3 tools/gen_device_key.py SN2003 --embed
+// Flash provisioning (SET_KEY:) always wins over this - the embedded key is only
+// a fallback so a board can be benchmarked without a technician step. Production
+// firmware ships WITHOUT this header, so every board needs its own SET_KEY.
+#if defined(__has_include)
+#  if __has_include("telemetry_key.h")
+#    include "telemetry_key.h"
+#  endif
+#endif
+
+/// Decode 64 hex chars into 32 bytes. Returns false on any non-hex character.
+static bool hexToKey(const char* hex, uint8_t out[32]) {
+    for (int i = 0; i < 32; i++) {
+        int v = 0;
+        for (int h = 0; h < 2; h++) {
+            char ch = hex[i * 2 + h];
+            int n = (ch >= '0' && ch <= '9') ? ch - '0'
+                  : (ch >= 'a' && ch <= 'f') ? ch - 'a' + 10
+                  : (ch >= 'A' && ch <= 'F') ? ch - 'A' + 10 : -1;
+            if (n < 0) return false;
+            v = (v << 4) | n;
+        }
+        out[i] = (uint8_t)v;
+    }
+    return true;
+}
+
 // Where the encrypted telemetry goes. During the Phase-0 benchmark this is the
 // laptop running tools/ingest_test_server.py; in production it is the EC2
 // dashboard server.
@@ -27,7 +56,10 @@
 
 /// Whole-attempt cap. Telemetry is LOWER priority than the HTTP API: if the
 /// server is slow or gone we give up quickly rather than stalling loop().
-static constexpr uint16_t TELEM_ATTEMPT_TIMEOUT_MS = 300;
+#ifndef TELEM_TIMEOUT_MS
+#define TELEM_TIMEOUT_MS 300
+#endif
+static constexpr uint16_t TELEM_ATTEMPT_TIMEOUT_MS = TELEM_TIMEOUT_MS;
 
 static uint8_t  s_key[32];
 static bool     s_haveKey   = false;
@@ -36,6 +68,15 @@ static uint64_t s_msgSeq    = 0;
 
 void telemetryInit() {
     s_haveKey = configGetDeviceKey(s_key);
+    if (s_haveKey) {
+        Serial.println(F("[TELEM] key source: flash (SET_KEY)"));
+    }
+#ifdef TELEM_KEY_HEX
+    else if (hexToKey(TELEM_KEY_HEX, s_key)) {
+        s_haveKey = true;
+        Serial.println(F("[TELEM] key source: COMPILED-IN (bench build - not for production)"));
+    }
+#endif
     if (!s_haveKey) {
         Serial.println(F("[TELEM] no device key provisioned - use SET_KEY:<64 hex> in technician mode"));
         return;
@@ -92,6 +133,7 @@ bool telemetrySendStatus() {
     c.setConnectionTimeout(TELEM_ATTEMPT_TIMEOUT_MS);
     if (!c.connect(TELEM_HOST, TELEM_PORT)) {
         c.stop();
+        Serial.println(F("[TELEM] connect FAILED (receiver down / wrong host / firewall)"));
         bench::sendEnd(t0, false);
         return false;
     }
@@ -113,7 +155,15 @@ bool telemetrySendStatus() {
     if (c.available()) {
         char resp[16] = {0};
         int n = c.read((uint8_t*)resp, sizeof(resp) - 1);
-        if (n > 12) ok = (resp[9] == '2');   // "HTTP/1.1 2xx"
+        if (n > 12) {
+            ok = (resp[9] == '2');           // "HTTP/1.1 2xx"
+            if (!ok) {
+                Serial.print(F("[TELEM] server rejected: "));
+                Serial.println(&resp[9]);    // 401 = bad auth, 409 = replay
+            }
+        }
+    } else {
+        Serial.println(F("[TELEM] no reply within timeout"));
     }
     c.stop();
 

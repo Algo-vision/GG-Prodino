@@ -46,15 +46,23 @@
 #include "mqtt_handler.hpp"
 #include "telemetry_bench.hpp"   // shared [BENCH] harness (both builds)
 #include "secure_telemetry.hpp"  // AEAD telemetry (used when TELEMETRY_MODE_AEAD)
+
+// ============================================================================
+// TELEMETRY TRANSPORT - one of two, chosen at build time
+// ============================================================================
+//   TELEMETRY_MODE_AEAD (default, production): ChaCha20-Poly1305 packet over
+//     plain HTTP to our own server. 9.6 ms of CPU, no handshake, no heap.
+//   TELEMETRY_MODE_TLS (kept for comparison): mutual TLS to AWS IoT. 9,789 ms
+//     of blocked CPU per message and ~1.6 KB of heap held for the session.
+// Measured head-to-head on this board - see docs/TELEMETRY_BENCHMARK.md.
+//
+// The entire TLS stack below is compiled OUT in AEAD mode; that is where most
+// of the RAM saving comes from, so do not hoist it out of the #if.
+// ============================================================================
+#if !defined(TELEMETRY_MODE_AEAD)
 #include <SSLClient.h>
 #include "aws_certs_store.h"   // AWS_ENDPOINT, AWS_PORT, AWS_DEV_CERT, AWS_DEV_KEY
 #include "aws_root_ca.h"       // TAs, TAs_NUM (AWS server trust anchor)
-
-// ============================================================================
-// MQTT TRANSPORT - TLS DIRECT TO AWS IoT  *** TEST BUILD (do not commit) ***
-// ============================================================================
-// RAM/CPU stress test: the FULL production firmware + the FULL TLS stack, to see
-// if board-direct AWS IoT fits on this 32KB SAMD21. Publishes to AWS_ENDPOINT.
 
 /** Plain TCP -> wrapped in SSLClient(BearSSL) -> AWS IoT over mutual TLS */
 static EthernetClient s_mqttTcp;
@@ -93,6 +101,7 @@ static PacketClient s_flushing(s_ssl);
 static SSLClientParameters s_mTLS =
     SSLClientParameters::fromPEM(AWS_DEV_CERT, strlen(AWS_DEV_CERT),
                                  AWS_DEV_KEY,  strlen(AWS_DEV_KEY));
+#endif  // !TELEMETRY_MODE_AEAD
 
 extern "C" char* sbrk(int);
 static int freeRam() { char t; return &t - reinterpret_cast<char*>(sbrk(0)); }
@@ -170,8 +179,10 @@ EthernetServer _server(LOCAL_PORT);
 /** Hardware Abstraction Layer */
 GG_HAL _gg_hal;
 
+#if !defined(TELEMETRY_MODE_AEAD)
 /** MQTT Handler (over the TLS transport, to AWS IoT) */
 MQTTHandler mqttHandler(s_flushing);
+#endif
 
 // ============================================================================
 // OPERATING MODE FLAGS
@@ -301,18 +312,19 @@ void setup() {
 
     Serial.print("[RAM] freeRam after all modules init = "); Serial.println(freeRam());
 
-    // TLS DIRECT to AWS IoT (TEST): full firmware + full TLS stack.
     g_serialNumber = "SN2003";     // *** TEST: hardcode serial so AWS/webserver recognizes it
+
+#if defined(TELEMETRY_MODE_AEAD)
+    telemetryInit();     // loads the per-board key + bumps the boot epoch
+    Serial.println("[TEST] telemetry mode = AEAD (ChaCha20-Poly1305 over plain HTTP)");
+    Serial.print("[RAM] freeRam after telemetry setup = "); Serial.println(freeRam());
+#else
+    // TLS DIRECT to AWS IoT: full firmware + full TLS stack.
     s_ssl.setMutualAuthParams(s_mTLS);
     mqttHandler.begin(g_serialNumber, AWS_ENDPOINT, AWS_PORT);
     Serial.print("[RAM] freeRam after TLS/MQTT setup = "); Serial.println(freeRam());
     Serial.print("[RAM] target = "); Serial.print(AWS_ENDPOINT); Serial.print(":"); Serial.println(AWS_PORT);
     Serial.println("MQTT handler initialized. Will connect to AWS over TLS in loop()...");
-
-#if defined(TELEMETRY_MODE_AEAD)
-    telemetryInit();     // loads the per-board key + bumps the boot epoch
-    Serial.println("[TEST] telemetry mode = AEAD (ChaCha20-Poly1305 over plain HTTP)");
-#else
     Serial.println("[TEST] telemetry mode = TLS (AWS IoT publish window)");
 #endif
     
@@ -463,7 +475,11 @@ void loop() {
     if (millis() - lastRamPrint > 5000) {
         lastRamPrint = millis();
         Serial.print("[RAM] freeRam="); Serial.print(freeRam());
+#if defined(TELEMETRY_MODE_AEAD)
+        Serial.print("  telemetry=AEAD key="); Serial.println(telemetryHasKey() ? "ok" : "MISSING");
+#else
         Serial.print("  mqtt="); Serial.println(mqttHandler.isConnected() ? "CONNECTED" : "down");
+#endif
         // ISR health: maxGap should stay ~50-51 ms even THROUGH a publish window
         uint32_t ticks = g_isrTicks, maxGap = g_isrMaxGapMs;
         g_isrMaxGapMs = 0;

@@ -136,7 +136,8 @@ function getDeviceStatus(device) {
 // Filters out DEFAULT and UNCONFIGURED devices
 function getDeviceList() {
     const deviceList = [];
-    const EXCLUDED_SERIALS = ['DEFAULT', 'UNCONFIGURED', 'NONE'];
+    // SNTEST is tools/test_ingest.py's throwaway serial - never a real board.
+    const EXCLUDED_SERIALS = ['DEFAULT', 'UNCONFIGURED', 'NONE', 'SNTEST'];
     devices.forEach((device, serialNumber) => {
         // Skip excluded serial numbers
         if (EXCLUDED_SERIALS.includes(serialNumber.toUpperCase())) {
@@ -359,7 +360,170 @@ client.on('message', (topic, message) => {
             break;
     }
 
-    // Broadcast to authenticated web clients (filtered by user permissions)
+    broadcastDeviceUpdate(serialNumber, device);
+});
+
+// ===========================================================================
+// ENCRYPTED TELEMETRY INGEST  (POST /api/ingest)
+//
+// The board cannot afford TLS: a handshake costs it ~9.8 s of blocked CPU and
+// leaves under 1 KB of free RAM (see docs/TELEMETRY_BENCHMARK.md). Instead it
+// encrypts the status JSON with ChaCha20-Poly1305 - 9.6 ms, no handshake - and
+// posts the packet over plain HTTP. Confidentiality, authenticity and replay
+// protection all come from the AEAD, not from the transport.
+//
+// Wire format (mirrors firmware/include/secure_telemetry.hpp and
+// tools/ingest_test_server.py, which is the reference implementation):
+//   off  size  field
+//   0    1     version = 0x01
+//   1    16    serial (ASCII, NUL-padded)
+//   17   12    nonce = boot_epoch(4 BE) || msg_seq(8 BE)
+//   29   N     ciphertext
+//   29+N 16    Poly1305 tag
+//   AAD = bytes 0..28 (the header is authenticated but not encrypted, because
+//         the server must read the serial in clear to pick the key)
+// ===========================================================================
+const crypto = require('crypto');
+
+const TELEM_HEADER_LEN = 29;
+const TELEM_TAG_LEN = 16;
+
+// Per-board keys: { "SN2003": "<64 hex>" }. Gitignored - it holds secrets.
+// Deleting an entry revokes that board instantly; replacing it rotates the key.
+const DEVICE_KEYS_FILE = path.join(__dirname, 'device_keys.json');
+let deviceKeys = {};
+try {
+    const raw = JSON.parse(fs.readFileSync(DEVICE_KEYS_FILE, 'utf8'));
+    for (const [sn, hex] of Object.entries(raw)) {
+        deviceKeys[sn.toUpperCase()] = Buffer.from(hex, 'hex');
+    }
+    console.log(`🔑 Loaded telemetry keys for: ${Object.keys(deviceKeys).join(', ') || '(none)'}`);
+} catch (err) {
+    console.warn(`⚠️  No ${DEVICE_KEYS_FILE} - /api/ingest will reject every board. ` +
+                 `Generate one with tools/gen_device_key.py <SERIAL>`);
+}
+
+// Last accepted (boot_epoch, msg_seq) per board. A packet is accepted only if
+// the pair is strictly greater, which rejects replays and survives reboots
+// without any per-message flash wear on the board.
+const lastSeenNonce = new Map();
+
+// Map the board's flat status JSON onto the device state, using the same field
+// names the MQTT 'status' branch and the board's HTTP API already use.
+function applyStatusToDevice(device, d) {
+    if (d.imuX !== undefined) device.imu.accel = { x: d.imuX, y: d.imuY, z: d.imuZ };
+    if (d.imuGx !== undefined) device.imu.gyro = { x: d.imuGx, y: d.imuGy, z: d.imuGz };
+    if (d.pitch !== undefined) device.imu.orientation = { pitch: d.pitch, roll: d.roll, yaw: d.yaw };
+    if (d.imuValid !== undefined) device.imu.valid = !!d.imuValid;
+
+    if (d.gpsLat !== undefined) { device.gps.lat = d.gpsLat; device.gps.lng = d.gpsLng; device.gps.alt = d.gpsAlt; }
+    if (d.gpsGroundSpeed !== undefined) device.gps.speed = d.gpsGroundSpeed;
+    if (d.gpsHeading !== undefined) device.gps.heading = d.gpsHeading;
+    if (d.gpsSpeedNorth !== undefined) {
+        device.gps.velocityNorth = d.gpsSpeedNorth;
+        device.gps.velocityEast = d.gpsSpeedEast;
+        device.gps.velocityDown = d.gpsSpeedDown;
+    }
+    if (d.gpsTime !== undefined) device.gps.time = d.gpsTime;
+    if (d.gpsValid !== undefined) device.gps.valid = !!d.gpsValid;
+    if (d.GPSConnected !== undefined) device.gps.connected = !!d.GPSConnected;
+    if (d.gpsSatellites !== undefined) device.gps.satellites = d.gpsSatellites;
+    if (d.gpsHAcc !== undefined) device.gps.hAcc = d.gpsHAcc;
+    if (d.gpsVAcc !== undefined) device.gps.vAcc = d.gpsVAcc;
+    if (d.gpsAltEllipsoid !== undefined) device.gps.altEllipsoid = d.gpsAltEllipsoid;
+
+    if (Array.isArray(d.relays_status)) device.relays = d.relays_status;
+    if (Array.isArray(d.optoin_status)) device.sensors.optos = d.optoin_status;
+    if (d.button_tech !== undefined) device.sensors.button = !!d.button_tech;
+    if (d.ledInternal !== undefined) device.leds.internal = !!d.ledInternal;
+    if (d.ledIo !== undefined) device.leds.io = d.ledIo;
+
+    if (d.powerConnected !== undefined) device.power.connected = !!d.powerConnected;
+    if (d.busVoltage !== undefined) device.power.busVoltage = d.busVoltage;
+
+    device.deviceInfo = {
+        ...device.deviceInfo,
+        motorWorkHours: d.motorWorkHours !== undefined ? d.motorWorkHours : device.deviceInfo.motorWorkHours,
+        firmwareVersion: d.firmwareVersion || device.deviceInfo.firmwareVersion,
+        controllerIp: d.controllerIp || device.deviceInfo.controllerIp,
+        routerIp: d.routerIp || device.deviceInfo.routerIp
+    };
+}
+
+// express.json() is global, so this route brings its own raw-body parser.
+app.post('/api/ingest',
+    express.raw({ type: () => true, limit: '8kb' }),
+    (req, res) => {
+        const pkt = req.body;
+        if (!Buffer.isBuffer(pkt) || pkt.length < TELEM_HEADER_LEN + TELEM_TAG_LEN) {
+            return res.sendStatus(400);
+        }
+
+        const header = pkt.subarray(0, TELEM_HEADER_LEN);              // AAD
+        const version = header[0];
+        const serial = header.subarray(1, 17).toString('ascii').replace(/\0.*$/, '');
+        const nonce = header.subarray(17, 29);
+        const bootEpoch = nonce.readUInt32BE(0);
+        const msgSeq = nonce.readBigUInt64BE(4);
+        const ciphertext = pkt.subarray(TELEM_HEADER_LEN, pkt.length - TELEM_TAG_LEN);
+        const tag = pkt.subarray(pkt.length - TELEM_TAG_LEN);
+
+        const key = deviceKeys[serial.toUpperCase()];
+        if (version !== 1 || !key) {
+            console.warn(`🚫 ingest: unknown device serial="${serial}" version=${version}`);
+            return res.sendStatus(401);
+        }
+
+        // Authenticity + confidentiality. Throws if anything was tampered with.
+        let plaintext;
+        try {
+            const decipher = crypto.createDecipheriv('chacha20-poly1305', key, nonce,
+                                                     { authTagLength: TELEM_TAG_LEN });
+            decipher.setAAD(header, { plaintextLength: ciphertext.length });
+            decipher.setAuthTag(tag);
+            plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+        } catch (err) {
+            console.warn(`🚫 ingest: BAD AUTH from ${serial} epoch=${bootEpoch} seq=${msgSeq}`);
+            return res.sendStatus(401);
+        }
+
+        // Replay: (boot_epoch, msg_seq) must be strictly increasing per board.
+        const last = lastSeenNonce.get(serial);
+        if (last && (bootEpoch < last.bootEpoch ||
+                    (bootEpoch === last.bootEpoch && msgSeq <= last.msgSeq))) {
+            console.warn(`🚫 ingest: REPLAY from ${serial} epoch=${bootEpoch} seq=${msgSeq}`);
+            return res.sendStatus(409);
+        }
+        lastSeenNonce.set(serial, { bootEpoch, msgSeq });
+
+        let data;
+        try {
+            data = JSON.parse(plaintext.toString('utf8'));
+        } catch (err) {
+            console.warn(`🚫 ingest: ${serial} sent ${plaintext.length}B that is not JSON`);
+            return res.sendStatus(400);
+        }
+
+        if (!devices.has(serial)) {
+            console.log(`📱 New device discovered via ingest: ${serial}`);
+            devices.set(serial, createDefaultDeviceState(serial));
+        }
+        const device = devices.get(serial);
+        device.lastSeen = Date.now();
+        device.connected = true;
+        applyStatusToDevice(device, data);
+
+        console.log(`🔐 [${serial}] ingest seq=${msgSeq} ${pkt.length}B ` +
+                    `pitch=${data.pitch} roll=${data.roll} ip=${data.controllerIp}`);
+
+        broadcastDeviceUpdate(serial, device);
+        res.sendStatus(204);
+    });
+
+// Broadcast one device's state to authenticated web clients (filtered by user
+// permissions). Shared by the MQTT path and the /api/ingest path so the
+// dashboard behaves identically no matter how the data arrived.
+function broadcastDeviceUpdate(serialNumber, device) {
     io.sockets.sockets.forEach((socket) => {
         if (socket.user) {
             const filteredList = filterDevicesForUser(getDeviceList(), socket.user);
@@ -375,7 +539,7 @@ client.on('message', (topic, message) => {
             }
         }
     });
-});
+}
 
 // Socket.io Connection (authentication is checked by middleware above)
 io.on('connection', (socket) => {
