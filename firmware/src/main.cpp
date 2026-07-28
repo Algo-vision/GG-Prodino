@@ -11,7 +11,7 @@
  * - http_server: HTTP API request handling
  * - led_controller: Status LED blink patterns
  * - relay_controller: Relay auto-reset functionality
- * - mqtt_handler: MQTT communication
+ * - secure_telemetry: encrypted status uplink to the dashboard server
  *
  * @version 1.5.0
  */
@@ -43,72 +43,25 @@
 #include "led_controller.hpp"
 #include "relay_controller.hpp"
 #include "ocu_monitor.hpp"
-#include "mqtt_handler.hpp"
 #include "telemetry_bench.hpp"   // shared [BENCH] harness (both builds)
-#include "secure_telemetry.hpp"  // AEAD telemetry (used when TELEMETRY_MODE_AEAD)
+#include "secure_telemetry.hpp"  // encrypted telemetry to the dashboard server
 
 // ============================================================================
-// TELEMETRY TRANSPORT - one of two, chosen at build time
+// TELEMETRY TRANSPORT
 // ============================================================================
-//   TELEMETRY_MODE_AEAD (default, production): ChaCha20-Poly1305 packet over
-//     plain HTTP to our own server. 9.6 ms of CPU, no handshake, no heap.
-//   TELEMETRY_MODE_TLS (kept for comparison): mutual TLS to AWS IoT. 9,789 ms
-//     of blocked CPU per message and ~1.6 KB of heap held for the session.
-// Measured head-to-head on this board - see docs/TELEMETRY_BENCHMARK.md.
-//
-// The entire TLS stack below is compiled OUT in AEAD mode; that is where most
-// of the RAM saving comes from, so do not hoist it out of the #if.
+// The board sends its status as a ChaCha20-Poly1305 packet over plain HTTP to
+// our own server: ~16 ms of CPU, no handshake, no heap. It does NOT speak TLS.
+// Board-side TLS to AWS IoT was measured at 9,789 ms of blocked CPU per message
+// on this chip - see docs/TELEMETRY_BENCHMARK.md - and was removed.
+// How the crypto works and how to provision a key: docs/SECURE_TELEMETRY.md
 // ============================================================================
-#if !defined(TELEMETRY_MODE_AEAD)
-#include <SSLClient.h>
-#include "aws_certs_store.h"   // AWS_ENDPOINT, AWS_PORT, AWS_DEV_CERT, AWS_DEV_KEY
-#include "aws_root_ca.h"       // TAs, TAs_NUM (AWS server trust anchor)
-
-/** Plain TCP -> wrapped in SSLClient(BearSSL) -> AWS IoT over mutual TLS */
-static EthernetClient s_mqttTcp;
-static SSLClient      s_ssl(s_mqttTcp, TAs, TAs_NUM, A5);
-
-// Packet-granular SEND PUMP. SSLClient buffers writes; the send must be driven
-// by the caller. CRITICAL: SSLClient::flush() is broken for QoS-0 MQTT - it
-// waits for BR_SSL_RECVAPP (application data FROM the server) after sending,
-// but a QoS-0 publish gets no reply -> flush() blocks the full 30 s timeout,
-// latches a write error and kills the connection (root cause of every drop we
-// saw). SSLClient::available() instead pumps the engine ONCE, non-blocking:
-// it encrypts + sends the buffered record and returns. So: after each complete
-// MQTT packet (one bulk write), pump with available() - never call flush().
-class PacketClient : public Client {
-    SSLClient& c;
-public:
-    PacketClient(SSLClient& s) : c(s) {}
-    int connect(IPAddress ip, uint16_t p) override { return c.connect(ip, p); }
-    int connect(const char* h, uint16_t p) override { return c.connect(h, p); }
-    size_t write(uint8_t b) override { return c.write(b); }        // buffer only
-    size_t write(const uint8_t* b, size_t s) override {
-        size_t n = c.write(b, s);
-        c.available();                    // pump: encrypt + send, non-blocking
-        return n;
-    }
-    int available() override { return c.available(); }
-    int read() override { return c.read(); }
-    int read(uint8_t* b, size_t s) override { return c.read(b, s); }
-    int peek() override { return c.peek(); }
-    void flush() override { c.available(); }   // never SSLClient::flush() (see above)
-    void stop() override { c.stop(); }
-    uint8_t connected() override { return c.connected(); }
-    operator bool() override { return (bool)c; }
-};
-static PacketClient s_flushing(s_ssl);
-static SSLClientParameters s_mTLS =
-    SSLClientParameters::fromPEM(AWS_DEV_CERT, strlen(AWS_DEV_CERT),
-                                 AWS_DEV_KEY,  strlen(AWS_DEV_KEY));
-#endif  // !TELEMETRY_MODE_AEAD
 
 extern "C" char* sbrk(int);
 static int freeRam() { char t; return &t - reinterpret_cast<char*>(sbrk(0)); }
 
 // ============================================================================
 // 50 ms REAL-TIME ISR (TC4) - keeps time-critical GPIO tasks alive even while
-// the main loop is blocked for ~16 s inside the TLS publish window.
+// the main loop is busy (e.g. inside a telemetry send).
 // RULES: ISR tasks must be GPIO/state-only. NO SPI, NO I2C, NO heap - the main
 // loop owns the W5500/SPI bus; touching it from here would corrupt transfers.
 // (ledControllerUpdate/relayControllerUpdate end in digitalWrite - verified.)
@@ -167,7 +120,8 @@ byte _mac[] = {0x00, 0x08, 0xDC, 0x53, 0x09, 0x72};
 /** HTTP server port */
 constexpr uint16_t LOCAL_PORT = 80;
 
-// MQTT_PUBLISH_INTERVAL is defined in mqtt_handler.hpp
+/** How often the local status snapshot is refreshed for HTTP consumers */
+constexpr unsigned long STATUS_REFRESH_INTERVAL_MS = 1000;
 
 // ============================================================================
 // GLOBAL INSTANCES
@@ -179,10 +133,6 @@ EthernetServer _server(LOCAL_PORT);
 /** Hardware Abstraction Layer */
 GG_HAL _gg_hal;
 
-#if !defined(TELEMETRY_MODE_AEAD)
-/** MQTT Handler (over the TLS transport, to AWS IoT) */
-MQTTHandler mqttHandler(s_flushing);
-#endif
 
 // ============================================================================
 // OPERATING MODE FLAGS
@@ -240,7 +190,7 @@ void setup() {
     
     Serial.print("[RAM] freeRam at boot = "); Serial.println(freeRam());
 
-    // Configure network (home router = internet path to AWS when online)
+    // Configure network (the router is the path to the dashboard server)
     IPAddress subnet(255, 255, 255, 0);
     IPAddress gateway(192, 168, 1, 1);
     IPAddress dns(8, 8, 8, 8);
@@ -275,7 +225,7 @@ void setup() {
     }
     
     techButtonHeld = false;   // *** TEST: force normal mode (button floats PRESSED,
-                              // and OTA eats ~1.5KB + a socket we need for the TLS test)
+                              // and OTA eats ~1.5KB + a socket we need)
     if (techButtonHeld) {
         technician_mode = true;
 
@@ -312,21 +262,10 @@ void setup() {
 
     Serial.print("[RAM] freeRam after all modules init = "); Serial.println(freeRam());
 
-    g_serialNumber = "SN2003";     // *** TEST: hardcode serial so AWS/webserver recognizes it
+    g_serialNumber = "SN2003";     // *** TEST: hardcoded; burn the real one with SET_SN
 
-#if defined(TELEMETRY_MODE_AEAD)
-    telemetryInit();     // loads the per-board key + bumps the boot epoch
-    Serial.println("[TEST] telemetry mode = AEAD (ChaCha20-Poly1305 over plain HTTP)");
+    telemetryInit();     // loads the per-board key + draws a fresh boot id
     Serial.print("[RAM] freeRam after telemetry setup = "); Serial.println(freeRam());
-#else
-    // TLS DIRECT to AWS IoT: full firmware + full TLS stack.
-    s_ssl.setMutualAuthParams(s_mTLS);
-    mqttHandler.begin(g_serialNumber, AWS_ENDPOINT, AWS_PORT);
-    Serial.print("[RAM] freeRam after TLS/MQTT setup = "); Serial.println(freeRam());
-    Serial.print("[RAM] target = "); Serial.print(AWS_ENDPOINT); Serial.print(":"); Serial.println(AWS_PORT);
-    Serial.println("MQTT handler initialized. Will connect to AWS over TLS in loop()...");
-    Serial.println("[TEST] telemetry mode = TLS (AWS IoT publish window)");
-#endif
     
     // Print startup info
     Serial.println("Starting up...");
@@ -338,11 +277,11 @@ void setup() {
     Serial.println(Ethernet.gatewayIP());
     Serial.print("Subnet Mask: ");
     Serial.println(Ethernet.subnetMask());
-    Serial.print("MQTT Broker (Router) IP: ");
+    Serial.print("Router IP: ");
     Serial.println(g_routerIP);
 
-    // Start the 50 ms real-time ISR (LED + relay tasks live there now, so they
-    // keep running even while the TLS publish window blocks the main loop).
+    // Start the 50 ms real-time ISR: LED + relay tasks run from here so they
+    // keep their timing regardless of what the main loop is doing.
     startRtIsr50ms();
     g_isrTasksEnabled = true;
     Serial.println("[ISR] 50ms real-time tick started (LED + relay tasks)");
@@ -380,72 +319,30 @@ void loop() {
     ocuMonitorUpdate();
 
 
-    // ========================================================================
-    // *** PERSISTENT TLS CONNECTION (test) ***
-    // Handshake ONCE (mqttHandler.loop() reconnects only if the link drops),
-    // ========================================================================
-    // PLAN B: PUBLISH WINDOW every interval - connect -> publish -> DISCONNECT.
-    // Measured fact on this 32KB chip: a LIVE TLS session holds ~1.6KB of heap,
-    // leaving ~719B free -> an HTTP request (~1.5KB of allocations) hard-faults.
-    // With the session CLOSED, HTTP has ~2.3KB and runs at 99.8% / 24ms.
-    // So TLS and HTTP take turns: brief publish window, then HTTP gets all the
-    // RAM back. Each piece was measured working today (connect 10s, publish
-    // 42ms, HTTP 99.8% between windows).
-    // ========================================================================
-    // BENCHMARK: the send interval is the same for both builds so the runs are
-    // directly comparable (override with -D TELEM_INTERVAL_MS=...).
+    // ---- periodic telemetry: one encrypted packet to the dashboard server ----
+    // Only the head of a send blocks loop() (~97 ms: crypto + TCP connect); the
+    // reply and socket close are finished by telemetryPump() below.
 #ifndef TELEM_INTERVAL_MS
-#define TELEM_INTERVAL_MS 60000UL
+#define TELEM_INTERVAL_MS 300000UL      // 5 minutes
 #endif
-    const unsigned long PUBLISH_EVERY_MS = TELEM_INTERVAL_MS;
-    static unsigned long lastPubWindow = 0;
-    static bool firstWindowDone = false;
-    unsigned long windowDue = firstWindowDone ? PUBLISH_EVERY_MS : 15000;
-    if (millis() - lastPubWindow >= windowDue) {
-        lastPubWindow = millis();
-        firstWindowDone = true;
-
-#if defined(TELEMETRY_MODE_AEAD)
-        // ---- NEW: ChaCha20-Poly1305 packet over plain HTTP (no handshake) ----
-        telemetrySendStatus();          // instrumented inside (bench::sendEnd)
-#else
-        // ---- OLD: TLS publish window - connect, publish, disconnect ----
-        uint32_t tb = bench::sendBegin();
-        Serial.print("\n[PUB] window OPEN (HTTP pauses). freeRam=");
-        Serial.println(freeRam());
-        bool pubOk = false;
-        if (mqttHandler.connectToMQTTBroker()) {
-            // no statusUpdate() here - the 1 Hz loop keeps g_status fresh, and
-            // skipping it removes I2C time from the window
-            JsonDocument doc = statusGenerateJsonSimple();
-            mqttHandler.publishStatus(doc);
-            // pump the SSL engine so the record is fully on the wire before close
-            for (int i = 0; i < 5; i++) { s_flushing.available(); delay(10); }
-            pubOk = true;
-        }
-        mqttHandler.forceDisconnect();   // release the TLS heap -> HTTP gets it back
-        Serial.print("[PUB] window CLOSED (HTTP resumes). freeRam=");
-        Serial.println(freeRam());
-        bench::sendEnd(tb, pubOk);
-#endif
+    static unsigned long lastTelemetry = 0;
+    static bool firstSendDone = false;
+    unsigned long sendDue = firstSendDone ? TELEM_INTERVAL_MS : 15000;
+    if (millis() - lastTelemetry >= sendDue) {
+        lastTelemetry = millis();
+        firstSendDone = true;
+        telemetrySendStatus();
     }
 
-    // periodic benchmark summary (identical in both builds)
     static unsigned long lastBenchReport = 0;
     if (millis() - lastBenchReport >= 10000) {
         lastBenchReport = millis();
-#if defined(TELEMETRY_MODE_AEAD)
         bench::report("AEAD");
-#else
-        bench::report("TLS");
-#endif
     }
 
-#if defined(TELEMETRY_MODE_AEAD)
     telemetryPump();             // finishes an in-flight send; ~0 when idle
-#endif
 
-    httpServerLoop();            // HTTP served every iteration between windows
+    httpServerLoop();            // HTTP served every loop iteration
 
     // FIX 2 (v2): ZOMBIE-LISTENER WATCHDOG. Measured fact: the W5500 can report
     // Sn_SR=LISTEN on :80 while its connection engine RSTs every SYN (zombie).
@@ -479,11 +376,7 @@ void loop() {
     if (millis() - lastRamPrint > 5000) {
         lastRamPrint = millis();
         Serial.print("[RAM] freeRam="); Serial.print(freeRam());
-#if defined(TELEMETRY_MODE_AEAD)
-        Serial.print("  telemetry=AEAD key="); Serial.println(telemetryHasKey() ? "ok" : "MISSING");
-#else
-        Serial.print("  mqtt="); Serial.println(mqttHandler.isConnected() ? "CONNECTED" : "down");
-#endif
+        Serial.print("  telemetry key="); Serial.println(telemetryHasKey() ? "ok" : "MISSING");
         // ISR health: maxGap should stay ~50-51 ms even THROUGH a publish window
         uint32_t ticks = g_isrTicks, maxGap = g_isrMaxGapMs;
         g_isrMaxGapMs = 0;
@@ -504,7 +397,7 @@ void loop() {
     }
 
     static unsigned long lastStat = 0;
-    if (millis() - lastStat > MQTT_PUBLISH_INTERVAL) {
+    if (millis() - lastStat > STATUS_REFRESH_INTERVAL_MS) {
         lastStat = millis();
         statusUpdate();          // keep local status fresh (HTTP consumers)
     }
@@ -516,7 +409,7 @@ void loop() {
         lastSerialOutput = millis();
     }
     // NOTE: relayControllerUpdate() + ledControllerUpdate() moved to the 50 ms
-    // TC4 ISR - they keep running even while the TLS window blocks this loop.
+    // TC4 ISR - they keep running regardless of what this loop is doing.
 
     // Update user connection status
     if (millis() - httpGetLastUserConnectedTime() > 5000) {
@@ -635,7 +528,7 @@ void handleSerialCommands() {
             String newSN = cmd.substring(7);
             newSN.trim();
             if (serialNumberBurn(newSN.c_str())) {
-                Serial.println("Reboot to apply new serial number to MQTT topics");
+                Serial.println("Reboot to apply the new serial number");
             }
         } else if (cmd == "GET_SN") {
             Serial.println("Serial Number: " + serialNumberGet());

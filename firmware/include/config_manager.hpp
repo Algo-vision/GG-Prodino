@@ -5,7 +5,7 @@
  * Handles persistent storage of device configuration including:
  * - Controller IP address
  * - IP whitelist for authentication
- * - Router/MQTT broker IP
+ * - Router IP
  * - Serial number
  * - Motor work hours counter
  * 
@@ -51,8 +51,8 @@ struct Config {
     byte whitelist_ip_bytes[MAX_WHITELIST_IPS][4];  ///< Whitelisted client IPs
     int whitelist_count;                      ///< Number of valid whitelist entries
     
-    // Router/MQTT Broker Configuration
-    byte router_ip_bytes[4];                  ///< Teltonika router IP (MQTT broker)
+    // Router Configuration
+    byte router_ip_bytes[4];                  ///< Teltonika router IP (the board's gateway)
     
     // Serial Number Configuration
     char serial_number[MAX_SERIAL_NUMBER_LENGTH];  ///< Device serial number
@@ -87,8 +87,7 @@ struct Config {
         controller_ip_bytes[2] = 1;
         controller_ip_bytes[3] = 198;
         
-        // Default whitelist IPs: 192.168.1.20, 192.168.1.169, 192.168.1.33,
-        // 192.168.1.152 (the in-HLC gateway / Jetson - fetches AWS certs from us)
+        // Default whitelist IPs: the operator laptops allowed to reach the API.
         whitelist_ip_bytes[0][0] = 192; whitelist_ip_bytes[0][1] = 168;
         whitelist_ip_bytes[0][2] = 1;   whitelist_ip_bytes[0][3] = 20;
 
@@ -97,12 +96,9 @@ struct Config {
 
         whitelist_ip_bytes[2][0] = 192; whitelist_ip_bytes[2][1] = 168;
         whitelist_ip_bytes[2][2] = 1;   whitelist_ip_bytes[2][3] = 33;
-
-        whitelist_ip_bytes[3][0] = 192; whitelist_ip_bytes[3][1] = 168;
-        whitelist_ip_bytes[3][2] = 1;   whitelist_ip_bytes[3][3] = 152;
-        whitelist_count = 4;
+        whitelist_count = 3;
         
-        // Default router/MQTT broker IP: 192.168.1.1 (Teltonika default)
+        // Default router IP: 192.168.1.1 (Teltonika default)
         router_ip_bytes[0] = 192;
         router_ip_bytes[1] = 168;
         router_ip_bytes[2] = 1;
@@ -127,7 +123,7 @@ extern IPAddress g_whitelist[MAX_WHITELIST_IPS];
 /** Number of IPs in whitelist */
 extern int g_whitelistCount;
 
-/** Router/MQTT broker IP address */
+/** Router IP address (the board's gateway) */
 extern IPAddress g_routerIP;
 
 /** Device serial number string */
@@ -205,7 +201,7 @@ float configGetBurnedHoursFloat();
 void configSetControllerIP(const IPAddress& ip);
 
 /**
- * @brief Set router/MQTT broker IP address
+ * @brief Set the router IP address
  * @param ip New router IP address
  */
 void configSetRouterIP(const IPAddress& ip);

@@ -1,10 +1,10 @@
 /**
  * @file bench_common.hpp
- * @brief Shared measurement + reporting for the two standalone benchmark
- *        firmwares (bench_aead.cpp and bench_tls.cpp).
+ * @brief Measurement + reporting for the standalone telemetry benchmark
+ *        (bench_aead.cpp).
  *
- * Compiled into BOTH, so every printed number means exactly the same thing in
- * both runs and the two logs can be compared line for line.
+ * The TLS firmware this was originally shared with lives on the board-only-tls
+ * branch; docs/TELEMETRY_BENCHMARK.md has the head-to-head results.
  *
  * What is measured, and why each one matters:
  *   total   - wall time of one complete telemetry send (build+crypto+network)
@@ -29,7 +29,7 @@ namespace bench {
 extern "C" char* sbrk(int);
 inline int freeRam() { char top; return &top - reinterpret_cast<char*>(sbrk(0)); }
 
-/// The payload BOTH firmwares send: same shape and size as the real status JSON
+/// The benchmark payload: same shape and size as the real status JSON
 /// (~700-900 B), so the crypto and the network see identical amounts of data.
 inline size_t buildPayload(char* buf, size_t cap, const char* serial,
                            const char* fw, uint32_t seq) {

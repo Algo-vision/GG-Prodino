@@ -70,7 +70,7 @@ void configSave() {
         configData.whitelist_ip_bytes[i][3] = g_whitelist[i][3];
     }
     
-    // Save router/MQTT broker IP
+    // Save router IP
     configData.router_ip_bytes[0] = g_routerIP[0];
     configData.router_ip_bytes[1] = g_routerIP[1];
     configData.router_ip_bytes[2] = g_routerIP[2];
@@ -177,7 +177,7 @@ void configLoad() {
             );
         }
         
-        // Load router/MQTT broker IP
+        // Load router IP
         g_routerIP = IPAddress(
             configData.router_ip_bytes[0],
             configData.router_ip_bytes[1],
@@ -207,7 +207,7 @@ void configLoad() {
     Serial.println("Configuration loaded from FlashStorage.");
     Serial.print("Controller IP: ");
     Serial.println(g_controllerIP.toString());
-    Serial.print("Router/MQTT IP: ");
+    Serial.print("Router IP: ");
     Serial.println(g_routerIP.toString());
     Serial.print("Motor Work Hours: ");
     Serial.print(g_motorWorkSeconds / 3600);

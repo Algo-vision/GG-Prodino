@@ -3,11 +3,9 @@
  * @brief STANDALONE benchmark firmware #1: telemetry protected with
  *        ChaCha20-Poly1305 over plain HTTP. Nothing else runs.
  *
- * This is the NEW method. It is deliberately a pure software test: no HTTP
- * server, no config manager, no status manager, no OCU, no sensors - so every
- * millisecond and every byte of RAM reported here belongs to the telemetry path
- * and nothing else. Its twin is bench_tls.cpp, which measures the OLD method
- * (mutual TLS to AWS IoT) with the exact same reporting format.
+ * Deliberately a pure software test: no HTTP server, no config manager, no
+ * status manager, no OCU, no sensors - so every millisecond and every byte of
+ * RAM reported here belongs to the telemetry path and nothing else.
  *
  * Server: tools/ingest_test_server.py on the laptop (BENCH_HOST:BENCH_PORT).
  *

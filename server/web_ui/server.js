@@ -1,7 +1,6 @@
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
-const mqtt = require('mqtt');
 const path = require('path');
 const cors = require('cors');
 const session = require('express-session');
@@ -88,7 +87,6 @@ if (adminEmails) {
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Configuration
-const MQTT_BROKER = process.env.MQTT_BROKER || 'mqtt://localhost:1883';
 const PORT = process.env.BACKEND_PORT || 5555;
 const DEVICE_TIMEOUT_MS = 30000; // Device considered offline after 30 seconds
 
@@ -163,210 +161,6 @@ function getDeviceList() {
 }
 
 const fs = require('fs');
-
-// MQTT Client Setup
-console.log(`Connecting to MQTT Broker: ${MQTT_BROKER}`);
-
-let mqttOptions = {
-    reconnectPeriod: 5000,
-    connectTimeout: 30 * 1000,
-};
-
-// Check for AWS IoT Certificates
-if (process.env.MQTT_KEY_PATH && process.env.MQTT_CERT_PATH && process.env.MQTT_CA_PATH) {
-    console.log('🔒 Using AWS IoT Certificates for Mutual TLS');
-    try {
-        mqttOptions.key = fs.readFileSync(process.env.MQTT_KEY_PATH);
-        mqttOptions.cert = fs.readFileSync(process.env.MQTT_CERT_PATH);
-        mqttOptions.ca = fs.readFileSync(process.env.MQTT_CA_PATH);
-        mqttOptions.protocol = 'mqtts';
-        mqttOptions.rejectUnauthorized = true;
-    } catch (err) {
-        console.error('❌ Error loading certificates:', err.message);
-    }
-}
-
-const client = mqtt.connect(MQTT_BROKER, mqttOptions);
-
-client.on('connect', () => {
-    console.log('Connected to MQTT Broker');
-    // Subscribe to all devices with wildcard for serial number
-    // Supports both old format (grk/gps/...) and new format (grk/{SN}/gps/...)
-    client.subscribe('grk/#', (err) => {
-        if (!err) console.log('Subscribed to grk/# (all devices)');
-    });
-});
-
-client.on('error', (err) => {
-    console.error('MQTT Error:', err);
-});
-
-// Parse topic to extract serial number and data path
-// New format: grk/{serialNumber}/{dataPath}
-// Legacy format: grk/{dataPath} (uses "DEFAULT" as serial number)
-function parseTopicPath(topic) {
-    const parts = topic.split('/');
-    if (parts.length < 2 || parts[0] !== 'grk') {
-        return null;
-    }
-
-    // Check if second part looks like a serial number (starts with SN, GRK, or is alphanumeric ID)
-    const potentialSN = parts[1];
-    const isSerialNumber = /^(SN|GRK)[A-Z0-9-]+$/i.test(potentialSN) ||
-        /^[A-Z]{2,4}[0-9]{3,6}$/i.test(potentialSN);
-
-    if (isSerialNumber && parts.length >= 3) {
-        // New format: grk/SN0001/gps/position
-        return {
-            serialNumber: potentialSN.toUpperCase(),
-            dataPath: parts.slice(2).join('/')
-        };
-    } else {
-        // Legacy format: grk/gps/position (single device, no serial number)
-        return {
-            serialNumber: 'DEFAULT',
-            dataPath: parts.slice(1).join('/')
-        };
-    }
-}
-
-client.on('message', (topic, message) => {
-    const payload = message.toString();
-    let data;
-    try {
-        data = JSON.parse(payload);
-    } catch (e) {
-        data = payload;
-    }
-
-    // Parse topic to get serial number and data path
-    const parsed = parseTopicPath(topic);
-    if (!parsed) {
-        console.log(`⚠️ Ignoring invalid topic: ${topic}`);
-        return;
-    }
-
-    const { serialNumber, dataPath } = parsed;
-
-    // Get or create device state
-    if (!devices.has(serialNumber)) {
-        console.log(`📱 New device discovered: ${serialNumber}`);
-        devices.set(serialNumber, createDefaultDeviceState(serialNumber));
-    }
-
-    const device = devices.get(serialNumber);
-    device.lastSeen = Date.now();
-    device.connected = true;
-
-    console.log(`← [${serialNumber}] ${dataPath}: ${payload.substring(0, 60)}${payload.length > 60 ? '...' : ''}`);
-
-    // Update device state based on data path
-    switch (dataPath) {
-        case 'gps/position':
-            device.gps = { ...device.gps, ...data };
-            break;
-        case 'gps/velocity':
-            device.gps.speed = data.ground || 0;
-            device.gps.velocityNorth = data.north || 0;
-            device.gps.velocityEast = data.east || 0;
-            device.gps.velocityDown = data.down || 0;
-            break;
-        case 'gps/time':
-            device.gps.time = data || '--:--:--';
-            break;
-        case 'gps/heading':
-            device.gps.heading = parseFloat(data);
-            break;
-        case 'validity/gps':
-            device.gps.valid = data.valid;
-            device.gps.connected = data.connected;
-            break;
-        case 'imu/accel':
-            device.imu.accel = data;
-            break;
-        case 'imu/gyro':
-            device.imu.gyro = { x: data.gx, y: data.gy, z: data.gz };
-            break;
-        case 'imu/orientation':
-            device.imu.orientation = data;
-            break;
-        case 'validity/imu':
-            device.imu.valid = (data === 'true' || data === true);
-            break;
-        case 'relays/state':
-            device.relays = data;
-            break;
-        case 'leds/internal':
-            device.leds.internal = (data === 'true' || data === true);
-            break;
-        case 'leds/io':
-            device.leds.io = data;
-            break;
-        case 'sensors/optos':
-            device.sensors.optos = data;
-            break;
-        case 'sensors/button_tech':
-            device.sensors.button = (data === 'true' || data === true);
-            break;
-        case 'gps/satellites':
-            device.gps.satellites = parseInt(data) || 0;
-            break;
-        case 'gps/accuracy':
-            if (typeof data === 'object') {
-                device.gps.hAcc = data.hAcc || 0;
-                device.gps.vAcc = data.vAcc || 0;
-                device.gps.altEllipsoid = data.altEllipsoid || 0;
-            }
-            break;
-        case 'status':
-            // Full status message from device - extract deviceInfo fields
-            if (typeof data === 'object') {
-                device.deviceInfo = {
-                    motorWorkHours: data.motorWorkHours || 0,
-                    firmwareVersion: data.firmwareVersion || '--',
-                    controllerIp: data.controllerIp || '--',
-                    routerIp: data.routerIp || '--'
-                };
-                // Also update satellites from status message if present
-                if (data.gpsSatellites !== undefined) {
-                    device.gps.satellites = data.gpsSatellites;
-                }
-                // Update GPS accuracy from status if present
-                if (data.gpsHAcc !== undefined) {
-                    device.gps.hAcc = data.gpsHAcc;
-                }
-                if (data.gpsVAcc !== undefined) {
-                    device.gps.vAcc = data.gpsVAcc;
-                }
-                if (data.gpsAltEllipsoid !== undefined) {
-                    device.gps.altEllipsoid = data.gpsAltEllipsoid;
-                }
-                // Update power monitoring from status if present
-                if (data.powerConnected !== undefined) {
-                    device.power.connected = data.powerConnected;
-                }
-                if (data.busVoltage !== undefined) {
-                    device.power.busVoltage = data.busVoltage;
-                }
-            }
-            break;
-        case 'power/connected':
-            device.power.connected = (data === 'true' || data === true);
-            break;
-        case 'power/bus_voltage':
-            device.power.busVoltage = parseFloat(data) || 0;
-            break;
-        case 'jetson/cpu_temp':
-            // Gateway (Jetson/RPi) publishes {"cpu_temp":X,"unit":"C"} under the
-            // same serial as the board - a "system" = board + gateway.
-            if (data && typeof data === 'object' && data.cpu_temp !== undefined) {
-                device.jetson.cpuTemp = data.cpu_temp;
-            }
-            break;
-    }
-
-    broadcastDeviceUpdate(serialNumber, device);
-});
 
 // ===========================================================================
 // ENCRYPTED TELEMETRY INGEST  (POST /api/ingest)
@@ -443,7 +237,7 @@ function checkAndRecordNonce(serial, bootIdHex, msgSeq) {
 }
 
 // Map the board's flat status JSON onto the device state, using the same field
-// names the MQTT 'status' branch and the board's HTTP API already use.
+// names the board's own HTTP API uses, so both surfaces agree.
 function applyStatusToDevice(device, d) {
     if (d.imuX !== undefined) device.imu.accel = { x: d.imuX, y: d.imuY, z: d.imuZ };
     if (d.imuGx !== undefined) device.imu.gyro = { x: d.imuGx, y: d.imuGy, z: d.imuGz };
@@ -551,8 +345,7 @@ app.post('/api/ingest',
     });
 
 // Broadcast one device's state to authenticated web clients (filtered by user
-// permissions). Shared by the MQTT path and the /api/ingest path so the
-// dashboard behaves identically no matter how the data arrived.
+// permissions).
 function broadcastDeviceUpdate(serialNumber, device) {
     if (isExcludedSerial(serialNumber)) return;
     io.sockets.sockets.forEach((socket) => {

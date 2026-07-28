@@ -1,8 +1,8 @@
 /**
  * @file telemetry_bench.hpp
- * @brief Shared measurement harness for the TLS-vs-AEAD telemetry benchmark.
+ * @brief Measurement harness for the telemetry send path ([BENCH] lines).
  *
- * Compiled into BOTH benchmark builds (main_tls / main_aead) so the printed
+ * compiled into the firmware (main_tls / main_aead) so the printed
  * numbers are directly comparable - same code, same units, same format.
  *
  * Metrics:

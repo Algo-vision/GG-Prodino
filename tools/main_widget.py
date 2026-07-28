@@ -185,14 +185,14 @@ class MainWidget(QWidget):
         ip_config_box.setLayout(ip_config_layout)
         layout.addWidget(ip_config_box)
 
-        # Router/MQTT Broker IP Configuration
-        router_config_box = QGroupBox("Router/MQTT Configuration")
+        # Router IP Configuration
+        router_config_box = QGroupBox("Router Configuration")
         router_config_layout = QGridLayout()
         
         self.router_ip_edit = QLineEdit("192.168.1.1")
         self.router_ip_edit.textChanged.connect(self.on_ip_editing_started)
         
-        router_config_layout.addWidget(QLabel("Router/MQTT Broker IP:"), 0, 0)
+        router_config_layout.addWidget(QLabel("Router IP:"), 0, 0)
         router_config_layout.addWidget(self.router_ip_edit, 0, 1)
         
         self.save_router_ip_btn = QPushButton("Save Router IP")
@@ -551,7 +551,7 @@ class MainWidget(QWidget):
         if ok:
             print(f"save_router_ip: Router IP saved successfully: {router_ip}")
             QMessageBox.information(self, "Router IP Configuration", 
-                f"Router IP updated to: {router_ip}\n\nNote: Reboot the device for MQTT to use the new IP.")
+                f"Router IP updated to: {router_ip}\n\nNote: Reboot the device for the new IP to take effect.")
         else:
             if msg == "Authentication Error":
                 self.timer.stop()
