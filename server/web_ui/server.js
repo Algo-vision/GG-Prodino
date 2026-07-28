@@ -134,13 +134,18 @@ function getDeviceStatus(device) {
 
 // Get all devices as array with status
 // Filters out DEFAULT and UNCONFIGURED devices
+// Placeholder / test serials that must never surface in the UI.
+// SNTEST is tools/test_ingest.py's throwaway serial - never a real board.
+const EXCLUDED_SERIALS = ['DEFAULT', 'UNCONFIGURED', 'NONE', 'SNTEST'];
+function isExcludedSerial(serialNumber) {
+    return EXCLUDED_SERIALS.includes(String(serialNumber).toUpperCase());
+}
+
 function getDeviceList() {
     const deviceList = [];
-    // SNTEST is tools/test_ingest.py's throwaway serial - never a real board.
-    const EXCLUDED_SERIALS = ['DEFAULT', 'UNCONFIGURED', 'NONE', 'SNTEST'];
     devices.forEach((device, serialNumber) => {
         // Skip excluded serial numbers
-        if (EXCLUDED_SERIALS.includes(serialNumber.toUpperCase())) {
+        if (isExcludedSerial(serialNumber)) {
             return;
         }
         deviceList.push({
@@ -524,6 +529,7 @@ app.post('/api/ingest',
 // permissions). Shared by the MQTT path and the /api/ingest path so the
 // dashboard behaves identically no matter how the data arrived.
 function broadcastDeviceUpdate(serialNumber, device) {
+    if (isExcludedSerial(serialNumber)) return;
     io.sockets.sockets.forEach((socket) => {
         if (socket.user) {
             const filteredList = filterDevicesForUser(getDeviceList(), socket.user);
@@ -555,8 +561,10 @@ io.on('connection', (socket) => {
     // Send current device list (filtered)
     socket.emit('devices_list', filteredDeviceList);
 
-    // Send device states (only for devices user can access)
+    // Send device states (only for devices user can access, never placeholders -
+    // otherwise the UI can end up "viewing" a device that is not in the fleet list)
     devices.forEach((device, serialNumber) => {
+        if (isExcludedSerial(serialNumber)) return;
         if (allowedSerials === null || allowedSerials.includes(serialNumber)) {
             socket.emit('device_update', {
                 serialNumber: serialNumber,
