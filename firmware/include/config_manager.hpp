@@ -68,12 +68,18 @@ struct Config {
     // IMU Mount Orientation
     uint8_t imu_mount_orientation;            ///< ImuMountOrientation enum value (see i2c_imu_gps.hpp)
 
+    // Secure telemetry (per-board key + replay protection)
+    uint8_t device_key[32];                   ///< Per-board ChaCha20-Poly1305 key (WRITE-ONLY: never returned by any endpoint)
+    bool device_key_set;                      ///< True once a key has been provisioned
+    uint32_t telemetry_boot_epoch;            ///< Incremented once per boot; high half of the AEAD nonce (never per-message: flash wear)
+
     /**
      * @brief Constructor - initializes with default values
      */
     Config() : whitelist_count(0), serial_number_set(false),
                validation_marker(0), motor_work_seconds(0), burned_hours_seconds(0),
-               imu_mount_orientation(0) {
+               imu_mount_orientation(0), device_key_set(false), telemetry_boot_epoch(0) {
+        memset(device_key, 0, sizeof(device_key));
         // Default controller IP: 192.168.1.198
         controller_ip_bytes[0] = 192;
         controller_ip_bytes[1] = 168;
@@ -208,6 +214,32 @@ void configSetRouterIP(const IPAddress& ip);
  * @param orientation ImuMountOrientation enum value (see i2c_imu_gps.hpp)
  */
 void configSetImuMountOrientation(uint8_t orientation);
+
+// ---------------------------------------------------------------------------
+// Secure-telemetry key + replay counter
+// ---------------------------------------------------------------------------
+
+/**
+ * @brief Burn the per-board telemetry key to flash (technician action).
+ * @param key32 pointer to exactly 32 key bytes
+ * @return true on success
+ * @note WRITE-ONLY by design: there is deliberately no getter that returns the
+ *       key off-board. Only the telemetry module reads it, in-place.
+ */
+bool configSetDeviceKey(const uint8_t* key32);
+
+/** @return true if a device key has been provisioned. */
+bool configHasDeviceKey();
+
+/** @brief Copy the device key into out32 (internal use by the telemetry module). */
+bool configGetDeviceKey(uint8_t* out32);
+
+/**
+ * @brief Increment and persist the boot epoch; call ONCE per boot.
+ * @return the new epoch value (high half of the AEAD nonce).
+ * @note One flash write per boot - never per message (flash wear).
+ */
+uint32_t configBumpTelemetryBootEpoch();
 
 /**
  * @brief Set whitelist IPs

@@ -44,6 +44,8 @@
 #include "relay_controller.hpp"
 #include "ocu_monitor.hpp"
 #include "mqtt_handler.hpp"
+#include "telemetry_bench.hpp"   // shared [BENCH] harness (both builds)
+#include "secure_telemetry.hpp"  // AEAD telemetry (used when TELEMETRY_MODE_AEAD)
 #include <SSLClient.h>
 #include "aws_certs_store.h"   // AWS_ENDPOINT, AWS_PORT, AWS_DEV_CERT, AWS_DEV_KEY
 #include "aws_root_ca.h"       // TAs, TAs_NUM (AWS server trust anchor)
@@ -307,7 +309,12 @@ void setup() {
     Serial.print("[RAM] target = "); Serial.print(AWS_ENDPOINT); Serial.print(":"); Serial.println(AWS_PORT);
     Serial.println("MQTT handler initialized. Will connect to AWS over TLS in loop()...");
 
-    Serial.println("[TEST] will attempt the REAL AWS TLS handshake + publish in loop()");
+#if defined(TELEMETRY_MODE_AEAD)
+    telemetryInit();     // loads the per-board key + bumps the boot epoch
+    Serial.println("[TEST] telemetry mode = AEAD (ChaCha20-Poly1305 over plain HTTP)");
+#else
+    Serial.println("[TEST] telemetry mode = TLS (AWS IoT publish window)");
+#endif
     
     // Print startup info
     Serial.println("Starting up...");
@@ -334,6 +341,8 @@ void setup() {
 // ============================================================================
 
 void loop() {
+    bench::loopTick();   // measures max loop block + min free RAM (both builds)
+
     // Handle OTA updates in technician mode
     if (technician_mode) {
         ArduinoOTA.handle();
@@ -371,16 +380,28 @@ void loop() {
     // RAM back. Each piece was measured working today (connect 10s, publish
     // 42ms, HTTP 99.8% between windows).
     // ========================================================================
-    const unsigned long PUBLISH_EVERY_MS = 600000;  // PRODUCTION: publish every 10 min
+    // BENCHMARK: the send interval is the same for both builds so the runs are
+    // directly comparable (override with -D TELEM_INTERVAL_MS=...).
+#ifndef TELEM_INTERVAL_MS
+#define TELEM_INTERVAL_MS 60000UL
+#endif
+    const unsigned long PUBLISH_EVERY_MS = TELEM_INTERVAL_MS;
     static unsigned long lastPubWindow = 0;
     static bool firstWindowDone = false;
     unsigned long windowDue = firstWindowDone ? PUBLISH_EVERY_MS : 15000;
     if (millis() - lastPubWindow >= windowDue) {
         lastPubWindow = millis();
         firstWindowDone = true;
+
+#if defined(TELEMETRY_MODE_AEAD)
+        // ---- NEW: ChaCha20-Poly1305 packet over plain HTTP (no handshake) ----
+        telemetrySendStatus();          // instrumented inside (bench::sendEnd)
+#else
+        // ---- OLD: TLS publish window - connect, publish, disconnect ----
+        uint32_t tb = bench::sendBegin();
         Serial.print("\n[PUB] window OPEN (HTTP pauses). freeRam=");
         Serial.println(freeRam());
-        unsigned long t0 = millis();
+        bool pubOk = false;
         if (mqttHandler.connectToMQTTBroker()) {
             // no statusUpdate() here - the 1 Hz loop keeps g_status fresh, and
             // skipping it removes I2C time from the window
@@ -388,15 +409,24 @@ void loop() {
             mqttHandler.publishStatus(doc);
             // pump the SSL engine so the record is fully on the wire before close
             for (int i = 0; i < 5; i++) { s_flushing.available(); delay(10); }
-            Serial.print("[PUB] *** published to AWS, window took ");
-            Serial.print(millis() - t0); Serial.println(" ms ***");
-        } else {
-            Serial.print("[PUB] connect FAILED after ");
-            Serial.print(millis() - t0); Serial.println(" ms (will retry next window)");
+            pubOk = true;
         }
         mqttHandler.forceDisconnect();   // release the TLS heap -> HTTP gets it back
         Serial.print("[PUB] window CLOSED (HTTP resumes). freeRam=");
         Serial.println(freeRam());
+        bench::sendEnd(tb, pubOk);
+#endif
+    }
+
+    // periodic benchmark summary (identical in both builds)
+    static unsigned long lastBenchReport = 0;
+    if (millis() - lastBenchReport >= 10000) {
+        lastBenchReport = millis();
+#if defined(TELEMETRY_MODE_AEAD)
+        bench::report("AEAD");
+#else
+        bench::report("TLS");
+#endif
     }
 
     httpServerLoop();            // HTTP served every iteration between windows
@@ -589,6 +619,33 @@ void handleSerialCommands() {
             }
         } else if (cmd == "GET_SN") {
             Serial.println("Serial Number: " + serialNumberGet());
+        } else if (cmd.startsWith("SET_KEY:")) {
+            // Provision the per-board telemetry key: SET_KEY:<64 hex chars>
+            // Write-only by design - no command ever reads the key back out.
+            String hex = cmd.substring(8);
+            hex.trim();
+            if (hex.length() != 64) {
+                Serial.println("ERROR: SET_KEY needs exactly 64 hex chars (32 bytes)");
+            } else {
+                uint8_t key[32];
+                bool valid = true;
+                for (int i = 0; i < 32 && valid; i++) {
+                    char hi = hex[i * 2], lo = hex[i * 2 + 1];
+                    auto nib = [&](char ch) -> int {
+                        if (ch >= '0' && ch <= '9') return ch - '0';
+                        if (ch >= 'a' && ch <= 'f') return ch - 'a' + 10;
+                        if (ch >= 'A' && ch <= 'F') return ch - 'A' + 10;
+                        return -1;
+                    };
+                    int h = nib(hi), l = nib(lo);
+                    if (h < 0 || l < 0) valid = false;
+                    else key[i] = (uint8_t)((h << 4) | l);
+                }
+                if (!valid) Serial.println("ERROR: SET_KEY contains non-hex characters");
+                else if (configSetDeviceKey(key)) Serial.println("Reboot to start using the new key");
+            }
+        } else if (cmd == "GET_KEY_STATUS") {
+            Serial.println(configHasDeviceKey() ? "Device key: SET" : "Device key: NOT SET");
         } else if (cmd.startsWith("SET_SN:") && !technician_mode) {
             Serial.println("ERROR: Technician mode required for serial number programming");
             Serial.println("Hold button during startup to enter technician mode");

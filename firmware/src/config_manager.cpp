@@ -372,3 +372,39 @@ bool serialNumberIsModifiable() {
     Config configData = g_configStore.read();
     return !(configData.serial_number_set && configData.validation_marker == CONFIG_VALID_MARKER);
 }
+
+// ============================================================================
+// SECURE-TELEMETRY KEY + REPLAY COUNTER
+// ============================================================================
+
+bool configSetDeviceKey(const uint8_t* key32) {
+    if (key32 == nullptr) return false;
+    Config configData = g_configStore.read();
+    memcpy(configData.device_key, key32, 32);
+    configData.device_key_set = true;
+    configData.validation_marker = CONFIG_VALID_MARKER;
+    g_configStore.write(configData);
+    Serial.println("SUCCESS: device telemetry key burned (32 bytes)");
+    return true;
+}
+
+bool configHasDeviceKey() {
+    Config configData = g_configStore.read();
+    return configData.device_key_set && configData.validation_marker == CONFIG_VALID_MARKER;
+}
+
+bool configGetDeviceKey(uint8_t* out32) {
+    if (out32 == nullptr) return false;
+    Config configData = g_configStore.read();
+    if (!configData.device_key_set) return false;
+    memcpy(out32, configData.device_key, 32);
+    return true;
+}
+
+uint32_t configBumpTelemetryBootEpoch() {
+    Config configData = g_configStore.read();
+    configData.telemetry_boot_epoch++;
+    configData.validation_marker = CONFIG_VALID_MARKER;
+    g_configStore.write(configData);   // ONE write per boot (never per message)
+    return configData.telemetry_boot_epoch;
+}

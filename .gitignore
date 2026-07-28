@@ -29,3 +29,7 @@ firmware/src/aws_certs_store.h
 # board-only-tls branch: SSLClient (vendored, 8KB iobuf) + the public Amazon
 # root CA are COMMITTED here - both required to build, neither is a secret.
 firmware/src/aws_ecc_certs.h
+
+# Per-board telemetry keys (secrets - never commit)
+tools/device_keys.json
+server/web_ui/device_keys.json
