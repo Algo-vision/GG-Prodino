@@ -66,6 +66,8 @@ static int freeRam() { char t; return &t - reinterpret_cast<char*>(sbrk(0)); }
 // loop owns the W5500/SPI bus; touching it from here would corrupt transfers.
 // (ledControllerUpdate/relayControllerUpdate end in digitalWrite - verified.)
 // ============================================================================
+static uint32_t s_maxStatusMs = 0;   // [DIAG] how long the 1 Hz I2C refresh blocks
+
 volatile bool     g_isrTasksEnabled = false;
 volatile uint32_t g_isrTicks = 0;
 volatile uint32_t g_isrLastMs = 0;
@@ -380,6 +382,8 @@ void loop() {
         // ISR health: maxGap should stay ~50-51 ms even THROUGH a publish window
         uint32_t ticks = g_isrTicks, maxGap = g_isrMaxGapMs;
         g_isrMaxGapMs = 0;
+        Serial.print("[DIAG] statusUpdate max="); Serial.print(s_maxStatusMs);
+        Serial.println(" ms  <- blocking I2C sensor read, every 1 s");
         Serial.print("[ISR] ticks="); Serial.print(ticks);
         Serial.print("  maxGap="); Serial.print(maxGap); Serial.println(" ms");
         // [DIAG] W5500 socket table: who owns every socket? (0x14=LISTEN,
@@ -396,10 +400,15 @@ void loop() {
         Serial.println();
     }
 
-    static unsigned long lastStat = 0;
-    if (millis() - lastStat > STATUS_REFRESH_INTERVAL_MS) {
-        lastStat = millis();
-        statusUpdate();          // keep local status fresh (HTTP consumers)
+    // Keep the snapshot fresh for consumers - but ONLY if serving HTTP requests
+    // hasn't already done it. Each get_status refreshes the sensors itself, so
+    // while anything is polling, this would be a duplicated ~41 ms I2C read, and
+    // that duplicate was the longest stall those consumers saw.
+    if (statusMsSinceRefresh() >= STATUS_REFRESH_INTERVAL_MS) {
+        uint32_t ts = millis();
+        statusUpdate();
+        uint32_t d = millis() - ts;
+        if (d > s_maxStatusMs) s_maxStatusMs = d;
     }
 
     // 4. Regular maintenance tasks

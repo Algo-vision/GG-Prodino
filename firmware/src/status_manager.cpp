@@ -131,7 +131,13 @@ void statusInit() {
     Serial.println("Status manager initialized");
 }
 
+/** millis() when statusUpdate() last actually read the sensors */
+static unsigned long s_lastRefreshMs = 0;
+
+unsigned long statusMsSinceRefresh() { return millis() - s_lastRefreshMs; }
+
 void statusUpdate() {
+    s_lastRefreshMs = millis();
     // Read IMU1 Accelerometer
     float ax, ay, az;
     bool imuValid = readAccelerometer(ax, ay, az);

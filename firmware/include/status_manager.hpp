@@ -215,6 +215,16 @@ JsonDocument statusGenerateJson(JsonDocument* requestDoc = nullptr);
  * 
  * Overload for UDP broadcast and other cases where no request is provided.
  */
+/**
+ * @brief Milliseconds since statusUpdate() last read the sensors.
+ *
+ * Every get_status request refreshes the sensors itself, so while a consumer is
+ * polling (the Jetson polls at 20 Hz) the periodic refresh in loop() is pure
+ * duplicated I2C - and it blocks for up to ~41 ms, which showed up as the worst
+ * stall those same consumers saw. Use this to skip it when it is not needed.
+ */
+unsigned long statusMsSinceRefresh();
+
 JsonDocument statusGenerateJsonSimple();
 
 /**

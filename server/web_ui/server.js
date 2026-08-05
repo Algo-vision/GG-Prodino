@@ -88,7 +88,9 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // Configuration
 const PORT = process.env.BACKEND_PORT || 5555;
-const DEVICE_TIMEOUT_MS = 30000; // Device considered offline after 30 seconds
+// Must comfortably exceed the board's telemetry interval (60 s) or the dashboard
+// flips a perfectly healthy device offline between sends. 3 missed sends.
+const DEVICE_TIMEOUT_MS = 180000;
 
 // Multi-Device State Management
 const devices = new Map(); // Key: serialNumber, Value: deviceState
