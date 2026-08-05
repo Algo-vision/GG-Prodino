@@ -10,7 +10,7 @@ Expects:  valid -> 204,  tampered -> 401,  replayed -> 409,  unknown serial -> 4
 
 Defaults to the throwaway serial SNTEST, never a real board.
 """
-import json, os, secrets, struct, sys, urllib.request, urllib.error
+import json, os, secrets, socket, struct, sys, urllib.request, urllib.error
 
 try:
     from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
@@ -62,6 +62,22 @@ def post(pkt):
         return f"ERROR {e}"
 
 
+def post_udp(pkt, timeout=5):
+    """Send over UDP; the server replies with one byte: '2' ok, '4' no, '9' replay."""
+    host = BASE.split("//", 1)[1].split(":")[0]
+    port = int(BASE.rsplit(":", 1)[1])
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s.settimeout(timeout)
+    try:
+        s.sendto(pkt, (host, port))
+        reply, _ = s.recvfrom(8)
+        return {b"2": 204, b"9": 409}.get(reply[:1], 401)
+    except socket.timeout:
+        return "NO REPLY (is UDP open in the security group?)"
+    finally:
+        s.close()
+
+
 def check(name, got, want):
     ok = got == want
     print(f"  {'PASS' if ok else 'FAIL'}  {name:<28} got {got}, expected {want}")
@@ -96,6 +112,13 @@ results.append(check("next valid packet", post(build(seq=10)), 204))
 # board until the backend was restarted. It must be accepted.
 results.append(check("reflashed board (new boot)",
                      post(build(seq=1, boot_id=secrets.token_bytes(8))), 204))
+
+# the same packet over UDP - the transport the board actually uses
+print("\n-- UDP transport --")
+udp_boot = secrets.token_bytes(8)
+results.append(check("udp valid packet", post_udp(build(seq=1, boot_id=udp_boot)), 204))
+results.append(check("udp replayed packet", post_udp(build(seq=1, boot_id=udp_boot)), 409))
+results.append(check("udp next valid packet", post_udp(build(seq=2, boot_id=udp_boot)), 204))
 
 print(f"\n{sum(results)}/{len(results)} passed")
 sys.exit(0 if all(results) else 1)

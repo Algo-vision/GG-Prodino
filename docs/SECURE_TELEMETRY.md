@@ -226,22 +226,38 @@ from the dashboard.
 
 ## 5. Cost on the board
 
-| | |
-|---|---|
-| Blocks `loop()` per send | **~97 ms** (16 ms crypto + 78 ms TCP connect + 3 ms write) |
-| Total wall time per send | ~175 ms |
-| Send interval | 5 minutes → **0.03% of the board's time** |
-| RAM | zero heap — the packet is built on the stack |
-| HTTP API during a send | 100% success at 25 req/s, worst stall 240 ms |
+The board's own HTTP API is the real-time path — local consumers (e.g. a Jetson)
+poll GPS and IMU at 20 Hz — so what matters is not how long a send *takes*, but
+how long it stops `loop()` from serving them. Three things were done about it:
 
-Waiting for the server's reply and closing the socket are two further ~80 ms
-round trips; those are finished by `telemetryPump()` from `loop()` so they never
-block anything. The remaining 78 ms is the TCP connect — removable only by
-holding a permanent connection open, which is not worth the reconnect handling
-for 78 ms every 5 minutes.
+1. **Waiting for the reply is deferred.** `telemetrySendStatus()` returns as soon
+   as the request is on the wire; `telemetryPump()` collects the response from
+   `loop()` over later iterations. Saves ~80 ms of blocking.
+2. **The connection is held open.** The ~78 ms TCP handshake is paid once at
+   startup, not on every send. Measured against EC2 from the same router the
+   board is on: an idle connection survives at least a 300 s gap, so a 5-minute
+   interval reuses it. If it does drop, the next send transparently reopens it.
+3. **No sensor read in the send path.** The payload uses the snapshot the 1 Hz
+   loop already refreshed (`statusGenerateJsonNoRefresh()`), so the send does not
+   pay for blocking I2C reads.
 
-The interval is a product decision, not a limit: at 175 ms per send the board
-could report every second and still spend 82% of its time idle.
+| | measured (per-send connect) | with the persistent connection |
+|---|---|---|
+| Blocks `loop()` per send | 97 ms (16 crypto + 78 connect + 3 write) | **~15 ms** (crypto + write) |
+| HTTP API during a send | 100% at 25 req/s, worst stall 240 ms | worst stall expected ~50 ms |
+
+> The 97 ms column is measured on hardware. The persistent-connection column is
+> the design target — the keep-alive behaviour it depends on is measured, but the
+> board-side figure still needs confirming on the bench.
+
+The interval is a product decision, not a limit: telemetry at 5 minutes costs
+about 0.005% of the board's time.
+
+**UDP alternative.** Build with `-D TELEM_USE_UDP=1` and the send becomes a
+single datagram — no handshake, no teardown, no connection to keep alive. The
+packet is already self-contained and authenticated, so nothing is lost but
+delivery confirmation, and telemetry is best-effort anyway. It is not the default
+only because inbound UDP must first be opened in the EC2 security group.
 
 ---
 

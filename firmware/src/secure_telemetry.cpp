@@ -9,6 +9,7 @@
 #include "telemetry_bench.hpp"
 
 #include <Ethernet.h>
+#include <EthernetUdp.h>
 #include <ArduinoJson.h>
 #include <bearssl.h>
 
@@ -54,6 +55,21 @@ static bool hexToKey(const char* hex, uint8_t out[32]) {
 #define TELEM_PATH "/api/ingest"
 #endif
 
+// Transport. UDP is the better fit and is much cheaper on the board: a TCP POST
+// costs three ~80 ms round trips (connect, reply, close), and the connect alone
+// blocks loop() for 78 ms of the 97 ms total. UDP has no handshake, so a send is
+// just the crypto plus the write - about 19 ms.
+//
+// Nothing is lost by dropping TCP: the packet is already self-contained and
+// authenticated, so it needs neither ordering nor a stream, and a lost datagram
+// only costs one status update (the server sees the gap in msg_seq).
+//
+// Default is still TCP because UDP must be opened in the EC2 security group
+// first; flip this to 1 once inbound UDP on TELEM_PORT is allowed.
+#ifndef TELEM_USE_UDP
+#define TELEM_USE_UDP 0
+#endif
+
 /// Whole-attempt cap. Telemetry is LOWER priority than the HTTP API: if the
 /// server is slow or gone we give up quickly rather than stalling loop().
 #ifndef TELEM_TIMEOUT_MS
@@ -67,7 +83,12 @@ static bool     s_haveKey = false;
 // A send is split in two: the blocking head (build + encrypt + connect + write)
 // runs in telemetrySendStatus(), and the tail (wait for the reply, close the
 // socket) is pumped from loop() so two ~80 ms round trips never block the board.
+#if TELEM_USE_UDP
+static EthernetUDP s_udp;
+static IPAddress   s_serverIp;
+#else
 static EthernetClient s_client;
+#endif
 static bool     s_pending      = false;
 static uint32_t s_pendingStart = 0;
 static uint32_t s_pendingT0    = 0;
@@ -126,6 +147,18 @@ void telemetryInit() {
         Serial.println(F("[TELEM] no device key provisioned - use SET_KEY:<64 hex> in technician mode"));
         return;
     }
+#if TELEM_USE_UDP
+    // One local port for the whole run - no per-send socket setup, and the
+    // server's reply comes back here.
+    s_udp.begin(TELEM_PORT);
+    s_serverIp.fromString(TELEM_HOST);   // dotted-quad: no DNS round trip
+    Serial.print(F("[TELEM] transport: UDP -> ")); Serial.print(s_serverIp);
+    Serial.print(':'); Serial.println(TELEM_PORT);
+#else
+    Serial.print(F("[TELEM] transport: TCP -> ")); Serial.print(F(TELEM_HOST));
+    Serial.print(':'); Serial.println(TELEM_PORT);
+#endif
+
     // No flash write, nothing for a firmware upload to erase.
     drawBootId(s_bootId);
     s_msgSeq = 0;
@@ -165,7 +198,9 @@ bool telemetrySendStatus() {
 
     // payload: the same status JSON the HTTP API serves, serialized straight
     // into the packet buffer (no String, no intermediate copy)
-    JsonDocument doc = statusGenerateJsonSimple();
+    // No statusUpdate() here: the 1 Hz loop keeps g_status fresh, and its
+    // blocking I2C reads would add straight onto the send's blocking time.
+    JsonDocument doc = statusGenerateJsonNoRefresh();
     size_t bodyLen = serializeJson(doc, (char*)(pkt + TELEM_HEADER_LEN), BODY_MAX);
     if (bodyLen == 0 || bodyLen >= BODY_MAX) {
         bench::sendEnd(t0, false);
@@ -180,24 +215,54 @@ bool telemetrySendStatus() {
                             tag, &br_chacha20_ct_run, 1 /*encrypt*/);
     size_t pktLen = TELEM_HEADER_LEN + bodyLen + TELEM_TAG_LEN;
 
-    // ---- 3. POST it (short timeout, single attempt, never blocks long) ----
+    // ---- 3. ship it ----
     uint32_t tCrypto = millis();          // [PROFILE] build+encrypt done here
-    EthernetClient& c = s_client;
-    c.setConnectionTimeout(TELEM_ATTEMPT_TIMEOUT_MS);
-    if (!c.connect(TELEM_HOST, TELEM_PORT)) {
-        c.stop();
-        Serial.println(F("[TELEM] connect FAILED (receiver down / wrong host / firewall)"));
+
+#if TELEM_USE_UDP
+    // No handshake, no teardown: one datagram, then straight back to loop().
+    s_udp.beginPacket(s_serverIp, TELEM_PORT);
+    s_udp.write(pkt, pktLen);
+    bool sent = (s_udp.endPacket() == 1);
+    if (!sent) {
+        Serial.println(F("[TELEM] UDP send failed (no route / ARP)"));
         bench::sendEnd(t0, false);
         return false;
     }
+    s_pending = true;
+    s_pendingStart = millis();
+    s_pendingT0 = t0;
+    s_profCrypto = tCrypto - t0;
+    s_profConnect = 0;
 
-    uint32_t tConnect = millis();         // [PROFILE] TCP handshake done here
+    Serial.print(F("[PROFILE] blocking: crypto=")); Serial.print(s_profCrypto);
+    Serial.print(F(" send=")); Serial.print(millis() - tCrypto);
+    Serial.println(F(" ms (UDP - no connect, no close)"));
+    return true;
+#else
+    // PERSISTENT connection: the ~78 ms TCP handshake is paid ONCE, not per
+    // send. That handshake used to be 78 of the 97 ms this function blocked
+    // for, and every one of those milliseconds was a millisecond the 20 Hz
+    // HTTP API could not be served.
+    EthernetClient& c = s_client;
+    uint32_t tConnect = millis();
+    if (!c.connected()) {
+        c.stop();
+        c.setConnectionTimeout(TELEM_ATTEMPT_TIMEOUT_MS);
+        Serial.println(F("[TELEM] opening persistent connection..."));
+        if (!c.connect(TELEM_HOST, TELEM_PORT)) {
+            c.stop();
+            Serial.println(F("[TELEM] connect FAILED (server down / wrong host / firewall)"));
+            bench::sendEnd(t0, false);
+            return false;
+        }
+        tConnect = millis();
+    }
 
     char hdr[160];
     int hlen = snprintf(hdr, sizeof(hdr),
         "POST " TELEM_PATH " HTTP/1.1\r\nHost: " TELEM_HOST "\r\n"
         "Content-Type: application/octet-stream\r\n"
-        "Content-Length: %u\r\nConnection: close\r\n\r\n", (unsigned)pktLen);
+        "Content-Length: %u\r\nConnection: keep-alive\r\n\r\n", (unsigned)pktLen);
     c.write((const uint8_t*)hdr, hlen);
     c.write(pkt, pktLen);
 
@@ -213,8 +278,9 @@ bool telemetrySendStatus() {
     Serial.print(F("[PROFILE] blocking: crypto=")); Serial.print(s_profCrypto);
     Serial.print(F(" connect=")); Serial.print(s_profConnect);
     Serial.print(F(" write=")); Serial.print(millis() - tConnect);
-    Serial.println(F(" ms (reply+close deferred)"));
+    Serial.println(F(" ms (reply read later; connection stays open)"));
     return true;
+#endif
 }
 
 void telemetryPump() {
@@ -222,8 +288,31 @@ void telemetryPump() {
 
     bool done = false, ok = false;
 
+#if TELEM_USE_UDP
+    // The server answers with a single byte: '2' accepted, '4' rejected,
+    // '9' replay. Reading it costs nothing, and a lost reply is not an error
+    // worth blocking for - the next send is only minutes away.
+    int sz = s_udp.parsePacket();
+    if (sz > 0) {
+        char verdict = 0;
+        s_udp.read(&verdict, 1);
+        ok = (verdict == '2');
+        if (!ok) {
+            Serial.print(F("[TELEM] server rejected, code ")); Serial.println(verdict);
+        }
+        done = true;
+    } else if (millis() - s_pendingStart > TELEM_ATTEMPT_TIMEOUT_MS) {
+        Serial.println(F("[TELEM] no UDP reply within timeout (packet may still have landed)"));
+        done = true;
+    }
+    if (!done) return;
+    s_pending = false;
+#else
     if (s_client.available()) {
-        char resp[16] = {0};
+        // Drain the WHOLE response: on a keep-alive connection anything left
+        // behind would be misread as the head of the next one. Responses are
+        // small (a 204 and a few headers), so this is a handful of reads.
+        char resp[64] = {0};
         int n = s_client.read((uint8_t*)resp, sizeof(resp) - 1);
         if (n > 12) {
             ok = (resp[9] == '2');           // "HTTP/1.1 2xx"
@@ -232,24 +321,26 @@ void telemetryPump() {
                 Serial.println(&resp[9]);    // 401 = bad auth, 409 = replay
             }
         }
+        uint8_t sink[64];
+        while (s_client.available()) s_client.read(sink, sizeof(sink));
         done = true;
     } else if (!s_client.connected()) {
-        Serial.println(F("[TELEM] connection closed with no reply"));
+        // The server or a NAT box dropped the connection. Not an error worth
+        // blocking for - the next send reopens it.
+        Serial.println(F("[TELEM] connection dropped; will reopen on next send"));
+        s_client.setConnectionTimeout(1);
+        s_client.stop();
         done = true;
     } else if (millis() - s_pendingStart > TELEM_ATTEMPT_TIMEOUT_MS) {
-        Serial.println(F("[TELEM] no reply within timeout"));
+        // Telemetry is best-effort: don't tear the connection down over a slow
+        // or lost reply, just stop waiting for it.
+        Serial.println(F("[TELEM] no reply within timeout (packet may still have landed)"));
         done = true;
     }
 
     if (!done) return;                       // still waiting; costs ~0 per loop
-
-    // stop() waits up to its connection timeout for the FIN handshake to
-    // complete - another ~80 ms round trip, which showed up as a stall even out
-    // here in the pump. The request is already delivered and answered, so drop
-    // the timeout to 1 ms: stop() then force-closes the socket immediately.
-    s_client.setConnectionTimeout(1);
-    s_client.stop();
     s_pending = false;
+#endif
 
     Serial.print(F("[PROFILE] total=")); Serial.print(millis() - s_pendingT0);
     Serial.print(F(" ms (blocking was crypto=")); Serial.print(s_profCrypto);

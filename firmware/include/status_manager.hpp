@@ -218,6 +218,17 @@ JsonDocument statusGenerateJson(JsonDocument* requestDoc = nullptr);
 JsonDocument statusGenerateJsonSimple();
 
 /**
+ * @brief Same document as statusGenerateJsonSimple(), but WITHOUT re-reading the
+ *        sensors first.
+ *
+ * statusUpdate() does blocking I2C reads. The main loop already runs it once a
+ * second, so the telemetry path can reuse that snapshot instead of paying for
+ * its own - which keeps the telemetry send from delaying the 20 Hz HTTP API
+ * that local consumers poll.
+ */
+JsonDocument statusGenerateJsonNoRefresh();
+
+/**
  * @brief Write formatted status to Serial
  * 
  * Outputs human-readable status for debugging.

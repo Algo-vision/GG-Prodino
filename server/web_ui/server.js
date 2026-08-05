@@ -278,71 +278,108 @@ function applyStatusToDevice(device, d) {
     };
 }
 
+// Verify, decrypt and apply one telemetry packet. Transport-agnostic: both the
+// HTTP route and the UDP listener below hand their bytes to this, so there is
+// exactly one implementation of the crypto and the replay rule.
+// Returns an HTTP-style status code: 204 ok, 400 malformed, 401 auth, 409 replay.
+function handleTelemetryPacket(pkt, via) {
+    if (!Buffer.isBuffer(pkt) || pkt.length < TELEM_HEADER_LEN + TELEM_TAG_LEN) {
+        return 400;
+    }
+
+    const header = pkt.subarray(0, TELEM_HEADER_LEN);              // AAD
+    const version = header[0];
+    const serial = header.subarray(1, 17).toString('ascii').replace(/\0.*$/, '');
+    const nonce = header.subarray(17, 29);
+    const bootIdHex = nonce.subarray(0, 8).toString('hex');
+    const msgSeq = nonce.readUInt32BE(8);
+    const ciphertext = pkt.subarray(TELEM_HEADER_LEN, pkt.length - TELEM_TAG_LEN);
+    const tag = pkt.subarray(pkt.length - TELEM_TAG_LEN);
+
+    const key = deviceKeys[serial.toUpperCase()];
+    if (version !== TELEM_VERSION || !key) {
+        console.warn(`🚫 ingest: unknown device serial="${serial}" version=${version}`);
+        return 401;
+    }
+
+    // Authenticity + confidentiality. Throws if anything was tampered with.
+    let plaintext;
+    try {
+        const decipher = crypto.createDecipheriv('chacha20-poly1305', key, nonce,
+                                                 { authTagLength: TELEM_TAG_LEN });
+        decipher.setAAD(header, { plaintextLength: ciphertext.length });
+        decipher.setAuthTag(tag);
+        plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+    } catch (err) {
+        console.warn(`🚫 ingest: BAD AUTH from ${serial} boot=${bootIdHex} seq=${msgSeq}`);
+        return 401;
+    }
+
+    if (!checkAndRecordNonce(serial, bootIdHex, msgSeq)) {
+        console.warn(`🚫 ingest: REPLAY from ${serial} boot=${bootIdHex} seq=${msgSeq}`);
+        return 409;
+    }
+
+    let data;
+    try {
+        data = JSON.parse(plaintext.toString('utf8'));
+    } catch (err) {
+        console.warn(`🚫 ingest: ${serial} sent ${plaintext.length}B that is not JSON`);
+        return 400;
+    }
+
+    if (!devices.has(serial)) {
+        console.log(`📱 New device discovered via ingest: ${serial}`);
+        devices.set(serial, createDefaultDeviceState(serial));
+    }
+    const device = devices.get(serial);
+    device.lastSeen = Date.now();
+    device.connected = true;
+    applyStatusToDevice(device, data);
+
+    console.log(`🔐 [${serial}] ${via} boot=${bootIdHex.slice(0, 8)} seq=${msgSeq} ${pkt.length}B ` +
+                `pitch=${data.pitch} roll=${data.roll} ip=${data.controllerIp}`);
+
+    broadcastDeviceUpdate(serial, device);
+    return 204;
+}
+
 // express.json() is global, so this route brings its own raw-body parser.
 app.post('/api/ingest',
     express.raw({ type: () => true, limit: '8kb' }),
-    (req, res) => {
-        const pkt = req.body;
-        if (!Buffer.isBuffer(pkt) || pkt.length < TELEM_HEADER_LEN + TELEM_TAG_LEN) {
-            return res.sendStatus(400);
-        }
+    (req, res) => res.sendStatus(handleTelemetryPacket(req.body, 'ingest/tcp')));
 
-        const header = pkt.subarray(0, TELEM_HEADER_LEN);              // AAD
-        const version = header[0];
-        const serial = header.subarray(1, 17).toString('ascii').replace(/\0.*$/, '');
-        const nonce = header.subarray(17, 29);
-        const bootIdHex = nonce.subarray(0, 8).toString('hex');
-        const msgSeq = nonce.readUInt32BE(8);
-        const ciphertext = pkt.subarray(TELEM_HEADER_LEN, pkt.length - TELEM_TAG_LEN);
-        const tag = pkt.subarray(pkt.length - TELEM_TAG_LEN);
+// ---------------------------------------------------------------------------
+// The same packet over UDP.
+//
+// A TCP POST costs the board three ~80 ms round trips (connect, reply, close);
+// the connect alone blocked its main loop for 78 ms of the 97 ms total. UDP has
+// no handshake, so a send is just the 16 ms of crypto plus the write.
+//
+// Dropping TCP costs us nothing here: the packet is already self-contained and
+// authenticated, so it needs neither ordering nor a stream. A lost datagram just
+// means one missed status update, and the server sees the gap in msg_seq.
+//
+// The reply is a single ASCII byte ('2' ok, '4' rejected, '9' replay) so the
+// board can still count successes - it reads it without blocking.
+// ---------------------------------------------------------------------------
+const dgram = require('dgram');
+const udpIngest = dgram.createSocket('udp4');
 
-        const key = deviceKeys[serial.toUpperCase()];
-        if (version !== TELEM_VERSION || !key) {
-            console.warn(`🚫 ingest: unknown device serial="${serial}" version=${version}`);
-            return res.sendStatus(401);
-        }
+udpIngest.on('message', (pkt, rinfo) => {
+    let code;
+    try {
+        code = handleTelemetryPacket(pkt, 'ingest/udp');
+    } catch (err) {
+        console.error('udp ingest error:', err.message);
+        code = 400;
+    }
+    const reply = Buffer.from([code === 204 ? 0x32 : code === 409 ? 0x39 : 0x34]);
+    udpIngest.send(reply, rinfo.port, rinfo.address, () => {});
+});
 
-        // Authenticity + confidentiality. Throws if anything was tampered with.
-        let plaintext;
-        try {
-            const decipher = crypto.createDecipheriv('chacha20-poly1305', key, nonce,
-                                                     { authTagLength: TELEM_TAG_LEN });
-            decipher.setAAD(header, { plaintextLength: ciphertext.length });
-            decipher.setAuthTag(tag);
-            plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
-        } catch (err) {
-            console.warn(`🚫 ingest: BAD AUTH from ${serial} boot=${bootIdHex} seq=${msgSeq}`);
-            return res.sendStatus(401);
-        }
-
-        if (!checkAndRecordNonce(serial, bootIdHex, msgSeq)) {
-            console.warn(`🚫 ingest: REPLAY from ${serial} boot=${bootIdHex} seq=${msgSeq}`);
-            return res.sendStatus(409);
-        }
-
-        let data;
-        try {
-            data = JSON.parse(plaintext.toString('utf8'));
-        } catch (err) {
-            console.warn(`🚫 ingest: ${serial} sent ${plaintext.length}B that is not JSON`);
-            return res.sendStatus(400);
-        }
-
-        if (!devices.has(serial)) {
-            console.log(`📱 New device discovered via ingest: ${serial}`);
-            devices.set(serial, createDefaultDeviceState(serial));
-        }
-        const device = devices.get(serial);
-        device.lastSeen = Date.now();
-        device.connected = true;
-        applyStatusToDevice(device, data);
-
-        console.log(`🔐 [${serial}] ingest boot=${bootIdHex.slice(0, 8)} seq=${msgSeq} ${pkt.length}B ` +
-                    `pitch=${data.pitch} roll=${data.roll} ip=${data.controllerIp}`);
-
-        broadcastDeviceUpdate(serial, device);
-        res.sendStatus(204);
-    });
+udpIngest.on('error', (err) => console.error('UDP ingest socket error:', err.message));
+udpIngest.bind(PORT, () => console.log(`📨 UDP telemetry ingest listening on :${PORT}`));
 
 // Broadcast one device's state to authenticated web clients (filtered by user
 // permissions).
@@ -696,6 +733,14 @@ app.get('/api/summary', isAuthenticated, (req, res) => {
         devices: deviceList
     });
 });
+
+// The board holds ONE TCP connection open and reuses it for every telemetry
+// send, so it never pays the ~78 ms TCP handshake (which blocked its main loop
+// and delayed the 20 Hz HTTP API its local consumers poll). Node's default
+// keepAliveTimeout is 5 s, which would hang up between sends - raise it well
+// past the send interval. headersTimeout must exceed keepAliveTimeout.
+server.keepAliveTimeout = 15 * 60 * 1000;   // 15 minutes
+server.headersTimeout   = 16 * 60 * 1000;
 
 server.listen(PORT, () => {
     console.log(`🚀 Backend Server running on http://localhost:${PORT}`);

@@ -106,6 +106,9 @@ extern GG_HAL _gg_hal;
 // IMPLEMENTATION
 // ============================================================================
 
+/// Serialise the CURRENT g_status snapshot - no sensor reads, no I2C.
+static JsonDocument statusBuildJson();
+
 const char* statusGetFirmwareVersion() {
     return FIRMWARE_VERSION;
 }
@@ -338,7 +341,10 @@ void statusUpdate() {
 JsonDocument statusGenerateJson(JsonDocument* requestDoc) {
     // Update hardware status first
     statusUpdate();
+    return statusBuildJson();
+}
 
+static JsonDocument statusBuildJson() {
     JsonDocument resp;
     resp["type"] = "status";
     resp["firmwareVersion"] = FIRMWARE_VERSION;
@@ -429,6 +435,10 @@ JsonDocument statusGenerateJson(JsonDocument* requestDoc) {
 
 JsonDocument statusGenerateJsonSimple() {
     return statusGenerateJson(nullptr);
+}
+
+JsonDocument statusGenerateJsonNoRefresh() {
+    return statusBuildJson();
 }
 
 void statusWriteToSerial() {
