@@ -387,7 +387,10 @@ void httpServerLoop() {
                 trackActiveIP(remoteIP);
                 
                 if (msgType == "get_status") {
-                    resp = statusGenerateJson(&doc);
+                    // Buffered snapshot, NOT a fresh sensor read. loop() refreshes
+                    // it in the background; serving from the buffer keeps a 20 Hz
+                    // consumer from paying ~35 ms of blocking I2C per request.
+                    resp = statusGenerateJsonNoRefresh();
                 }
                 else if (msgType == "set_relay") {
                     uint8_t relayId = doc["relay_id"];
@@ -400,7 +403,7 @@ void httpServerLoop() {
                         } else {
                             relayControllerSet(relayId, state, 0);
                         }
-                        resp = statusGenerateJson(&doc);
+                        resp = statusGenerateJsonNoRefresh();
                     } else {
                         resp["type"] = "error";
                         resp["message"] = "Invalid relay number";
@@ -410,7 +413,7 @@ void httpServerLoop() {
                     bool state = doc["state"];
                     KMPProDinoMKRZero.SetStatusLed(state);
                     g_status.ledInternal = state;
-                    resp = statusGenerateJson(&doc);
+                    resp = statusGenerateJsonNoRefresh();
                 }
                 else if (msgType == "set_io_led") {
                     String color = doc["color"];
@@ -418,7 +421,7 @@ void httpServerLoop() {
                     if (color == "AUTO") {
                         ledControllerSetManualMode(false);
                         Serial.println("LED control returned to AUTO mode");
-                        resp = statusGenerateJson(&doc);
+                        resp = statusGenerateJsonNoRefresh();
                     } else {
                         LED_STATES colorVal;
                         bool validColor = true;
@@ -437,7 +440,7 @@ void httpServerLoop() {
                             ledControllerSetManualMode(true);
                             manual_led_state = colorVal;
                             _gg_hal.set_indicator_led(manual_led_state);
-                            resp = statusGenerateJson(&doc);
+                            resp = statusGenerateJsonNoRefresh();
                         }
                     }
                 }
@@ -538,7 +541,7 @@ void httpServerLoop() {
                 else if (msgType == "reset_led_control") {
                     ledControllerSetManualMode(false);
                     _gg_hal.set_indicator_led(OFF);
-                    resp = statusGenerateJson(&doc);
+                    resp = statusGenerateJsonNoRefresh();
                 }
                 else if (msgType == "get_config") {
                     statusUpdate();

@@ -122,8 +122,15 @@ byte _mac[] = {0x00, 0x08, 0xDC, 0x53, 0x09, 0x72};
 /** HTTP server port */
 constexpr uint16_t LOCAL_PORT = 80;
 
-/** How often the local status snapshot is refreshed for HTTP consumers */
-constexpr unsigned long STATUS_REFRESH_INTERVAL_MS = 1000;
+/**
+ * How often loop() re-reads the sensors into the shared snapshot.
+ *
+ * The HTTP API serves that snapshot rather than reading the sensors per request:
+ * the read blocks for ~35-41 ms on I2C, which a 20 Hz consumer would otherwise
+ * pay on every single poll. 100 ms keeps the data fresh enough (a consumer never
+ * sees data older than one refresh) while leaving the loop free to answer.
+ */
+constexpr unsigned long STATUS_REFRESH_INTERVAL_MS = 100;
 
 // ============================================================================
 // GLOBAL INSTANCES
