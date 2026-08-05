@@ -323,7 +323,7 @@ void loop() {
     // Only the head of a send blocks loop() (~97 ms: crypto + TCP connect); the
     // reply and socket close are finished by telemetryPump() below.
 #ifndef TELEM_INTERVAL_MS
-#define TELEM_INTERVAL_MS 300000UL      // 5 minutes
+#define TELEM_INTERVAL_MS 60000UL       // 1 minute
 #endif
     static unsigned long lastTelemetry = 0;
     static bool firstSendDone = false;
