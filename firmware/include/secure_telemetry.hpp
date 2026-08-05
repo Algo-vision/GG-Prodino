@@ -71,6 +71,15 @@ bool telemetrySendStatus();
  */
 void telemetryPump();
 
+/**
+ * @brief Print min/avg/max blocking time across every send since boot.
+ *
+ * A load test must run with no serial monitor attached, so the per-send
+ * [PROFILE] lines are lost. This survives to be read afterwards and shows
+ * whether the worst send was typical or an outlier.
+ */
+void telemetryPrintBlockStats();
+
 /** @return true if a device key has been provisioned on this board. */
 bool telemetryHasKey();
 

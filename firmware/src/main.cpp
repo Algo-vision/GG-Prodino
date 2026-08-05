@@ -347,6 +347,7 @@ void loop() {
     if (millis() - lastBenchReport >= 10000) {
         lastBenchReport = millis();
         bench::report("AEAD");
+        telemetryPrintBlockStats();
     }
 
     telemetryPump();             // finishes an in-flight send; ~0 when idle

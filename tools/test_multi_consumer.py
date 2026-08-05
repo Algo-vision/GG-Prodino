@@ -44,11 +44,25 @@ def post(payload, timeout=5):
 def consumer(idx, stop_at):
     stats = {"sent": 0, "ok": 0, "fail": 0, "lat": [], "errors": {},
              "max_own_gap": 0.0, "late": 0}
-    try:
-        tok = json.loads(post({"type": "login", "user": USER, "pass": PW}, timeout=5)).get("token")
-    except Exception as e:
-        tok = None
-        stats["errors"]["login"] = str(e)[:40]
+    # Retry the login: with other consumers already saturating the board, the
+    # very first connection can be refused, and a consumer that then runs
+    # tokenless just reports Unauthorized for the whole run - which measures the
+    # harness, not the board.
+    tok = None
+    for attempt in range(20):
+        try:
+            tok = json.loads(post({"type": "login", "user": USER, "pass": PW},
+                                  timeout=5)).get("token")
+            if tok:
+                break
+        except Exception as e:
+            stats["errors"]["login_retry"] = stats["errors"].get("login_retry", 0) + 1
+        time.sleep(0.25)
+    if not tok:
+        stats["errors"]["login_failed"] = 1
+        with lock:
+            results[idx] = stats
+        return
 
     last_ok = time.time()
     nxt = time.time()

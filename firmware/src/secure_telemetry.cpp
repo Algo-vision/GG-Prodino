@@ -94,6 +94,22 @@ static uint32_t s_pendingStart = 0;
 static uint32_t s_pendingT0    = 0;
 static uint32_t s_profCrypto   = 0;
 static uint32_t s_profConnect  = 0;
+
+// Per-send blocking time, accumulated. The [PROFILE] line is printed per send,
+// but a load test has to run with no serial monitor attached (an attached
+// monitor blocks on USB CDC and wrecks the very HTTP throughput being measured),
+// so those lines go nowhere. These survive to be read afterwards, and answer
+// "was every send cheap, or only most of them?" rather than just reporting the
+// worst one.
+static uint32_t s_blkMin = 0xFFFFFFFF, s_blkMax = 0, s_blkSum = 0, s_blkN = 0;
+
+// Worst case of each phase of a send, so a slow one can be attributed rather
+// than guessed at. Under a saturating HTTP load the send competes with the API
+// for the same W5500 - these say exactly where that shows up.
+static uint32_t s_maxBuild   = 0;   // status JSON + ChaCha20-Poly1305
+static uint32_t s_maxReconn  = 0;   // stop() + connect(), 0 while the link holds
+static uint32_t s_maxWrite   = 0;   // handing the bytes to the W5500
+static uint32_t s_reconnects = 0;
 static uint8_t  s_bootId[TELEM_BOOT_ID_LEN];
 static uint32_t s_msgSeq  = 0;
 
@@ -172,6 +188,20 @@ void telemetryInit() {
 
 bool telemetryHasKey() { return s_haveKey; }
 
+void telemetryPrintBlockStats() {
+    Serial.print(F("[TELEM] blocking per send: n=")); Serial.print(s_blkN);
+    if (s_blkN) {
+        Serial.print(F("  min=")); Serial.print(s_blkMin);
+        Serial.print(F(" avg=")); Serial.print(s_blkSum / s_blkN);
+        Serial.print(F(" max=")); Serial.print(s_blkMax);
+    }
+    Serial.println(F(" ms"));
+    Serial.print(F("[TELEM]   worst phase: build=")); Serial.print(s_maxBuild);
+    Serial.print(F(" reconnect=")); Serial.print(s_maxReconn);
+    Serial.print(F(" write=")); Serial.print(s_maxWrite);
+    Serial.print(F(" ms   reconnects=")); Serial.println(s_reconnects);
+}
+
 bool telemetrySendStatus() {
     if (!s_haveKey) return false;
     if (s_pending) {                  // previous send not finished - skip this tick
@@ -244,8 +274,10 @@ bool telemetrySendStatus() {
     // for, and every one of those milliseconds was a millisecond the 20 Hz
     // HTTP API could not be served.
     EthernetClient& c = s_client;
+    if (tCrypto - t0 > s_maxBuild) s_maxBuild = tCrypto - t0;
     uint32_t tConnect = millis();
     if (!c.connected()) {
+        s_reconnects++;
         c.stop();
         c.setConnectionTimeout(TELEM_ATTEMPT_TIMEOUT_MS);
         Serial.println(F("[TELEM] opening persistent connection..."));
@@ -256,8 +288,10 @@ bool telemetrySendStatus() {
             return false;
         }
         tConnect = millis();
+        if (tConnect - tCrypto > s_maxReconn) s_maxReconn = tConnect - tCrypto;
     }
 
+    uint32_t tWriteStart = millis();
     char hdr[160];
     int hlen = snprintf(hdr, sizeof(hdr),
         "POST " TELEM_PATH " HTTP/1.1\r\nHost: " TELEM_HOST "\r\n"
@@ -274,6 +308,14 @@ bool telemetrySendStatus() {
     s_pendingT0 = t0;
     s_profConnect = tConnect - tCrypto;
     s_profCrypto = tCrypto - t0;
+
+    uint32_t wr = millis() - tWriteStart;
+    if (wr > s_maxWrite) s_maxWrite = wr;
+
+    uint32_t blk = millis() - t0;
+    s_blkSum += blk; s_blkN++;
+    if (blk < s_blkMin) s_blkMin = blk;
+    if (blk > s_blkMax) s_blkMax = blk;
 
     Serial.print(F("[PROFILE] blocking: crypto=")); Serial.print(s_profCrypto);
     Serial.print(F(" connect=")); Serial.print(s_profConnect);
