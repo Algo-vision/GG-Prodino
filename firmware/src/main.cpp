@@ -348,6 +348,7 @@ void loop() {
         lastBenchReport = millis();
         bench::report("AEAD");
         telemetryPrintBlockStats();
+        statusPrintSensorTiming();
     }
 
     telemetryPump();             // finishes an in-flight send; ~0 when idle

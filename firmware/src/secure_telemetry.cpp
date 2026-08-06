@@ -110,6 +110,13 @@ static uint32_t s_maxBuild   = 0;   // status JSON + ChaCha20-Poly1305
 static uint32_t s_maxReconn  = 0;   // stop() + connect(), 0 while the link holds
 static uint32_t s_maxWrite   = 0;   // handing the bytes to the W5500
 static uint32_t s_reconnects = 0;
+
+// The last N blocking times, so a short run can be read send-by-send instead of
+// inferred from min/avg/max - "how many were above 18 ms" should be countable,
+// not deduced.
+static constexpr uint8_t RECENT_N = 32;
+static uint16_t s_recent[RECENT_N];
+static uint8_t  s_recentIdx = 0;
 static uint8_t  s_bootId[TELEM_BOOT_ID_LEN];
 static uint32_t s_msgSeq  = 0;
 
@@ -200,6 +207,19 @@ void telemetryPrintBlockStats() {
     Serial.print(F(" reconnect=")); Serial.print(s_maxReconn);
     Serial.print(F(" write=")); Serial.print(s_maxWrite);
     Serial.print(F(" ms   reconnects=")); Serial.println(s_reconnects);
+
+    uint8_t shown = s_recentIdx < RECENT_N ? s_recentIdx : RECENT_N;
+    Serial.print(F("[TELEM]   last ")); Serial.print(shown);
+    Serial.print(F(" sends (ms):"));
+    uint8_t over = 0;
+    for (uint8_t i = 0; i < shown; i++) {
+        uint16_t v = s_recent[(s_recentIdx >= RECENT_N)
+                              ? (uint8_t)((s_recentIdx + i) % RECENT_N) : i];
+        Serial.print(' '); Serial.print(v);
+        if (v > 18) over++;
+    }
+    Serial.print(F("   >18 ms: ")); Serial.print(over);
+    Serial.print('/'); Serial.println(shown);
 }
 
 bool telemetrySendStatus() {
@@ -313,6 +333,7 @@ bool telemetrySendStatus() {
     if (wr > s_maxWrite) s_maxWrite = wr;
 
     uint32_t blk = millis() - t0;
+    s_recent[s_recentIdx++ % RECENT_N] = (uint16_t)(blk > 65535 ? 65535 : blk);
     s_blkSum += blk; s_blkN++;
     if (blk < s_blkMin) s_blkMin = blk;
     if (blk > s_blkMax) s_blkMax = blk;

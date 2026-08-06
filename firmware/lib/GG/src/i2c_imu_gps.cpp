@@ -40,11 +40,18 @@ static bool ensureImuInit(bool &initFlag, unsigned long &lastAttempt, void (*ini
 void initUbloxGNSS()
 {
     if (myGNSS.begin(Wire, GPS_ADDR)) {
-        // Disable NMEA output on I2C to avoid conflicts with TinyGPSPlus
-        // We only want UBX NAV-PVT for accuracy data
+        // NOTE: both protocols are enabled - TinyGPSPlus parses the NMEA stream
+        // for position/time, the UBX NAV-PVT carries the accuracy estimates.
         myGNSS.setI2COutput(COM_TYPE_UBX | COM_TYPE_NMEA);
-        myGNSS.setNavigationFrequency(5); // 5Hz to match our update rate
-        myGNSS.setAutoPVT(true); // Enable automatic NAV-PVT messages
+
+        // The module PUSHES this stream continuously (setAutoPVT), so whatever
+        // it is not drained fast enough to keep up with simply queues in its
+        // buffer and makes the next read more expensive. At 5 Hz against a 1 Hz
+        // read the GPS read cost measured 364 ms and halved the HTTP API's
+        // throughput. 1 Hz matches how often the board actually reads it, and
+        // is the rate a u-blox module natively solves at anyway.
+        myGNSS.setNavigationFrequency(1);
+        myGNSS.setAutoPVT(true); // module pushes NAV-PVT; no polling round trip
         gnss_initialized = true;
         Serial.println("u-blox GNSS (UBX) initialized for accuracy data");
     } else {
@@ -343,8 +350,14 @@ bool readGPSCoords(gps_data &data)
 
     // Read accuracy data from UBX protocol (SparkFun library)
     if (gnss_initialized) {
-        // getPVT() returns true if fresh NAV-PVT data is available
-        if (myGNSS.getPVT()) {
+        // getPVT() returns true if fresh NAV-PVT data is available.
+        // The maxWait argument matters: the library default is 1100 ms, and it
+        // waits the FULL timeout whenever the module has no position solution -
+        // e.g. no antenna, or indoors. That single call was blocking the main
+        // loop long enough to halve the HTTP API's throughput. 25 ms is enough
+        // to collect a solution that is already waiting on the bus, and cheap
+        // when there is none.
+        if (myGNSS.getPVT(25)) {
             data.hAcc = (float)myGNSS.getHorizontalAccEst(); // mm
             data.vAcc = (float)myGNSS.getVerticalAccEst();   // mm
             data.altEllipsoid = (double)myGNSS.getAltitude(); // mm

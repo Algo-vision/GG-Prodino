@@ -42,3 +42,6 @@ BOARD_TLS_INVESTIGATION.md
 GATEWAY_SETUP.md
 AWS_TLS_FEASIBILITY_TEST.md
 SESSION_SUMMARY_*.md
+
+# Reference copy of the other developer's V1.5.1 - not part of this repo
+GG-GRK_V1.5.1/

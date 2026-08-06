@@ -1,6 +1,6 @@
 # Secure telemetry: how it works, and how to key a board
 
-Every 5 minutes each board sends its status to the dashboard server. The message
+Every minute each board sends its status to the dashboard server. The message
 is **encrypted**, **authenticated** and **replay-protected** — but it is *not*
 sent over TLS/HTTPS, because this board cannot afford TLS. The security lives in
 the message itself instead of in the transport.

@@ -90,6 +90,11 @@ static float s_prevImu2[6] = {0, 0, 0, 0, 0, 0};
 static float s_prevAngle[3] = {0, 0, 0};
 static double s_prevGps[3] = {0, 0, 0};
 
+/** How often the GPS is actually read. A u-blox module solves at 1 Hz, and the
+    read costs up to 120 ms against 2 ms for every other sensor - so polling it
+    faster only starved the HTTP API. */
+static const unsigned long GPS_READ_INTERVAL_MS = 1000;
+
 /** N consecutive identical readings are treated as a frozen/stuck sensor */
 static const uint8_t SANITY_STUCK_THRESHOLD = 3;
 
@@ -136,8 +141,24 @@ static unsigned long s_lastRefreshMs = 0;
 
 unsigned long statusMsSinceRefresh() { return millis() - s_lastRefreshMs; }
 
+// Worst blocking time of each sensor group inside statusUpdate(). The whole
+// refresh was measured at up to 126 ms with the MSB attached - by far the
+// largest stall on the board - so it needs attributing to a specific device
+// rather than guessed at.
+static uint32_t s_maxImu1Ms = 0, s_maxImu2Ms = 0, s_maxGpsMs = 0, s_maxPwrMs = 0;
+
+void statusPrintSensorTiming() {
+    Serial.print(F("[DIAG] sensor worst-case: imu1=")); Serial.print(s_maxImu1Ms);
+    Serial.print(F(" imu2=")); Serial.print(s_maxImu2Ms);
+    Serial.print(F(" gps=")); Serial.print(s_maxGpsMs);
+    Serial.print(F(" power=")); Serial.print(s_maxPwrMs);
+    Serial.println(F(" ms"));
+}
+
 void statusUpdate() {
     s_lastRefreshMs = millis();
+    uint32_t tPhase = millis();
+
     // Read IMU1 Accelerometer
     float ax, ay, az;
     bool imuValid = readAccelerometer(ax, ay, az);
@@ -155,6 +176,7 @@ void statusUpdate() {
     g_status.imuGz = gz - g_gyroZOffset;
 
     g_status.imuValid = imuValid;
+    { uint32_t d = millis() - tPhase; if (d > s_maxImu1Ms) s_maxImu1Ms = d; tPhase = millis(); }
 
     // Read IMU2 Accelerometer
     float ax2, ay2, az2;
@@ -173,6 +195,7 @@ void statusUpdate() {
     g_status.imu2Gz = gz2 - g_gyro2ZOffset;
 
     g_status.imu2Valid = imu2Valid;
+    { uint32_t d = millis() - tPhase; if (d > s_maxImu2Ms) s_maxImu2Ms = d; }
 
     // Calculate time delta
     unsigned long currentTime = millis();
@@ -204,9 +227,24 @@ void statusUpdate() {
     }
     // else: neither IMU valid - leave pitch/roll/yaw at their last known values
 
-    // Read GPS data
+    // Read GPS data - but at 1 Hz, not on every refresh.
+    //
+    // The GPS is 60x more expensive than everything else on the bus: the IMUs
+    // and power monitor take 2 ms each, the GPS up to 120 ms, because
+    // readGPSCoords() ends in getPVT() which waits for a position solution.
+    // With no antenna there is no fix, so that wait runs long. A u-blox module
+    // only produces a new solution at 1 Hz anyway, so reading it ten times a
+    // second bought nothing and cost the HTTP API half its throughput.
+    //
+    // Between reads the previous values simply stay in g_status - GPS data does
+    // not go stale in 1 s in any way a consumer of this board can perceive.
+    static unsigned long s_lastGpsReadMs = 0;
+    if (millis() - s_lastGpsReadMs >= GPS_READ_INTERVAL_MS) {
+    s_lastGpsReadMs = millis();
+    tPhase = millis();
     gps_data currentGpsData;
     _gg_hal.get_gps_data(currentGpsData);
+    { uint32_t d = millis() - tPhase; if (d > s_maxGpsMs) s_maxGpsMs = d; }
     g_status.gpsValid = currentGpsData.valid;
     g_status.gpsConnected = gps_conncted;  // Global from i2c_imu_gps.cpp
     g_status.gpsSatellites = currentGpsData.satellites;
@@ -265,7 +303,8 @@ void statusUpdate() {
         s_previousGpsAltitude = 0.0;
         s_previousGpsTime = 0;
     }
-    
+    }   // end of the 1 Hz GPS block
+
     // Read button and LED states
     g_status.button_tech = _gg_hal.get_button_tech_state();
     g_status.ledIo = _gg_hal.get_indicator_led_state();
@@ -300,8 +339,10 @@ void statusUpdate() {
     // Read power monitor
     g_status.powerConnected = s_powerMonitorConnected;
     if (s_powerMonitorConnected) {
+        uint32_t tp = millis();
         g_status.busVoltage = s_powerMonitor.getBusVoltage_V();
         g_status.busCurrent_mA = s_powerMonitor.getCurrent_mA();
+        { uint32_t d = millis() - tp; if (d > s_maxPwrMs) s_maxPwrMs = d; }
     } else {
         g_status.busVoltage = -1.0f;  // Indicate error
         g_status.busCurrent_mA = -1.0f;

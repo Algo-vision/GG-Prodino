@@ -225,6 +225,9 @@ JsonDocument statusGenerateJson(JsonDocument* requestDoc = nullptr);
  */
 unsigned long statusMsSinceRefresh();
 
+/** @brief Print the worst blocking time of each sensor group (IMU1/IMU2/GPS/power). */
+void statusPrintSensorTiming();
+
 JsonDocument statusGenerateJsonSimple();
 
 /**
