@@ -351,7 +351,7 @@ function handleTelemetryPacket(pkt, via) {
     applyStatusToDevice(device, data);
 
     console.log(`🔐 [${serial}] ${via} boot=${bootIdHex.slice(0, 8)} seq=${msgSeq} ${pkt.length}B ` +
-                `pitch=${data.pitch} roll=${data.roll} ip=${data.controllerIp}`);
+                `pitch=${(data.imu||data).pitch} roll=${(data.imu||data).roll} ip=${(data.config||data).controllerIp}`);
 
     broadcastDeviceUpdate(serial, device);
     return 204;

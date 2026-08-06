@@ -511,7 +511,18 @@ void handleSerialCommands() {
         String cmd = Serial.readStringUntil('\n');
         cmd.trim();
         
-        if (cmd.startsWith("SET_SN:") && technician_mode) {
+        // An UNPROVISIONED board may be given its serial over the USB console
+        // without technician mode; changing an existing one still requires it.
+        //
+        // Why: every firmware upload erases FlashStorage, so the serial is lost
+        // on each update and must be re-burned - but re-burning needed the
+        // technician button, and that input floats (pin 28 has no pull
+        // resistor: 20 consecutive reads gave 00110010011101110110, plugged in
+        // or not). That made provisioning impossible. Setting a serial already
+        // requires physical USB access, which is the same trust level SET_KEY
+        // has always used.
+        bool unprovisioned = (serialNumberGet() == "UNCONFIGURED");
+        if (cmd.startsWith("SET_SN:") && (technician_mode || unprovisioned)) {
             String newSN = cmd.substring(7);
             newSN.trim();
             if (serialNumberBurn(newSN.c_str())) {
@@ -546,7 +557,7 @@ void handleSerialCommands() {
             }
         } else if (cmd == "GET_KEY_STATUS") {
             Serial.println(configHasDeviceKey() ? "Device key: SET" : "Device key: NOT SET");
-        } else if (cmd.startsWith("SET_SN:") && !technician_mode) {
+        } else if (cmd.startsWith("SET_SN:")) {
             Serial.println("ERROR: Technician mode required for serial number programming");
             Serial.println("Hold button during startup to enter technician mode");
         }
