@@ -241,109 +241,54 @@ function checkAndRecordNonce(serial, bootIdHex, msgSeq) {
 // Map the board's flat status JSON onto the device state, using the same field
 // names the board's own HTTP API uses, so both surfaces agree.
 function applyStatusToDevice(device, d) {
-    if (d.imuX !== undefined) device.imu.accel = { x: d.imuX, y: d.imuY, z: d.imuZ };
-    if (d.imuGx !== undefined) device.imu.gyro = { x: d.imuGx, y: d.imuGy, z: d.imuGz };
-    if (d.pitch !== undefined) device.imu.orientation = { pitch: d.pitch, roll: d.roll, yaw: d.yaw };
-    if (d.imuValid !== undefined) device.imu.valid = !!d.imuValid;
+    // Firmware 1.5.1 nests the status document (config / overview / imu / gps).
+    // Older firmware sent one flat object, so read through a helper that accepts
+    // either shape - a board on the previous firmware keeps working.
+    const imu = d.imu || d;
+    const gps = d.gps || d;
+    const ov  = d.overview || d;
+    const cfg = d.config || d;
 
-    if (d.gpsLat !== undefined) { device.gps.lat = d.gpsLat; device.gps.lng = d.gpsLng; device.gps.alt = d.gpsAlt; }
-    if (d.gpsGroundSpeed !== undefined) device.gps.speed = d.gpsGroundSpeed;
-    if (d.gpsHeading !== undefined) device.gps.heading = d.gpsHeading;
-    if (d.gpsSpeedNorth !== undefined) {
-        device.gps.velocityNorth = d.gpsSpeedNorth;
-        device.gps.velocityEast = d.gpsSpeedEast;
-        device.gps.velocityDown = d.gpsSpeedDown;
+    if (imu.imuX !== undefined) device.imu.accel = { x: imu.imuX, y: imu.imuY, z: imu.imuZ };
+    if (imu.imuGx !== undefined) device.imu.gyro = { x: imu.imuGx, y: imu.imuGy, z: imu.imuGz };
+    if (imu.pitch !== undefined) device.imu.orientation = { pitch: imu.pitch, roll: imu.roll, yaw: imu.yaw };
+    if (imu.imuValid !== undefined) device.imu.valid = !!imu.imuValid;
+
+    if (gps.gpsLat !== undefined) { device.gps.lat = gps.gpsLat; device.gps.lng = gps.gpsLng; device.gps.alt = gps.gpsAlt; }
+    if (gps.gpsGroundSpeed !== undefined) device.gps.speed = gps.gpsGroundSpeed;
+    if (gps.gpsHeading !== undefined) device.gps.heading = gps.gpsHeading;
+    if (gps.gpsSpeedNorth !== undefined) {
+        device.gps.velocityNorth = gps.gpsSpeedNorth;
+        device.gps.velocityEast = gps.gpsSpeedEast;
+        device.gps.velocityDown = gps.gpsSpeedDown;
     }
-    if (d.gpsTime !== undefined) device.gps.time = d.gpsTime;
-    if (d.gpsValid !== undefined) device.gps.valid = !!d.gpsValid;
-    if (d.GPSConnected !== undefined) device.gps.connected = !!d.GPSConnected;
-    if (d.gpsSatellites !== undefined) device.gps.satellites = d.gpsSatellites;
-    if (d.gpsHAcc !== undefined) device.gps.hAcc = d.gpsHAcc;
-    if (d.gpsVAcc !== undefined) device.gps.vAcc = d.gpsVAcc;
-    if (d.gpsAltEllipsoid !== undefined) device.gps.altEllipsoid = d.gpsAltEllipsoid;
+    if (gps.gpsTime !== undefined) device.gps.time = gps.gpsTime;
+    if (gps.gpsValid !== undefined) device.gps.valid = !!gps.gpsValid;
+    if (gps.gpsConnected !== undefined) device.gps.connected = !!gps.gpsConnected;
+    if (gps.GPSConnected !== undefined) device.gps.connected = !!gps.GPSConnected;
+    if (gps.gpsSatellites !== undefined) device.gps.satellites = gps.gpsSatellites;
+    if (gps.gpsHAcc !== undefined) device.gps.hAcc = gps.gpsHAcc;
+    if (gps.gpsVAcc !== undefined) device.gps.vAcc = gps.gpsVAcc;
+    if (gps.gpsAltEllipsoid !== undefined) device.gps.altEllipsoid = gps.gpsAltEllipsoid;
 
-    if (Array.isArray(d.relays_status)) device.relays = d.relays_status;
-    if (Array.isArray(d.optoin_status)) device.sensors.optos = d.optoin_status;
+    if (Array.isArray(ov.relays_status)) device.relays = ov.relays_status;
+    if (Array.isArray(ov.optoin_status)) device.sensors.optos = ov.optoin_status;
     if (d.button_tech !== undefined) device.sensors.button = !!d.button_tech;
     if (d.ledInternal !== undefined) device.leds.internal = !!d.ledInternal;
     if (d.ledIo !== undefined) device.leds.io = d.ledIo;
 
-    if (d.powerConnected !== undefined) device.power.connected = !!d.powerConnected;
-    if (d.busVoltage !== undefined) device.power.busVoltage = d.busVoltage;
+    if (ov.powerConnected !== undefined) device.power.connected = !!ov.powerConnected;
+    // 1.5.1 renamed busVoltage/busCurrent_mA to systemVoltage/systemCurrent_A.
+    if (ov.systemVoltage !== undefined) device.power.busVoltage = ov.systemVoltage;
+    else if (ov.busVoltage !== undefined) device.power.busVoltage = ov.busVoltage;
 
     device.deviceInfo = {
         ...device.deviceInfo,
         motorWorkHours: d.motorWorkHours !== undefined ? d.motorWorkHours : device.deviceInfo.motorWorkHours,
-        firmwareVersion: d.firmwareVersion || device.deviceInfo.firmwareVersion,
-        controllerIp: d.controllerIp || device.deviceInfo.controllerIp,
-        routerIp: d.routerIp || device.deviceInfo.routerIp
+        firmwareVersion: cfg.firmwareVersion || device.deviceInfo.firmwareVersion,
+        controllerIp: cfg.controllerIp || device.deviceInfo.controllerIp,
+        routerIp: cfg.routerIp || device.deviceInfo.routerIp
     };
-}
-
-// Verify, decrypt and apply one telemetry packet. Transport-agnostic: both the
-// HTTP route and the UDP listener below hand their bytes to this, so there is
-// exactly one implementation of the crypto and the replay rule.
-// Returns an HTTP-style status code: 204 ok, 400 malformed, 401 auth, 409 replay.
-function handleTelemetryPacket(pkt, via) {
-    if (!Buffer.isBuffer(pkt) || pkt.length < TELEM_HEADER_LEN + TELEM_TAG_LEN) {
-        return 400;
-    }
-
-    const header = pkt.subarray(0, TELEM_HEADER_LEN);              // AAD
-    const version = header[0];
-    const serial = header.subarray(1, 17).toString('ascii').replace(/\0.*$/, '');
-    const nonce = header.subarray(17, 29);
-    const bootIdHex = nonce.subarray(0, 8).toString('hex');
-    const msgSeq = nonce.readUInt32BE(8);
-    const ciphertext = pkt.subarray(TELEM_HEADER_LEN, pkt.length - TELEM_TAG_LEN);
-    const tag = pkt.subarray(pkt.length - TELEM_TAG_LEN);
-
-    const key = deviceKeys[serial.toUpperCase()];
-    if (version !== TELEM_VERSION || !key) {
-        console.warn(`🚫 ingest: unknown device serial="${serial}" version=${version}`);
-        return 401;
-    }
-
-    // Authenticity + confidentiality. Throws if anything was tampered with.
-    let plaintext;
-    try {
-        const decipher = crypto.createDecipheriv('chacha20-poly1305', key, nonce,
-                                                 { authTagLength: TELEM_TAG_LEN });
-        decipher.setAAD(header, { plaintextLength: ciphertext.length });
-        decipher.setAuthTag(tag);
-        plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
-    } catch (err) {
-        console.warn(`🚫 ingest: BAD AUTH from ${serial} boot=${bootIdHex} seq=${msgSeq}`);
-        return 401;
-    }
-
-    if (!checkAndRecordNonce(serial, bootIdHex, msgSeq)) {
-        console.warn(`🚫 ingest: REPLAY from ${serial} boot=${bootIdHex} seq=${msgSeq}`);
-        return 409;
-    }
-
-    let data;
-    try {
-        data = JSON.parse(plaintext.toString('utf8'));
-    } catch (err) {
-        console.warn(`🚫 ingest: ${serial} sent ${plaintext.length}B that is not JSON`);
-        return 400;
-    }
-
-    if (!devices.has(serial)) {
-        console.log(`📱 New device discovered via ingest: ${serial}`);
-        devices.set(serial, createDefaultDeviceState(serial));
-    }
-    const device = devices.get(serial);
-    device.lastSeen = Date.now();
-    device.connected = true;
-    applyStatusToDevice(device, data);
-
-    console.log(`🔐 [${serial}] ${via} boot=${bootIdHex.slice(0, 8)} seq=${msgSeq} ${pkt.length}B ` +
-                `pitch=${data.pitch} roll=${data.roll} ip=${data.controllerIp}`);
-
-    broadcastDeviceUpdate(serial, device);
-    return 204;
 }
 
 // express.json() is global, so this route brings its own raw-body parser.

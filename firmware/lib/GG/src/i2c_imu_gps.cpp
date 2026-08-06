@@ -40,16 +40,16 @@ static bool ensureImuInit(bool &initFlag, unsigned long &lastAttempt, void (*ini
 void initUbloxGNSS()
 {
     if (myGNSS.begin(Wire, GPS_ADDR)) {
-        // NOTE: both protocols are enabled - TinyGPSPlus parses the NMEA stream
-        // for position/time, the UBX NAV-PVT carries the accuracy estimates.
+        // Disable NMEA output on I2C to avoid conflicts with TinyGPSPlus
+        // We only want UBX NAV-PVT for accuracy data
         myGNSS.setI2COutput(COM_TYPE_UBX | COM_TYPE_NMEA);
 
-        // The module PUSHES this stream continuously (setAutoPVT), so whatever
-        // it is not drained fast enough to keep up with simply queues in its
-        // buffer and makes the next read more expensive. At 5 Hz against a 1 Hz
-        // read the GPS read cost measured 364 ms and halved the HTTP API's
-        // throughput. 1 Hz matches how often the board actually reads it, and
-        // is the rate a u-blox module natively solves at anyway.
+        // The module PUSHES this stream continuously (setAutoPVT), so anything
+        // not drained fast enough queues in its buffer and makes the next read
+        // more expensive. Measured on the board: at 5 Hz against a 1 Hz read the
+        // GPS read cost 364 ms; matching both to 1 Hz brought it to 121 ms. The
+        // controller serves GPS from a buffer at up to 20 Hz either way, and a
+        // u-blox module natively solves at 1 Hz.
         myGNSS.setNavigationFrequency(1);
         myGNSS.setAutoPVT(true); // module pushes NAV-PVT; no polling round trip
         gnss_initialized = true;
@@ -157,6 +157,26 @@ bool readGyroscope(float &gx, float &gy, float &gz)
     return true;
 }
 
+bool readImuTemperature(float &tempC)
+{
+    if (!ensureImuInit(imu_initialized, s_lastImu1InitAttempt, initIMU))
+    {
+        tempC = 0.0f;
+        return false;
+    }
+
+    uint8_t rawData[2] = {0, 0};
+    if (!imuReadBytes(LSM6DS3_OUT_TEMP_L, rawData, 2)) {
+        tempC = 0.0f;
+        imu_initialized = false;
+        return false;
+    }
+
+    int16_t raw = (int16_t)(rawData[1] << 8 | rawData[0]);
+    tempC = LSM6DS3_TEMP_REFERENCE_C + (raw / LSM6DS3_TEMP_SENSITIVITY_LSB_PER_C);
+    return true;
+}
+
 // ---- Helper functions for IMU2 (0x6B) - mounted 180 deg rotated from IMU1 ----
 void imu2WriteByte(uint8_t reg, uint8_t value)
 {
@@ -252,6 +272,26 @@ bool readGyroscope_2(float &gx, float &gy, float &gz)
     gx = gx_raw * 0.0175;
     gy = gy_raw * 0.0175;
     gz = gz_raw * 0.0175;
+    return true;
+}
+
+bool readImuTemperature_2(float &tempC)
+{
+    if (!ensureImuInit(imu2_initialized, s_lastImu2InitAttempt, initIMU_2))
+    {
+        tempC = 0.0f;
+        return false;
+    }
+
+    uint8_t rawData[2] = {0, 0};
+    if (!imu2ReadBytes(LSM6DS3_OUT_TEMP_L, rawData, 2)) {
+        tempC = 0.0f;
+        imu2_initialized = false;
+        return false;
+    }
+
+    int16_t raw = (int16_t)(rawData[1] << 8 | rawData[0]);
+    tempC = LSM6DS3_TEMP_REFERENCE_C + (raw / LSM6DS3_TEMP_SENSITIVITY_LSB_PER_C);
     return true;
 }
 
@@ -351,12 +391,11 @@ bool readGPSCoords(gps_data &data)
     // Read accuracy data from UBX protocol (SparkFun library)
     if (gnss_initialized) {
         // getPVT() returns true if fresh NAV-PVT data is available.
-        // The maxWait argument matters: the library default is 1100 ms, and it
+        // The maxWait argument matters: the library default is 1100 ms and it
         // waits the FULL timeout whenever the module has no position solution -
-        // e.g. no antenna, or indoors. That single call was blocking the main
-        // loop long enough to halve the HTTP API's throughput. 25 ms is enough
-        // to collect a solution that is already waiting on the bus, and cheap
-        // when there is none.
+        // no antenna, or indoors. Measured at 120 ms per call on this board with
+        // no fix, which halved the HTTP API's throughput. 25 ms still collects a
+        // solution already waiting on the bus, and is cheap when there is none.
         if (myGNSS.getPVT(25)) {
             data.hAcc = (float)myGNSS.getHorizontalAccEst(); // mm
             data.vAcc = (float)myGNSS.getVerticalAccEst();   // mm

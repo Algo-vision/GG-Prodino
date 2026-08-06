@@ -5,7 +5,7 @@
  * Handles persistent storage of device configuration including:
  * - Controller IP address
  * - IP whitelist for authentication
- * - Router IP
+ * - Router/MQTT broker IP
  * - Serial number
  * - Motor work hours counter
  * 
@@ -18,13 +18,14 @@
 #include <Arduino.h>
 #include <IPAddress.h>
 #include <FlashStorage.h>
+#include <imu_mount_orientation.hpp>
 
 // ============================================================================
 // CONSTANTS
 // ============================================================================
 
 /** Maximum number of whitelisted IPs */
-constexpr int MAX_WHITELIST_IPS = 10;
+constexpr int MAX_WHITELIST_IPS = 3;
 
 /** Maximum length of serial number string */
 constexpr int MAX_SERIAL_NUMBER_LENGTH = 16;
@@ -51,8 +52,8 @@ struct Config {
     byte whitelist_ip_bytes[MAX_WHITELIST_IPS][4];  ///< Whitelisted client IPs
     int whitelist_count;                      ///< Number of valid whitelist entries
     
-    // Router Configuration
-    byte router_ip_bytes[4];                  ///< Teltonika router IP (the board's gateway)
+    // Router/MQTT Broker Configuration
+    byte router_ip_bytes[4];                  ///< Teltonika router IP (MQTT broker)
     
     // Serial Number Configuration
     char serial_number[MAX_SERIAL_NUMBER_LENGTH];  ///< Device serial number
@@ -65,12 +66,22 @@ struct Config {
     // Burned Hours Counter
     uint32_t burned_hours_seconds;            ///< Total operational seconds since serial number burn
 
-    // IMU Mount Orientation
-    uint8_t imu_mount_orientation;            ///< ImuMountOrientation enum value (see i2c_imu_gps.hpp)
+    // IMU Axis Mapping - which sensor axis each angle rotates about.
+    // Kept last in the struct so that growing it from the single
+    // imu_mount_orientation byte it replaced does not shift any field above.
+    uint8_t imu_pitch_axis;                   ///< ImuAxis value (see imu_mount_orientation.hpp)
+    uint8_t imu_roll_axis;                    ///< ImuAxis value
+    uint8_t imu_yaw_axis;                     ///< ImuAxis value
+    uint8_t imu_pitch_invert;                 ///< 0 or 1 - negate the pitch axis
+    uint8_t imu_roll_invert;                  ///< 0 or 1 - negate the roll axis
+    uint8_t imu_yaw_invert;                   ///< 0 or 1 - negate the yaw axis
 
-    // Secure telemetry (per-board key). The nonce's boot id is NOT stored here:
-    // FlashStorage lives inside the sketch image, so a firmware upload erases it
-    // and the board would restart its counter - see secure_telemetry.hpp.
+    // Secure telemetry key. Appended AFTER the axis map for the same reason it
+    // was kept last: adding it must not shift any field above. The nonce's boot
+    // id is deliberately NOT stored - FlashStorage lives inside the sketch
+    // image, so a firmware upload erases it and the board would restart its
+    // counter, which the server correctly rejects as a replay. See
+    // secure_telemetry.hpp.
     uint8_t device_key[32];                   ///< Per-board ChaCha20-Poly1305 key (WRITE-ONLY: never returned by any endpoint)
     bool device_key_set;                      ///< True once a key has been provisioned
 
@@ -79,7 +90,9 @@ struct Config {
      */
     Config() : whitelist_count(0), serial_number_set(false),
                validation_marker(0), motor_work_seconds(0), burned_hours_seconds(0),
-               imu_mount_orientation(0), device_key_set(false) {
+               imu_pitch_axis(IMU_AXIS_X), imu_roll_axis(IMU_AXIS_Y),
+               imu_yaw_axis(IMU_AXIS_Z), imu_pitch_invert(0),
+               imu_roll_invert(0), imu_yaw_invert(0), device_key_set(false) {
         memset(device_key, 0, sizeof(device_key));
         // Default controller IP: 192.168.1.198
         controller_ip_bytes[0] = 192;
@@ -87,7 +100,7 @@ struct Config {
         controller_ip_bytes[2] = 1;
         controller_ip_bytes[3] = 198;
         
-        // Default whitelist IPs: the operator laptops allowed to reach the API.
+        // Default whitelist IPs: 192.168.1.20, 192.168.1.169, 192.168.1.33
         whitelist_ip_bytes[0][0] = 192; whitelist_ip_bytes[0][1] = 168;
         whitelist_ip_bytes[0][2] = 1;   whitelist_ip_bytes[0][3] = 20;
 
@@ -96,17 +109,8 @@ struct Config {
 
         whitelist_ip_bytes[2][0] = 192; whitelist_ip_bytes[2][1] = 168;
         whitelist_ip_bytes[2][2] = 1;   whitelist_ip_bytes[2][3] = 33;
+
         whitelist_count = 3;
-        
-        // Default router IP: 192.168.1.1 (Teltonika default)
-        router_ip_bytes[0] = 192;
-        router_ip_bytes[1] = 168;
-        router_ip_bytes[2] = 1;
-        router_ip_bytes[3] = 1;
-        
-        // Default serial number (unconfigured)
-        memset(serial_number, 0, sizeof(serial_number));
-        strcpy(serial_number, "UNCONFIGURED");
     }
 };
 
@@ -123,20 +127,14 @@ extern IPAddress g_whitelist[MAX_WHITELIST_IPS];
 /** Number of IPs in whitelist */
 extern int g_whitelistCount;
 
-/** Router IP address (the board's gateway) */
-extern IPAddress g_routerIP;
-
-/** Device serial number string */
-extern String g_serialNumber;
-
 /** Current motor work seconds counter */
 extern uint32_t g_motorWorkSeconds;
 
 /** Seconds of operation since the serial number was burned */
 extern uint32_t g_burnedHoursSeconds;
 
-/** Current IMU mount orientation (ImuMountOrientation enum value, see i2c_imu_gps.hpp) */
-extern uint8_t g_imuMountOrientation;
+/** Which sensor axis each angle rotates about (see imu_mount_orientation.hpp) */
+extern ImuAxisMap g_imuAxisMap;
 
 /** Flag to indicate a reboot is pending */
 extern bool g_rebootPending;
@@ -201,35 +199,16 @@ float configGetBurnedHoursFloat();
 void configSetControllerIP(const IPAddress& ip);
 
 /**
- * @brief Set the router IP address
+ * @brief Set router/MQTT broker IP address
  * @param ip New router IP address
  */
 void configSetRouterIP(const IPAddress& ip);
 
 /**
- * @brief Set IMU mount orientation
- * @param orientation ImuMountOrientation enum value (see i2c_imu_gps.hpp)
+ * @brief Set which sensor axis each angle rotates about
+ * @param map Axis map; must be a valid permutation (see imuAxisMapIsValid())
  */
-void configSetImuMountOrientation(uint8_t orientation);
-
-// ---------------------------------------------------------------------------
-// Secure-telemetry key + replay counter
-// ---------------------------------------------------------------------------
-
-/**
- * @brief Burn the per-board telemetry key to flash (technician action).
- * @param key32 pointer to exactly 32 key bytes
- * @return true on success
- * @note WRITE-ONLY by design: there is deliberately no getter that returns the
- *       key off-board. Only the telemetry module reads it, in-place.
- */
-bool configSetDeviceKey(const uint8_t* key32);
-
-/** @return true if a device key has been provisioned. */
-bool configHasDeviceKey();
-
-/** @brief Copy the device key into out32 (internal use by the telemetry module). */
-bool configGetDeviceKey(uint8_t* out32);
+void configSetImuAxisMap(const ImuAxisMap& map);
 
 /**
  * @brief Set whitelist IPs
@@ -278,5 +257,17 @@ String serialNumberGet();
  * @return true if serial number can be burned (not yet set)
  */
 bool serialNumberIsModifiable();
+
+/**
+ * @brief Burn the per-board telemetry key (32 bytes) into flash.
+ * @note WRITE-ONLY: nothing ever reads this back out of the board.
+ */
+bool configSetDeviceKey(const uint8_t* key32);
+
+/** @return true if a device key has been provisioned. */
+bool configHasDeviceKey();
+
+/** @brief Copy the device key into out32 (internal use by the telemetry module). */
+bool configGetDeviceKey(uint8_t* out32);
 
 #endif // CONFIG_MANAGER_HPP

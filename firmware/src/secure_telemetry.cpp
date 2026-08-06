@@ -233,13 +233,17 @@ bool telemetrySendStatus() {
 
     // ---- 1. build the packet on the STACK (no heap: proven wedge cause) ----
     // [header 29][ciphertext N][tag 16]
-    static constexpr size_t BODY_MAX = 1200;
+    // V1.5.1's status document is nested (config/overview/imu/gps) and
+    // measures ~1350 B, so the old 1200 B cap silently failed every send at the
+    // build step. Sized with headroom; the buffer is on the STACK, so it costs
+    // nothing when no send is in flight.
+    static constexpr size_t BODY_MAX = 1800;
     uint8_t pkt[TELEM_HEADER_LEN + BODY_MAX + TELEM_TAG_LEN];
 
     // header: version | serial(16, NUL-padded) | nonce(12)
     pkt[0] = TELEM_VERSION;
     memset(pkt + 1, 0, TELEM_SERIAL_LEN);
-    strncpy((char*)(pkt + 1), g_serialNumber.c_str(), TELEM_SERIAL_LEN);
+    strncpy((char*)(pkt + 1), serialNumberGet().c_str(), TELEM_SERIAL_LEN);
 
     uint32_t seq = ++s_msgSeq;
     uint8_t* nonce = pkt + 1 + TELEM_SERIAL_LEN;
@@ -248,11 +252,14 @@ bool telemetrySendStatus() {
 
     // payload: the same status JSON the HTTP API serves, serialized straight
     // into the packet buffer (no String, no intermediate copy)
-    // No statusUpdate() here: the 1 Hz loop keeps g_status fresh, and its
-    // blocking I2C reads would add straight onto the send's blocking time.
-    JsonDocument doc = statusGenerateJsonNoRefresh();
+    // statusGenerateJsonSimple() does NOT sample the sensors - loop() owns that
+    // cadence - so a send never pays for a blocking I2C read on top.
+    JsonDocument doc = statusGenerateJsonSimple();
     size_t bodyLen = serializeJson(doc, (char*)(pkt + TELEM_HEADER_LEN), BODY_MAX);
     if (bodyLen == 0 || bodyLen >= BODY_MAX) {
+        Serial.print(F("[TELEM] payload does not fit: "));
+        Serial.print((unsigned)bodyLen); Serial.print('/');
+        Serial.println((unsigned)BODY_MAX);
         bench::sendEnd(t0, false);
         return false;
     }

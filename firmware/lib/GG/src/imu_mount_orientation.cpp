@@ -1,47 +1,57 @@
 #include "imu_mount_orientation.hpp"
 #include <string.h>
 
-void applyMountOrientationRemap(float &x, float &y, float &z, uint8_t orientation) {
-    float rx = x, ry = y, rz = z;
-    switch (orientation) {
-        case MOUNT_TILT_FORWARD:  // rotate -90 deg about X: y'=z, z'=-y
-            y = rz;
-            z = -ry;
-            break;
-        case MOUNT_TILT_BACKWARD: // rotate +90 deg about X: y'=-z, z'=y
-            y = -rz;
-            z = ry;
-            break;
-        case MOUNT_TILT_LEFT:     // rotate +90 deg about Y: x'=z, z'=-x
-            x = rz;
-            z = -rx;
-            break;
-        case MOUNT_TILT_RIGHT:    // rotate -90 deg about Y: x'=-z, z'=x
-            x = -rz;
-            z = rx;
-            break;
-        case MOUNT_STANDING:
-        default:
-            break; // no change
+ImuAxisMap imuAxisMapDefault() {
+    ImuAxisMap map;
+    map.pitchAxis   = IMU_AXIS_X;
+    map.rollAxis    = IMU_AXIS_Y;
+    map.yawAxis     = IMU_AXIS_Z;
+    map.pitchInvert = 0;
+    map.rollInvert  = 0;
+    map.yawInvert   = 0;
+    return map;
+}
+
+bool imuAxisMapIsValid(const ImuAxisMap &map) {
+    if (map.pitchAxis > IMU_AXIS_Z || map.rollAxis > IMU_AXIS_Z || map.yawAxis > IMU_AXIS_Z) {
+        return false;
+    }
+    // Invert flags are stored as bytes, so reject anything that is not a clean
+    // 0/1 - that is how junk from a pre-invert firmware's flash is caught.
+    if (map.pitchInvert > 1 || map.rollInvert > 1 || map.yawInvert > 1) {
+        return false;
+    }
+    // The axes must be a permutation - two angles sharing an axis would drop
+    // one sensor axis entirely and double-count another.
+    return (map.pitchAxis != map.rollAxis) &&
+           (map.pitchAxis != map.yawAxis) &&
+           (map.rollAxis  != map.yawAxis);
+}
+
+void applyImuAxisMap(float &x, float &y, float &z, const ImuAxisMap &map) {
+    if (!imuAxisMapIsValid(map)) {
+        return;  // leave the reading untouched rather than corrupting it
+    }
+
+    const float raw[3] = {x, y, z};
+    x = map.pitchInvert ? -raw[map.pitchAxis] : raw[map.pitchAxis];
+    y = map.rollInvert  ? -raw[map.rollAxis]  : raw[map.rollAxis];
+    z = map.yawInvert   ? -raw[map.yawAxis]   : raw[map.yawAxis];
+}
+
+const char* imuAxisToString(uint8_t axis) {
+    switch (axis) {
+        case IMU_AXIS_Y: return "Y";
+        case IMU_AXIS_Z: return "Z";
+        case IMU_AXIS_X:
+        default:         return "X";
     }
 }
 
-const char* imuMountOrientationToString(uint8_t orientation) {
-    switch (orientation) {
-        case MOUNT_TILT_FORWARD:  return "TILT_FORWARD";
-        case MOUNT_TILT_BACKWARD: return "TILT_BACKWARD";
-        case MOUNT_TILT_LEFT:     return "TILT_LEFT";
-        case MOUNT_TILT_RIGHT:    return "TILT_RIGHT";
-        case MOUNT_STANDING:
-        default:                  return "STANDING";
-    }
-}
-
-int imuMountOrientationFromString(const char* orientation) {
-    if (strcmp(orientation, "STANDING") == 0)       return MOUNT_STANDING;
-    if (strcmp(orientation, "TILT_FORWARD") == 0)  return MOUNT_TILT_FORWARD;
-    if (strcmp(orientation, "TILT_BACKWARD") == 0) return MOUNT_TILT_BACKWARD;
-    if (strcmp(orientation, "TILT_LEFT") == 0)     return MOUNT_TILT_LEFT;
-    if (strcmp(orientation, "TILT_RIGHT") == 0)    return MOUNT_TILT_RIGHT;
+int imuAxisFromString(const char* axis) {
+    if (axis == 0) return -1;
+    if (strcmp(axis, "X") == 0) return IMU_AXIS_X;
+    if (strcmp(axis, "Y") == 0) return IMU_AXIS_Y;
+    if (strcmp(axis, "Z") == 0) return IMU_AXIS_Z;
     return -1;
 }

@@ -26,7 +26,7 @@ IPAddress g_routerIP;
 String g_serialNumber = "UNCONFIGURED";
 uint32_t g_motorWorkSeconds = 0;
 uint32_t g_burnedHoursSeconds = 0;
-uint8_t g_imuMountOrientation = 0;
+ImuAxisMap g_imuAxisMap = {IMU_AXIS_X, IMU_AXIS_Y, IMU_AXIS_Z};
 
 // Reboot scheduling globals
 bool g_rebootPending = false;
@@ -70,7 +70,7 @@ void configSave() {
         configData.whitelist_ip_bytes[i][3] = g_whitelist[i][3];
     }
     
-    // Save router IP
+    // Save router/MQTT broker IP
     configData.router_ip_bytes[0] = g_routerIP[0];
     configData.router_ip_bytes[1] = g_routerIP[1];
     configData.router_ip_bytes[2] = g_routerIP[2];
@@ -83,7 +83,12 @@ void configSave() {
     configData.burned_hours_seconds = g_burnedHoursSeconds;
 
     // Save IMU mount orientation
-    configData.imu_mount_orientation = g_imuMountOrientation;
+    configData.imu_pitch_axis   = g_imuAxisMap.pitchAxis;
+    configData.imu_roll_axis    = g_imuAxisMap.rollAxis;
+    configData.imu_yaw_axis     = g_imuAxisMap.yawAxis;
+    configData.imu_pitch_invert = g_imuAxisMap.pitchInvert;
+    configData.imu_roll_invert  = g_imuAxisMap.rollInvert;
+    configData.imu_yaw_invert   = g_imuAxisMap.yawInvert;
 
     // Preserve serial number from existing flash data
     Config existingData = g_configStore.read();
@@ -93,7 +98,7 @@ void configSave() {
         configData.serial_number_set = true;
         configData.validation_marker = CONFIG_VALID_MARKER;
     }
-
+    
     // Preserve the telemetry key too. configSave() builds a FRESH Config, so
     // without this any save (an IP change, or the 5-minute work-hours autosave)
     // would silently wipe the provisioned key.
@@ -153,7 +158,7 @@ void configLoad() {
         
         g_motorWorkSeconds = 0;
         g_burnedHoursSeconds = 0;
-        g_imuMountOrientation = 0;
+        g_imuAxisMap = imuAxisMapDefault();
 
         // Save defaults to flash
         configSave();
@@ -177,7 +182,7 @@ void configLoad() {
             );
         }
         
-        // Load router IP
+        // Load router/MQTT broker IP
         g_routerIP = IPAddress(
             configData.router_ip_bytes[0],
             configData.router_ip_bytes[1],
@@ -191,8 +196,16 @@ void configLoad() {
         // Load burned hours
         g_burnedHoursSeconds = configData.burned_hours_seconds;
 
-        // Load IMU mount orientation
-        g_imuMountOrientation = configData.imu_mount_orientation;
+        // Load IMU axis mapping. Flash written by a firmware predating the
+        // axis map holds junk in these bytes, so fall back to the default
+        // unless what we read is a valid permutation.
+        ImuAxisMap storedMap = {configData.imu_pitch_axis,
+                                configData.imu_roll_axis,
+                                configData.imu_yaw_axis,
+                                configData.imu_pitch_invert,
+                                configData.imu_roll_invert,
+                                configData.imu_yaw_invert};
+        g_imuAxisMap = imuAxisMapIsValid(storedMap) ? storedMap : imuAxisMapDefault();
     }
 
     // Initialize work hours timing
@@ -207,7 +220,7 @@ void configLoad() {
     Serial.println("Configuration loaded from FlashStorage.");
     Serial.print("Controller IP: ");
     Serial.println(g_controllerIP.toString());
-    Serial.print("Router IP: ");
+    Serial.print("Router/MQTT IP: ");
     Serial.println(g_routerIP.toString());
     Serial.print("Motor Work Hours: ");
     Serial.print(g_motorWorkSeconds / 3600);
@@ -282,8 +295,8 @@ void configSetRouterIP(const IPAddress& ip) {
     g_routerIP = ip;
 }
 
-void configSetImuMountOrientation(uint8_t orientation) {
-    g_imuMountOrientation = orientation;
+void configSetImuAxisMap(const ImuAxisMap& map) {
+    g_imuAxisMap = map;
 }
 
 bool configSetWhitelist(const IPAddress* ips, int count) {
@@ -383,8 +396,11 @@ bool serialNumberIsModifiable() {
 }
 
 // ============================================================================
-// SECURE-TELEMETRY KEY + REPLAY COUNTER
+// SECURE TELEMETRY KEY
 // ============================================================================
+// WRITE-ONLY by design: the key goes in and is never read back out of the
+// board by any command or endpoint. Only the telemetry module reads it,
+// in-place, to encrypt a packet. See docs/SECURE_TELEMETRY.md.
 
 bool configSetDeviceKey(const uint8_t* key32) {
     if (key32 == nullptr) return false;
@@ -405,8 +421,9 @@ bool configHasDeviceKey() {
 bool configGetDeviceKey(uint8_t* out32) {
     if (out32 == nullptr) return false;
     Config configData = g_configStore.read();
-    if (!configData.device_key_set) return false;
+    if (!configData.device_key_set || configData.validation_marker != CONFIG_VALID_MARKER) {
+        return false;
+    }
     memcpy(out32, configData.device_key, 32);
     return true;
 }
-

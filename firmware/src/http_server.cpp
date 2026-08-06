@@ -220,15 +220,49 @@ void httpSendResponse(EthernetClient& client, int statusCode,
     client.print(resp);
 }
 
+JsonDocument httpHandleLogin(JsonDocument& doc) {
+    String user = doc["user"];
+    String pass = doc["pass"];
+    
+    Serial.println();
+    Serial.println("httpHandleLogin: Received User: " + user + ", Pass: " + pass);
+    Serial.println("httpHandleLogin: Expected User: " + String(AUTH_USERNAME) + 
+                   ", Pass: " + String(AUTH_PASSWORD));
+    
+    JsonDocument resp;
+    resp["type"] = "login_result";
+    
+    if (!authCheckCredentials(user, pass)) {
+        resp["success"] = false;
+        if (user != AUTH_USERNAME) {
+            resp["code"] = "E-110";
+            resp["message"] = "Invalid username";
+        } else {
+            resp["code"] = "E-111";
+            resp["message"] = "Invalid password";
+        }
+    } else {
+        String newToken = authGenerateToken();
+        authStoreToken(newToken);
+        
+        resp["success"] = true;
+        resp["token"] = newToken;
+        Serial.println("Login successful. Token assigned.");
+    }
+    
+    return resp;
+}
+
 /**
  * @brief Send a JSON response with ZERO heap allocation (RAM-safe).
  *
- * The String-based path costs ~2 KB of transient heap for a big response
- * (serialize-to-String + header+body copy). With the TLS stack resident only
- * ~2.4 KB is free, so a large get_status response could collide and wedge the
- * board. This variant serializes into a STACK buffer (reclaimed on return, no
- * heap high-water) and sends header+body as one write. Oversized responses
- * fall back to streaming chunks directly into the socket.
+ * The String path costs ~2 KB of transient heap for a large response
+ * (serialize-to-String, then a second copy for header+body). On a 32 KB part
+ * that was enough to wedge the board: a get_status reply would fail to
+ * allocate and the connection died mid-answer. This serialises into a STACK
+ * buffer instead - reclaimed on return, no heap high-water - and sends header
+ * and body as a single write. Oversized replies fall back to streaming chunks
+ * straight into the socket.
  */
 void httpStreamJsonResponse(EthernetClient& client, int statusCode, JsonDocument& doc) {
     const char* statusText = "OK";
@@ -254,37 +288,6 @@ void httpStreamJsonResponse(EthernetClient& client, int statusCode, JsonDocument
         client.write((const uint8_t*)buf, hdrLen);
         serializeJson(doc, client);
     }
-}
-
-JsonDocument httpHandleLogin(JsonDocument& doc) {
-    String user = doc["user"];
-    String pass = doc["pass"];
-    
-    Serial.println();
-    Serial.println("httpHandleLogin: Received User: " + user + ", Pass: " + pass);
-    Serial.println("httpHandleLogin: Expected User: " + String(AUTH_USERNAME) + 
-                   ", Pass: " + String(AUTH_PASSWORD));
-    
-    JsonDocument resp;
-    resp["type"] = "login_result";
-    
-    if (!authCheckCredentials(user, pass)) {
-        resp["success"] = false;
-        if (user != AUTH_USERNAME) {
-            resp["message"] = "Invalid username";
-        } else {
-            resp["message"] = "Invalid password";
-        }
-    } else {
-        String newToken = authGenerateToken();
-        authStoreToken(newToken);
-        
-        resp["success"] = true;
-        resp["token"] = newToken;
-        Serial.println("Login successful. Token assigned.");
-    }
-    
-    return resp;
 }
 
 void httpServerLoop() {
@@ -313,12 +316,17 @@ void httpServerLoop() {
 
         // Check IP whitelist
         if (!authIsIPWhitelisted(remoteIP)) {
-            String out = "{\"type\":\"error\",\"message\":\"IP not allowed\"}";
+            String out = "{\"type\":\"error\",\"code\":\"E-103\",\"message\":\"IP not allowed\"}";
             httpSendResponse(client, 403, out);
             delay(1);
             client.stop();
             continue;  // Process next client
-        }    
+        }
+
+        // A request from the OCU (.169) is proof it is alive and reachable -
+        // this is what drives ocuConnected. See ocu_monitor.hpp.
+        ocuMonitorNotifyActivity(remoteIP);
+
     // Read first line of request
     String req = client.readStringUntil('\r');
     client.flush();
@@ -335,7 +343,7 @@ void httpServerLoop() {
         // Check if we got data
         if (client.available() == 0) {
             // No data received within timeout
-            httpSendResponse(client, 400, "{\"type\":\"error\",\"message\":\"Request timeout\"}");
+            httpSendResponse(client, 400, "{\"type\":\"error\",\"code\":\"E-100\",\"message\":\"Request timeout\"}");
             client.stop();
             continue;  // Process next client
         }
@@ -362,6 +370,7 @@ void httpServerLoop() {
             
             if (!doc["token"].is<String>()) {
                 resp["type"] = "error";
+                resp["code"] = "E-101";
                 resp["message"] = "Token required.";
                 httpStatusCode = 401;
             } else {
@@ -372,6 +381,7 @@ void httpServerLoop() {
                     authRefreshToken(tokenRecv);
                 } else {
                     resp["type"] = "error";
+                    resp["code"] = "E-102";
                     resp["message"] = "Invalid or expired token.";
                     httpStatusCode = 401;
                 }
@@ -387,10 +397,7 @@ void httpServerLoop() {
                 trackActiveIP(remoteIP);
                 
                 if (msgType == "get_status") {
-                    // Buffered snapshot, NOT a fresh sensor read. loop() refreshes
-                    // it in the background; serving from the buffer keeps a 20 Hz
-                    // consumer from paying ~35 ms of blocking I2C per request.
-                    resp = statusGenerateJsonNoRefresh();
+                    resp = statusGenerateJson(&doc);
                 }
                 else if (msgType == "set_relay") {
                     uint8_t relayId = doc["relay_id"];
@@ -403,9 +410,10 @@ void httpServerLoop() {
                         } else {
                             relayControllerSet(relayId, state, 0);
                         }
-                        resp = statusGenerateJsonNoRefresh();
+                        resp = statusGenerateJson(&doc);
                     } else {
                         resp["type"] = "error";
+                        resp["code"] = "E-201";
                         resp["message"] = "Invalid relay number";
                     }
                 }
@@ -413,7 +421,7 @@ void httpServerLoop() {
                     bool state = doc["state"];
                     KMPProDinoMKRZero.SetStatusLed(state);
                     g_status.ledInternal = state;
-                    resp = statusGenerateJsonNoRefresh();
+                    resp = statusGenerateJson(&doc);
                 }
                 else if (msgType == "set_io_led") {
                     String color = doc["color"];
@@ -421,7 +429,7 @@ void httpServerLoop() {
                     if (color == "AUTO") {
                         ledControllerSetManualMode(false);
                         Serial.println("LED control returned to AUTO mode");
-                        resp = statusGenerateJsonNoRefresh();
+                        resp = statusGenerateJson(&doc);
                     } else {
                         LED_STATES colorVal;
                         bool validColor = true;
@@ -433,6 +441,7 @@ void httpServerLoop() {
                         else {
                             validColor = false;
                             resp["type"] = "error";
+                            resp["code"] = "E-202";
                             resp["message"] = "Invalid LED color";
                         }
                         
@@ -440,37 +449,9 @@ void httpServerLoop() {
                             ledControllerSetManualMode(true);
                             manual_led_state = colorVal;
                             _gg_hal.set_indicator_led(manual_led_state);
-                            resp = statusGenerateJsonNoRefresh();
+                            resp = statusGenerateJson(&doc);
                         }
                     }
-                }
-                else if (msgType == "set_serial_number") {
-                    if (!technician_mode) {
-                        resp["type"] = "error";
-                        resp["message"] = "Technician mode required";
-                        httpStatusCode = 403;
-                    } else {
-                        String newSN = doc["serial_number"];
-                        // Note: serialNumberBurn will trigger NVIC_SystemReset on success
-                        if (serialNumberBurn(newSN.c_str())) {
-                            // This code won't execute - device reboots on success
-                            resp["success"] = true;
-                            resp["message"] = "Serial number set to: " + serialNumberGet();
-                            resp["reboot_pending"] = true;
-                        } else {
-                            resp["type"] = "error";
-                            if (serialNumberGet() != "UNCONFIGURED") {
-                                resp["message"] = "Serial number already set and cannot be changed";
-                            } else {
-                                resp["message"] = "Invalid serial number (must be 2000-2999)";
-                            }
-                        }
-                    }
-                }
-                else if (msgType == "get_serial_number") {
-                    resp["type"] = "serial_number";
-                    resp["serial_number"] = serialNumberGet();
-                    resp["is_configured"] = (serialNumberGet() != "UNCONFIGURED");
                 }
                 else if (msgType == "set_ip_config") {
                     String controllerIPStr = doc["controller_ip"];
@@ -512,42 +493,18 @@ void httpServerLoop() {
                         NVIC_SystemReset();
                     } else {
                         resp["type"] = "error";
+                        resp["code"] = "E-203";
                         resp["message"] = "Invalid IP address or whitelist entry provided.";
                     }
-                }
-                else if (msgType == "set_router_ip") {
-                    String routerIPStr = doc["router_ip"];
-                    IPAddress newRouterIP;
-                    
-                    if (newRouterIP.fromString(routerIPStr)) {
-                        configSetRouterIP(newRouterIP);
-                        configSave();
-                        
-                        resp["success"] = true;
-                        resp["message"] = "Router IP updated to: " + g_routerIP.toString();
-                        resp["reboot_required"] = true;
-                        
-                        Serial.println("Router IP saved: " + g_routerIP.toString());
-                        Serial.println("Reboot required for the new IP to take effect.");
-                    } else {
-                        resp["type"] = "error";
-                        resp["message"] = "Invalid router IP address provided.";
-                    }
-                }
-                else if (msgType == "get_router_ip") {
-                    resp["type"] = "router_ip";
-                    resp["router_ip"] = g_routerIP.toString();
                 }
                 else if (msgType == "reset_led_control") {
                     ledControllerSetManualMode(false);
                     _gg_hal.set_indicator_led(OFF);
-                    resp = statusGenerateJsonNoRefresh();
+                    resp = statusGenerateJson(&doc);
                 }
                 else if (msgType == "get_config") {
-                    statusUpdate();
                     resp["type"] = "config";
                     resp["firmwareVersion"] = statusGetFirmwareVersion();
-                    resp["serialNumber"] = serialNumberGet();
                     resp["controllerIp"] = g_controllerIP.toString();
 
                     JsonArray whitelistArray = resp["whitelistIps"].to<JsonArray>();
@@ -567,35 +524,65 @@ void httpServerLoop() {
                         default:     resp["techLedColor"] = "OFF";    break;
                     }
 
-                    resp["imuMountOrientation"] = imuMountOrientationToString(g_imuMountOrientation);
+                    resp["imuPitchAxis"]   = imuAxisToString(g_imuAxisMap.pitchAxis);
+                    resp["imuRollAxis"]    = imuAxisToString(g_imuAxisMap.rollAxis);
+                    resp["imuYawAxis"]     = imuAxisToString(g_imuAxisMap.yawAxis);
+                    resp["imuPitchInvert"] = (bool)g_imuAxisMap.pitchInvert;
+                    resp["imuRollInvert"]  = (bool)g_imuAxisMap.rollInvert;
+                    resp["imuYawInvert"]   = (bool)g_imuAxisMap.yawInvert;
                 }
-                else if (msgType == "set_imu_mount_orientation") {
-                    String orientationStr = doc["orientation"];
-                    int newOrientation = imuMountOrientationFromString(orientationStr.c_str());
+                else if (msgType == "set_imu_axis_map") {
+                    String pitchStr = doc["pitch_axis"];
+                    String rollStr  = doc["roll_axis"];
+                    String yawStr   = doc["yaw_axis"];
 
-                    if (newOrientation >= 0) {
-                        configSetImuMountOrientation((uint8_t)newOrientation);
-                        configSave();
+                    int pitchAxis = imuAxisFromString(pitchStr.c_str());
+                    int rollAxis  = imuAxisFromString(rollStr.c_str());
+                    int yawAxis   = imuAxisFromString(yawStr.c_str());
 
-                        resp["success"] = true;
-                        resp["message"] = "IMU mount orientation set to: " + orientationStr;
-                        resp["reboot_required"] = true;
+                    // Invert flags are optional - omitting one leaves that axis
+                    // un-negated, so an older client keeps working unchanged.
+                    bool pitchInvert = doc["pitch_invert"] | false;
+                    bool rollInvert  = doc["roll_invert"]  | false;
+                    bool yawInvert   = doc["yaw_invert"]   | false;
 
-                        Serial.println("IMU mount orientation saved: " + orientationStr);
-                        Serial.println("Reboot required to recalibrate for the new orientation.");
-                    } else {
+                    if (pitchAxis < 0 || rollAxis < 0 || yawAxis < 0) {
                         resp["type"] = "error";
-                        resp["message"] = "Invalid IMU mount orientation";
+                        resp["code"] = "E-204";
+                        resp["message"] = "Invalid IMU axis (expected X, Y or Z)";
+                    } else {
+                        ImuAxisMap newMap = {(uint8_t)pitchAxis, (uint8_t)rollAxis, (uint8_t)yawAxis,
+                                             (uint8_t)(pitchInvert ? 1 : 0),
+                                             (uint8_t)(rollInvert ? 1 : 0),
+                                             (uint8_t)(yawInvert ? 1 : 0)};
+
+                        if (!imuAxisMapIsValid(newMap)) {
+                            resp["type"] = "error";
+                            resp["code"] = "E-205";
+                            resp["message"] = "Pitch, roll and yaw must each use a different axis";
+                        } else {
+                            configSetImuAxisMap(newMap);
+                            configSave();
+
+                            String summary = "pitch=" + String(pitchInvert ? "-" : "") + pitchStr +
+                                             " roll="  + String(rollInvert  ? "-" : "") + rollStr +
+                                             " yaw="   + String(yawInvert   ? "-" : "") + yawStr;
+                            resp["success"] = true;
+                            resp["message"] = "IMU axis map set to: " + summary;
+                            resp["reboot_required"] = true;
+
+                            Serial.println("IMU axis map saved: " + summary);
+                            Serial.println("Reboot required to recalibrate for the new axis map.");
+                        }
                     }
                 }
                 else if (msgType == "get_overview") {
-                    statusUpdate();
                     resp["type"] = "overview";
 
                     resp["powerConnected"] = g_status.powerConnected;
                     resp["powerSane"] = g_status.powerSane;
-                    resp["busVoltage"] = g_status.busVoltage;
-                    resp["busCurrent_mA"] = g_status.busCurrent_mA;
+                    resp["systemVoltage"] = g_status.systemVoltage;
+                    resp["systemCurrent_A"] = g_status.systemCurrent_A;
 
                     JsonArray relaysArray = resp["relays_status"].to<JsonArray>();
                     for (uint8_t i = 0; i < RELAY_COUNT; i++) {
@@ -611,13 +598,8 @@ void httpServerLoop() {
 
                     resp["ocuConnected"] = ocuMonitorIsConnected();
                     resp["ocuDisconnectedDurationMs"] = ocuMonitorDisconnectedDurationMs();
-
-                    // No Jetson communication channel exists yet - this is the
-                    // documented "no comm" fallback value, not a placeholder.
-                    resp["jetsonCpuTemp"] = -1;
                 }
                 else if (msgType == "get_imu") {
-                    statusUpdate();
                     resp["type"] = "imu";
 
                     resp["angleSane"] = g_status.angleSane;
@@ -642,9 +624,10 @@ void httpServerLoop() {
                     resp["imu2Gx"] = g_status.imu2Gx;
                     resp["imu2Gy"] = g_status.imu2Gy;
                     resp["imu2Gz"] = g_status.imu2Gz;
+
+                    resp["imuTemp"] = g_status.imuTemp;
                 }
                 else if (msgType == "get_gps") {
-                    statusUpdate();
                     resp["type"] = "gps";
 
                     resp["gpsConnected"] = g_status.gpsConnected;
@@ -665,15 +648,14 @@ void httpServerLoop() {
                 }
                 else {
                     resp["type"] = "error";
+                    resp["code"] = "E-200";
                     resp["message"] = "Unknown request type";
                 }
             }
         }
         
         
-        // Send response (unless a handler already streamed its own raw body).
-        // RAM-safe path: no String copies - big responses (get_status ~950 B)
-        // were colliding with the TLS heap and wedging the board.
+        // Send response (unless a handler already streamed its own raw body)
         if (!rawResponseSent) {
             httpStreamJsonResponse(client, httpStatusCode, resp);
         }

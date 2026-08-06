@@ -15,6 +15,14 @@
 #define LSM6DS3_CTRL8_XL 0x17
 #define LSM6DS3_OUTX_L_XL 0x28
 #define LSM6DS3_OUTX_L_G 0x22
+#define LSM6DS3_OUT_TEMP_L 0x20
+
+// On-chip temperature sensor: 16-bit two's complement, 16 LSB/degC, referenced
+// to 25 degC (datasheet Table 5). Absolute accuracy is poor (Toff = +/-15 degC)
+// but the RELATIVE change since startup is what matters for gyro bias, and
+// that is accurate.
+#define LSM6DS3_TEMP_SENSITIVITY_LSB_PER_C 16.0f
+#define LSM6DS3_TEMP_REFERENCE_C 25.0f
 
 // GPS (u-blox) I2C address
 #define GPS_ADDR 0x42
@@ -51,11 +59,15 @@ void imuWriteByte(uint8_t reg, uint8_t value);
 bool imuReadBytes(uint8_t reg, uint8_t *data, uint8_t len);
 bool readAccelerometer(float &ax, float &ay, float &az);
 bool readGyroscope(float &gx, float &gy, float &gz);
+/** Read the on-chip die temperature in degrees C. Not ambient - it reads a
+ *  few degrees above it due to self-heating. */
+bool readImuTemperature(float &tempC);
 void initIMU();
 
 // IMU2 helper functions
 bool readAccelerometer_2(float &ax, float &ay, float &az);
 bool readGyroscope_2(float &gx, float &gy, float &gz);
+bool readImuTemperature_2(float &tempC);
 void initIMU_2();
 
 // GPS helper function

@@ -69,11 +69,16 @@ struct DeviceStatus {
     // IMU2 validity
     bool imu2Valid = false;
 
-    // Sanity checks ("not all zero, not stuck") - IMU1/IMU2 raw readings and
-    // the calculated angle data
+    // Sanity ("not all zero, not stuck", plus a usable gravity magnitude) -
+    // these SELECT which IMU(s) feed the orientation filter, see statusUpdate()
     bool imu1Sane = false;
     bool imu2Sane = false;
     bool angleSane = false;
+
+    // On-chip die temperature, averaged over whichever IMUs are readable.
+    // Reads above ambient because of self-heating. Absolute accuracy is poor
+    // (datasheet Toff = +/-15 degC); the change since boot is the useful part.
+    float imuTemp = 0;
 
     // GPS Position
     double gpsLat = 0;
@@ -132,8 +137,8 @@ struct DeviceStatus {
     // Power Monitor (voltage/current sensor)
     bool powerConnected = false;
     bool powerSane = false;
-    float busVoltage = 0.0;
-    float busCurrent_mA = 0.0;
+    float systemVoltage = 0.0;    // Volts
+    float systemCurrent_A = 0.0;  // Amps (the INA219 reports mA - converted on read)
 };
 
 // ============================================================================
@@ -183,7 +188,7 @@ extern float g_gyro2ZOffset;
 
 /**
  * @brief Get the firmware version string
- * @return Firmware version (e.g. "1.5.0")
+ * @return Firmware version (e.g. "1.5.1")
  */
 const char* statusGetFirmwareVersion();
 
@@ -195,10 +200,45 @@ const char* statusGetFirmwareVersion();
 void statusInit();
 
 /**
+ * @brief Milliseconds since statusUpdate() last read the sensors.
+ *
+ * The HTTP handlers must never call statusUpdate() themselves - loop() owns the
+ * cadence. This lets loop() skip a refresh that is not yet due.
+ */
+unsigned long statusMsSinceRefresh();
+
+/** @brief Print the worst blocking time of each sensor group (IMU1/IMU2/GPS/power). */
+void statusPrintSensorTiming();
+
+/** Fixed sampling interval for statusUpdate(), in milliseconds.
+ *
+ *  10 ms (100 Hz) closely matches the IMUs' 104 Hz output data rate, so each
+ *  call gets approximately one fresh sample, and it puts the pitch/roll
+ *  complementary filter's time constant at a sane dt x 49 = 0.49 s. */
+constexpr unsigned long STATUS_UPDATE_INTERVAL_MS = 10;
+
+/** Upper bound applied to the dt used by the orientation filter.
+ *
+ *  If something blocks the main loop (a failed OCU ARP probe can cost several
+ *  hundred ms), the next dt would otherwise integrate a single instantaneous
+ *  gyro sample across that whole gap as if the rate had been constant.
+ *  Clamping under-integrates instead, which is the lesser error. */
+constexpr float STATUS_UPDATE_MAX_DT_S = 0.1f;
+
+/**
  * @brief Update hardware status
- * 
- * Reads all sensors and updates g_status.
- * Call this periodically in loop() or before generating status response.
+ *
+ * Reads all sensors, runs the orientation filter, and updates g_status.
+ *
+ * @warning Call ONLY from loop(), on the fixed STATUS_UPDATE_INTERVAL_MS
+ *          cadence. It must NOT be called per HTTP request: the pitch/roll
+ *          complementary filter uses a fixed per-step weight, so its effective
+ *          time constant is dt x 49 and the accelerometer gains a fixed 2%
+ *          weight on every call regardless of elapsed time. Extra calls from
+ *          request handlers therefore shortened the time constant and sped up
+ *          accelerometer tracking - making the angles depend on how hard the
+ *          board was being polled, and increasing susceptibility to the
+ *          linear-acceleration error. See imuLimitations.md.
  */
 void statusUpdate();
 
@@ -215,36 +255,19 @@ JsonDocument statusGenerateJson(JsonDocument* requestDoc = nullptr);
  * 
  * Overload for UDP broadcast and other cases where no request is provided.
  */
-/**
- * @brief Milliseconds since statusUpdate() last read the sensors.
- *
- * Every get_status request refreshes the sensors itself, so while a consumer is
- * polling (the Jetson polls at 20 Hz) the periodic refresh in loop() is pure
- * duplicated I2C - and it blocks for up to ~41 ms, which showed up as the worst
- * stall those same consumers saw. Use this to skip it when it is not needed.
- */
-unsigned long statusMsSinceRefresh();
-
-/** @brief Print the worst blocking time of each sensor group (IMU1/IMU2/GPS/power). */
-void statusPrintSensorTiming();
-
 JsonDocument statusGenerateJsonSimple();
 
-/**
- * @brief Same document as statusGenerateJsonSimple(), but WITHOUT re-reading the
- *        sensors first.
- *
- * statusUpdate() does blocking I2C reads. The main loop already runs it once a
- * second, so the telemetry path can reuse that snapshot instead of paying for
- * its own - which keeps the telemetry send from delaying the 20 Hz HTTP API
- * that local consumers poll.
- */
-JsonDocument statusGenerateJsonNoRefresh();
 
 /**
  * @brief Write formatted status to Serial
- * 
- * Outputs human-readable status for debugging.
+ *
+ * Outputs human-readable status for debugging: every field of the
+ * statusGenerateJson() response, one per line, grouped under its category
+ * header ([overview] / [imu] / [gps] / [config]). Because it renders that
+ * document directly, the serial log always matches the get_status API.
+ *
+ * @note Calls statusGenerateJson(), which performs a fresh statusUpdate()
+ *       (sensor read) - it does not just print the cached g_status.
  */
 void statusWriteToSerial();
 
