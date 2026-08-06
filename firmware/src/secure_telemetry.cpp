@@ -110,6 +110,7 @@ static uint32_t s_maxBuild   = 0;   // status JSON + ChaCha20-Poly1305
 static uint32_t s_maxReconn  = 0;   // stop() + connect(), 0 while the link holds
 static uint32_t s_maxWrite   = 0;   // handing the bytes to the W5500
 static uint32_t s_reconnects = 0;
+static uint8_t  s_consecFails = 0;   // drives the dead-connection recovery below
 
 // The last N blocking times, so a short run can be read send-by-send instead of
 // inferred from min/avg/max - "how many were above 18 ms" should be countable,
@@ -393,6 +394,7 @@ void telemetryPump() {
         }
         uint8_t sink[64];
         while (s_client.available()) s_client.read(sink, sizeof(sink));
+        if (ok) s_consecFails = 0;
         done = true;
     } else if (!s_client.connected()) {
         // The server or a NAT box dropped the connection. Not an error worth
@@ -402,9 +404,20 @@ void telemetryPump() {
         s_client.stop();
         done = true;
     } else if (millis() - s_pendingStart > TELEM_ATTEMPT_TIMEOUT_MS) {
-        // Telemetry is best-effort: don't tear the connection down over a slow
-        // or lost reply, just stop waiting for it.
+        // A single slow reply is not worth tearing the connection down for.
+        // But a socket the W5500 still reports as connected can be dead at the
+        // far end - a server restart does exactly that - and then every send
+        // writes into a void and times out forever. Observed: 14 consecutive
+        // failures with reconnects=1, telemetry wedged until the board was
+        // power-cycled. So after two in a row, drop it and let the next send
+        // rebuild the connection.
         Serial.println(F("[TELEM] no reply within timeout (packet may still have landed)"));
+        if (++s_consecFails >= 2) {
+            Serial.println(F("[TELEM] two timeouts in a row - dropping the connection to rebuild it"));
+            s_client.setConnectionTimeout(1);
+            s_client.stop();
+            s_consecFails = 0;
+        }
         done = true;
     }
 

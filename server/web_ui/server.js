@@ -291,6 +291,72 @@ function applyStatusToDevice(device, d) {
     };
 }
 
+// Verify, decrypt and apply one telemetry packet. Transport-agnostic: both the
+// HTTP route and the UDP listener hand their bytes to this, so there is exactly
+// one implementation of the crypto and the replay rule.
+// Returns an HTTP-style status: 204 ok, 400 malformed, 401 auth, 409 replay.
+function handleTelemetryPacket(pkt, via) {
+    if (!Buffer.isBuffer(pkt) || pkt.length < TELEM_HEADER_LEN + TELEM_TAG_LEN) {
+        return 400;
+    }
+
+    const header = pkt.subarray(0, TELEM_HEADER_LEN);              // AAD
+    const version = header[0];
+    const serial = header.subarray(1, 17).toString('ascii').replace(/\0.*$/, '');
+    const nonce = header.subarray(17, 29);
+    const bootIdHex = nonce.subarray(0, 8).toString('hex');
+    const msgSeq = nonce.readUInt32BE(8);
+    const ciphertext = pkt.subarray(TELEM_HEADER_LEN, pkt.length - TELEM_TAG_LEN);
+    const tag = pkt.subarray(pkt.length - TELEM_TAG_LEN);
+
+    const key = deviceKeys[serial.toUpperCase()];
+    if (version !== TELEM_VERSION || !key) {
+        console.warn(`🚫 ingest: unknown device serial="${serial}" version=${version}`);
+        return 401;
+    }
+
+    // Authenticity + confidentiality. Throws if anything was tampered with.
+    let plaintext;
+    try {
+        const decipher = crypto.createDecipheriv('chacha20-poly1305', key, nonce,
+                                                 { authTagLength: TELEM_TAG_LEN });
+        decipher.setAAD(header, { plaintextLength: ciphertext.length });
+        decipher.setAuthTag(tag);
+        plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+    } catch (err) {
+        console.warn(`🚫 ingest: BAD AUTH from ${serial} boot=${bootIdHex} seq=${msgSeq}`);
+        return 401;
+    }
+
+    if (!checkAndRecordNonce(serial, bootIdHex, msgSeq)) {
+        console.warn(`🚫 ingest: REPLAY from ${serial} boot=${bootIdHex} seq=${msgSeq}`);
+        return 409;
+    }
+
+    let data;
+    try {
+        data = JSON.parse(plaintext.toString('utf8'));
+    } catch (err) {
+        console.warn(`🚫 ingest: ${serial} sent ${plaintext.length}B that is not JSON`);
+        return 400;
+    }
+
+    if (!devices.has(serial)) {
+        console.log(`📱 New device discovered via ingest: ${serial}`);
+        devices.set(serial, createDefaultDeviceState(serial));
+    }
+    const device = devices.get(serial);
+    device.lastSeen = Date.now();
+    device.connected = true;
+    applyStatusToDevice(device, data);
+
+    console.log(`🔐 [${serial}] ${via} boot=${bootIdHex.slice(0, 8)} seq=${msgSeq} ${pkt.length}B ` +
+                `pitch=${data.pitch} roll=${data.roll} ip=${data.controllerIp}`);
+
+    broadcastDeviceUpdate(serial, device);
+    return 204;
+}
+
 // express.json() is global, so this route brings its own raw-body parser.
 app.post('/api/ingest',
     express.raw({ type: () => true, limit: '8kb' }),
