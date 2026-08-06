@@ -275,7 +275,13 @@ void httpStreamJsonResponse(EthernetClient& client, int statusCode, JsonDocument
         default:  statusText = "Unknown"; break;
     }
     size_t bodyLen = measureJson(doc);
-    char buf[1408];                     // stack: freed on return, no heap growth
+    // MUST stay larger than the biggest response plus its header. get_status is
+    // the largest at ~1350 B since firmware 1.5.1 nested the status document;
+    // at 1408 it overflowed by a few dozen bytes and every reply took the
+    // streaming fallback below - which writes the JSON in small pieces, each one
+    // paying Nagle plus the client's delayed ACK. That cost ~190 ms per request
+    // and dropped the API from 17 to 3.6 req/s. Measured, not theoretical.
+    char buf[1900];                     // stack: freed on return, no heap growth
     int hdrLen = snprintf(buf, sizeof(buf),
         "HTTP/1.1 %d %s\r\nContent-Type: application/json\r\n"
         "Connection: close\r\nContent-Length: %u\r\n\r\n",
