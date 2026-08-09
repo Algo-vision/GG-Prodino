@@ -1,4 +1,4 @@
-# GG-GRK - V1.5.1
+# GG-GRK - V1.5.2
 
 GRK Controller: an embedded IoT device with dual IMU, GPS, relay control, a local
 HTTP API for real-time consumers, encrypted telemetry to the cloud, and a
@@ -79,28 +79,33 @@ can decrypt. Both copies are **gitignored and never committed**.
 
 ### Putting a new board into service
 
+All of it is done from the two GUIs - no SSH, no file copying:
+
+1. **Give the board its serial number.** In the technician GUI (`tools/`),
+   Technician Mode -> Set SN. This is what the server uses to pick the key. A
+   serial can only be burned once; changing it means erasing flash first, which
+   a firmware upload does.
+2. **Create the key.** In the dashboard, Admin -> Board Telemetry Keys -> enter
+   that serial -> Create Key. This registers it with the server at the same
+   time. Press Copy. **The key is shown once and cannot be retrieved.**
+3. **Burn it into the board.** In the technician GUI, Telemetry Key -> paste ->
+   Burn Key to Board. The panel then shows `Key on this board: SET`.
+
+The command line still works if you prefer it:
+
 ```bash
-# 1. generate a key for this board (prints a SET_KEY: line to paste)
-python3 tools/gen_device_key.py SN2003
-
-# 2. burn it over USB, then power-cycle
-cd firmware && pio device monitor -b 115200 -f send_on_enter
-#    paste:  SET_KEY:<the 64 hex characters it printed>
-#    verify: GET_KEY_STATUS   ->   Device key: SET
-
-# 3. give the server the same key
+python3 tools/gen_device_key.py SN2003        # generate + register locally
+# paste the SET_KEY: line into the board's USB console, then copy the registry:
 scp -i keys/instance_gg_key.pem tools/device_keys.json \
     ubuntu@16.171.11.151:~/prodino_web_ui/device_keys.json
 ssh -i keys/instance_gg_key.pem ubuntu@16.171.11.151 \
     "chmod 600 ~/prodino_web_ui/device_keys.json && pm2 restart grk-backend"
 ```
 
-The board also needs a serial number (`SET_SN:2003`), which is what the server
-uses to pick the key.
-
-**Revoking a board:** delete its line from the server's `device_keys.json` and
-restart — that board is rejected immediately, no others are affected.
-**Rotating a key:** re-run step 1 (it warns before overwriting), then repeat 2–3.
+**Revoking a board:** Admin -> Board Telemetry Keys -> Revoke. That board is
+rejected immediately; no others are affected.
+**Rotating a key:** create a key for the same serial (it warns first), then burn
+the new one into the board — it stops reporting until you do.
 
 ### Checking it works
 
@@ -109,7 +114,8 @@ restart — that board is rejected immediately, no others are affected.
 python3 tools/test_ingest.py http://16.171.11.151:5555
 #   valid -> 204,  tampered -> 401,  replayed -> 409,  unknown serial -> 401
 
-# what the server is receiving from real boards
+# what the server is receiving from real boards: Admin -> Board Telemetry Keys
+# shows each board's status, last seen, firmware and last message. Or by SSH:
 ssh -i keys/instance_gg_key.pem ubuntu@16.171.11.151 \
     "pm2 logs grk-backend --lines 20 --nostream"
 #   🔐 [SN2003] ingest/tcp boot=9e47ab84 seq=1 1375B pitch=-0.004 roll=0.010

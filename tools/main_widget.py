@@ -713,7 +713,9 @@ class MainWidget(QWidget):
     def refresh_serial_number(self):
         resp = self.api_client.get_serial_number()
         if resp and resp.get("type") == "serial_number":
-            sn = resp.get("serial_number", "Unknown")
+            # The firmware returns serialNumber (camelCase, like the rest of the
+            # API); older builds used serial_number. Accept either.
+            sn = resp.get("serialNumber") or resp.get("serial_number") or "Unknown"
             self.sn_label.setText(f"Current SN: {sn}")
             
             # Disable SN input if serial number is already set (starts with SN followed by 4 digits)
