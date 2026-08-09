@@ -5,7 +5,7 @@
  * Handles persistent storage of device configuration including:
  * - Controller IP address
  * - IP whitelist for authentication
- * - Router/MQTT broker IP
+ * - Router IP
  * - Serial number
  * - Motor work hours counter
  * 
@@ -52,8 +52,8 @@ struct Config {
     byte whitelist_ip_bytes[MAX_WHITELIST_IPS][4];  ///< Whitelisted client IPs
     int whitelist_count;                      ///< Number of valid whitelist entries
     
-    // Router/MQTT Broker Configuration
-    byte router_ip_bytes[4];                  ///< Teltonika router IP (MQTT broker)
+    // Router Configuration
+    byte router_ip_bytes[4];                  ///< Teltonika router IP (the board's gateway)
     
     // Serial Number Configuration
     char serial_number[MAX_SERIAL_NUMBER_LENGTH];  ///< Device serial number
@@ -199,7 +199,7 @@ float configGetBurnedHoursFloat();
 void configSetControllerIP(const IPAddress& ip);
 
 /**
- * @brief Set router/MQTT broker IP address
+ * @brief Set the router IP address
  * @param ip New router IP address
  */
 void configSetRouterIP(const IPAddress& ip);
