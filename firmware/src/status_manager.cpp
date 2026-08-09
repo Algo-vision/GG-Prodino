@@ -485,6 +485,9 @@ JsonDocument statusGenerateJson(JsonDocument* requestDoc) {
         configWhitelistArray.add(g_whitelist[i].toString());
     }
     config["technicianMode"] = technician_mode;
+    // Whether a telemetry key has been provisioned. The key itself is never
+    // reported by anything - this is only "is it there or not".
+    config["deviceKeySet"] = configHasDeviceKey();
     config["burnedHours"] = round(configGetBurnedHoursFloat() * 100) / 100.0;
     config["sessionHours"] = round((millis() / 3600000.0) * 100) / 100.0;
     switch (g_status.ledIo) {

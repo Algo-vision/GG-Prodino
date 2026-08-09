@@ -407,11 +407,47 @@
             }
         });
 
-        document.getElementById('btn-copy-key').addEventListener('click', () => {
+        // The dashboard is served over plain HTTP, and navigator.clipboard only
+        // exists in a secure context (HTTPS or localhost) - it is undefined here,
+        // so the modern API alone silently does nothing. Fall back to the legacy
+        // execCommand path, and if even that is blocked, select the text so the
+        // key can be copied with Ctrl+C.
+        async function copyToClipboard(text) {
+            if (navigator.clipboard && window.isSecureContext) {
+                try { await navigator.clipboard.writeText(text); return true; }
+                catch (e) { /* fall through */ }
+            }
+            const ta = document.createElement('textarea');
+            ta.value = text;
+            ta.setAttribute('readonly', '');
+            ta.style.position = 'fixed';
+            ta.style.top = '-1000px';
+            document.body.appendChild(ta);
+            ta.select();
+            ta.setSelectionRange(0, ta.value.length);
+            let ok = false;
+            try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+            document.body.removeChild(ta);
+            return ok;
+        }
+
+        function selectKeyText() {
+            const el = document.getElementById('key-command');
+            const range = document.createRange();
+            range.selectNodeContents(el);
+            const sel = window.getSelection();
+            sel.removeAllRanges();
+            sel.addRange(range);
+        }
+
+        document.getElementById('btn-copy-key').addEventListener('click', async () => {
             const txt = document.getElementById('key-command').textContent;
-            navigator.clipboard.writeText(txt).then(
-                () => showMessage('Copied - paste it into the board over USB', 'success'),
-                () => showMessage('Could not copy; select the text manually', 'error'));
+            if (await copyToClipboard(txt)) {
+                showMessage('Copied - paste it into the board over USB', 'success');
+            } else {
+                selectKeyText();
+                showMessage('Copy blocked by the browser - the key is selected, press Ctrl+C', 'error');
+            }
         });
 
         async function revokeKey(serial) {

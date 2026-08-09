@@ -537,6 +537,49 @@ void httpServerLoop() {
                     resp["imuRollInvert"]  = (bool)g_imuAxisMap.rollInvert;
                     resp["imuYawInvert"]   = (bool)g_imuAxisMap.yawInvert;
                 }
+                else if (msgType == "set_device_key") {
+                    // Burn the per-board telemetry key over the network, so the
+                    // technician GUI can provision a board without a USB cable.
+                    // Same write-only rule as the serial SET_KEY command: this
+                    // only ever accepts a key, nothing reads one back out.
+                    // Already behind the login token and the IP whitelist.
+                    String hex = doc["key"] | "";
+                    hex.trim();
+                    if (hex.length() != 64) {
+                        resp["type"] = "error";
+                        resp["code"] = "E-210";
+                        resp["message"] = "key must be exactly 64 hex characters (32 bytes)";
+                    } else {
+                        uint8_t key[32];
+                        bool valid = true;
+                        for (int i = 0; i < 32 && valid; i++) {
+                            int hi = -1, lo = -1;
+                            char a = hex[i * 2], b = hex[i * 2 + 1];
+                            hi = (a >= '0' && a <= '9') ? a - '0'
+                               : (a >= 'a' && a <= 'f') ? a - 'a' + 10
+                               : (a >= 'A' && a <= 'F') ? a - 'A' + 10 : -1;
+                            lo = (b >= '0' && b <= '9') ? b - '0'
+                               : (b >= 'a' && b <= 'f') ? b - 'a' + 10
+                               : (b >= 'A' && b <= 'F') ? b - 'A' + 10 : -1;
+                            if (hi < 0 || lo < 0) valid = false;
+                            else key[i] = (uint8_t)((hi << 4) | lo);
+                        }
+                        if (!valid) {
+                            resp["type"] = "error";
+                            resp["code"] = "E-211";
+                            resp["message"] = "key contains non-hex characters";
+                        } else if (configSetDeviceKey(key)) {
+                            resp["type"] = "device_key";
+                            resp["success"] = true;
+                            resp["deviceKeySet"] = true;
+                            resp["message"] = "Key burned. Reboot the board to start using it.";
+                        } else {
+                            resp["type"] = "error";
+                            resp["code"] = "E-212";
+                            resp["message"] = "failed to write the key to flash";
+                        }
+                    }
+                }
                 else if (msgType == "set_imu_axis_map") {
                     String pitchStr = doc["pitch_axis"];
                     String rollStr  = doc["roll_axis"];

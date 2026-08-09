@@ -402,6 +402,10 @@ bool serialNumberIsModifiable() {
 // board by any command or endpoint. Only the telemetry module reads it,
 // in-place, to encrypt a packet. See docs/SECURE_TELEMETRY.md.
 
+void serialNumberSetVolatile(const char* sn) {
+    if (sn) g_serialNumber = sn;      // RAM only - flash is NOT touched
+}
+
 bool configSetDeviceKey(const uint8_t* key32) {
     if (key32 == nullptr) return false;
     Config configData = g_configStore.read();

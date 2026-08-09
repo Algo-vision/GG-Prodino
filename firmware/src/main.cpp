@@ -172,6 +172,14 @@ void setup() {
 
   // Load configuration from flash
   configLoad();
+  serialNumberLoad();
+#ifdef FORCE_SERIAL_NUMBER
+  // Bench builds only: every firmware upload erases FlashStorage, so a burned
+  // serial is lost on each update and the board would report UNCONFIGURED,
+  // which the server rejects. Compiling it in survives reflashing.
+  serialNumberSetVolatile(FORCE_SERIAL_NUMBER);
+#endif
+  Serial.println("Serial number: " + serialNumberGet());
 
   // Initialize board hardware
   KMPProDinoMKRZero.init(ProDino_MKR_Zero_Ethernet);

@@ -167,6 +167,29 @@ class ApiClient:
             print(f"Error setting serial number: {e}")
             return None
 
+    def set_device_key(self, key_hex):
+        """Burn the per-board telemetry key (64 hex chars) into the board.
+
+        Write-only by design: nothing ever reads a key back out of a board, so
+        there is deliberately no get_device_key. Whether one is present shows up
+        as deviceKeySet in get_config().
+        """
+        payload = {"type": "set_device_key", "token": self.token, "key": str(key_hex)}
+        try:
+            response = self.session.post(self.base_url, data=json.dumps(payload), timeout=8)
+            if response.status_code == 200:
+                return response.json()
+            if response.status_code == 401:
+                return {"error": "AUTH_ERROR"}
+            if response.status_code == 403:
+                return {"error": "FORBIDDEN", "message": "Not permitted"}
+            return None
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
+            return None
+        except Exception as e:
+            print(f"Error setting device key: {e}")
+            return None
+
     def get_serial_number(self):
         payload = {"type": "get_serial_number", "token": self.token}
         try:

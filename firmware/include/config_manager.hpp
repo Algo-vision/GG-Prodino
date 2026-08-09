@@ -262,6 +262,16 @@ bool serialNumberIsModifiable();
  * @brief Burn the per-board telemetry key (32 bytes) into flash.
  * @note WRITE-ONLY: nothing ever reads this back out of the board.
  */
+/**
+ * @brief Override the serial number in RAM only, without writing flash.
+ *
+ * For bench builds. Every firmware upload erases FlashStorage, so a burned
+ * serial is lost on each update and the board reverts to UNCONFIGURED - which
+ * the server rejects as an unknown device. Compiling the serial in survives
+ * reflashing. Production builds omit FORCE_SERIAL_NUMBER and use the burned one.
+ */
+void serialNumberSetVolatile(const char* sn);
+
 bool configSetDeviceKey(const uint8_t* key32);
 
 /** @return true if a device key has been provisioned. */

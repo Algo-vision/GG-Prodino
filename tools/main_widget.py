@@ -279,6 +279,42 @@ class MainWidget(QWidget):
         imu_orientation_box.setLayout(imu_orientation_layout)
         layout.addWidget(imu_orientation_box)
 
+        # ---- Telemetry key -------------------------------------------------
+        # The board encrypts its cloud telemetry with a per-board secret. Create
+        # the key on the dashboard (Admin -> Board Telemetry Keys), which also
+        # registers it with the server, then paste it here to burn it into the
+        # board. Write-only: nothing can read a key back out, so the box only
+        # ever reports whether one is present.
+        key_box = QGroupBox("Telemetry Key (encrypts the status sent to the cloud)")
+        key_layout = QVBoxLayout()
+
+        key_status_row = QHBoxLayout()
+        self.key_status_label = QLabel("Key on this board: unknown")
+        key_status_row.addWidget(self.key_status_label)
+        key_status_row.addStretch()
+        key_layout.addLayout(key_status_row)
+
+        key_hint = QLabel(
+            "Create the key on the dashboard (Admin \u2192 Board Telemetry Keys), "
+            "then paste it below. Accepts the whole SET_KEY: line or just the 64 "
+            "hex characters."
+        )
+        key_hint.setWordWrap(True)
+        key_hint.setStyleSheet("color: #666; font-size: 11px;")
+        key_layout.addWidget(key_hint)
+
+        key_entry_row = QHBoxLayout()
+        self.key_edit = QLineEdit()
+        self.key_edit.setPlaceholderText("SET_KEY:<64 hex characters>")
+        key_entry_row.addWidget(self.key_edit)
+        self.key_burn_btn = QPushButton("Burn Key to Board")
+        self.key_burn_btn.clicked.connect(self.burn_device_key)
+        key_entry_row.addWidget(self.key_burn_btn)
+        key_layout.addLayout(key_entry_row)
+
+        key_box.setLayout(key_layout)
+        layout.addWidget(key_box)
+
         # Relay controls
         relay_box = QGroupBox("Relays")
         relay_layout = QHBoxLayout()
@@ -370,6 +406,19 @@ class MainWidget(QWidget):
             # Enable technician mode section if in technician mode
             self.technician_mode = status.get("technicianMode", False)
             self.tech_mode_box.setEnabled(self.technician_mode)
+
+            has_key = status.get("deviceKeySet")
+            if has_key is None:
+                self.key_status_label.setText(
+                    "Key on this board: unknown (firmware too old to report it)")
+                self.key_status_label.setStyleSheet("color: #888;")
+            elif has_key:
+                self.key_status_label.setText("Key on this board: SET \u2713")
+                self.key_status_label.setStyleSheet("color: #226b45; font-weight: bold;")
+            else:
+                self.key_status_label.setText(
+                    "Key on this board: NOT SET - it cannot report to the cloud")
+                self.key_status_label.setStyleSheet("color: #9c5b00; font-weight: bold;")
             self.fw_upload_btn.setEnabled(self.technician_mode and self.firmware_path is not None)
 
             # Update IP configuration fields only if not editing
@@ -561,6 +610,52 @@ class MainWidget(QWidget):
                 print(f"save_router_ip: Failed to save router IP: {msg}")
                 QMessageBox.critical(self, "Router IP Configuration Failed", f"Failed to save router IP: {msg}")
                 self.update_status() # Refresh to show the original IP
+
+    def burn_device_key(self):
+        """Send a telemetry key to the board and burn it into flash."""
+        raw = self.key_edit.text().strip()
+        if raw.upper().startswith("SET_KEY:"):        # accept the pasted line as-is
+            raw = raw.split(":", 1)[1].strip()
+        raw = raw.replace(" ", "")
+
+        if len(raw) != 64 or any(c not in "0123456789abcdefABCDEF" for c in raw):
+            QMessageBox.warning(
+                self, "Invalid key",
+                "A telemetry key is exactly 64 hex characters (32 bytes).\n\n"
+                f"That input has {len(raw)} character(s).\n\n"
+                "Create one on the dashboard under Admin \u2192 Board Telemetry Keys "
+                "and paste the SET_KEY: line here.")
+            return
+
+        if QMessageBox.question(
+                self, "Burn key to board",
+                "Write this key into the board's flash?\n\n"
+                "It replaces any existing key, and the board will only be accepted "
+                "by the server if the same key is registered there for this serial "
+                "number.\n\nReboot the board afterwards to start using it.",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+            return
+
+        result = self.api.set_device_key(raw)
+        if result is None:
+            QMessageBox.critical(self, "No response",
+                                 "The board did not answer. Check the connection.")
+            return
+        if result.get("error") == "AUTH_ERROR":
+            QMessageBox.critical(self, "Not logged in",
+                                 "Session expired - log in again and retry.")
+            return
+        if result.get("success"):
+            self.key_edit.clear()
+            QMessageBox.information(
+                self, "Key burned",
+                "The key is stored on the board.\n\n"
+                "Reboot the board to start using it. The key cannot be read back "
+                "out - this panel will only show whether one is present.")
+        else:
+            QMessageBox.critical(
+                self, "Failed",
+                result.get("message", "The board rejected the key."))
 
     def on_sn_digit_changed(self):
         """Validate that only digits 0-9 are allowed in SN input slots."""
