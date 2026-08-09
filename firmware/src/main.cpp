@@ -282,6 +282,16 @@ void loop() {
     ArduinoOTA.handle();
   }
 
+  // Execute a reboot that something asked for. serialNumberBurn() schedules one
+  // so the new serial takes effect, and set_ip_config does the same for a new
+  // address - without this the request is simply dropped and the board keeps
+  // running on the old value while telling the caller it will restart.
+  if (g_rebootPending && millis() >= g_rebootTimeMs) {
+    Serial.println("Executing scheduled reboot...");
+    delay(100);
+    NVIC_SystemReset();
+  }
+
   // Sample the sensors and run the orientation filter on a FIXED cadence.
   // This is the only place statusUpdate() may be called - the HTTP handlers
   // deliberately do not refresh, so the filter's behaviour cannot depend on
@@ -529,7 +539,7 @@ void handleSerialCommands() {
         // or not). That made provisioning impossible. Setting a serial already
         // requires physical USB access, which is the same trust level SET_KEY
         // has always used.
-        bool unprovisioned = (serialNumberGet() == "UNCONFIGURED");
+        bool unprovisioned = !serialNumberIsBurned();
         if (cmd.startsWith("SET_SN:") && (technician_mode || unprovisioned)) {
             String newSN = cmd.substring(7);
             newSN.trim();

@@ -551,7 +551,7 @@ void httpServerLoop() {
                     // impossible to provision - see main.cpp.)
                     String sn = doc["serial_number"] | "";
                     sn.trim();
-                    bool unprovisioned = (serialNumberGet() == "UNCONFIGURED");
+                    bool unprovisioned = !serialNumberIsBurned();
                     if (!technician_mode && !unprovisioned) {
                         httpStatusCode = 403;
                         resp["type"] = "error";
@@ -563,8 +563,7 @@ void httpServerLoop() {
                         // next check would have complained about.
                         resp["type"] = "error";
                         resp["code"] = "E-222";
-                        resp["message"] = "Serial number is already burned (" + serialNumberGet()
-                                        + ") and cannot be changed";
+                        resp["message"] = "Serial number is already burned and cannot be changed";
                     } else if (sn.toInt() < 2000 || sn.toInt() > 2999) {
                         resp["type"] = "error";
                         resp["code"] = "E-221";

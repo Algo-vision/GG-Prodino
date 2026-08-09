@@ -402,6 +402,14 @@ bool serialNumberIsModifiable() {
 // board by any command or endpoint. Only the telemetry module reads it,
 // in-place, to encrypt a packet. See docs/SECURE_TELEMETRY.md.
 
+bool serialNumberIsBurned() {
+    // Reads FLASH, deliberately - not g_serialNumber, which a bench build can
+    // override with FORCE_SERIAL_NUMBER. A board whose flash was just erased by
+    // a firmware upload is unprovisioned even though the RAM copy looks set.
+    Config configData = g_configStore.read();
+    return configData.serial_number_set && configData.validation_marker == CONFIG_VALID_MARKER;
+}
+
 void serialNumberSetVolatile(const char* sn) {
     if (sn) g_serialNumber = sn;      // RAM only - flash is NOT touched
 }

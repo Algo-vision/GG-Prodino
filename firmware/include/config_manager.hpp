@@ -270,6 +270,15 @@ bool serialNumberIsModifiable();
  * the server rejects as an unknown device. Compiling the serial in survives
  * reflashing. Production builds omit FORCE_SERIAL_NUMBER and use the burned one.
  */
+/**
+ * @brief Is a serial number actually burned into flash?
+ *
+ * Distinct from serialNumberGet(), which returns the RAM copy - and a bench
+ * build can force that with FORCE_SERIAL_NUMBER. Use this to decide whether a
+ * board still needs provisioning.
+ */
+bool serialNumberIsBurned();
+
 void serialNumberSetVolatile(const char* sn);
 
 bool configSetDeviceKey(const uint8_t* key32);
