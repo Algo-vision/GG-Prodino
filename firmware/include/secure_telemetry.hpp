@@ -80,6 +80,14 @@ void telemetryPump();
  */
 void telemetryPrintBlockStats();
 
+/**
+ * @brief Re-read the device key and start using it immediately.
+ *
+ * Call after burning a key. Without it the new key only takes effect on the
+ * next boot, and the board keeps encrypting with the one it loaded at startup.
+ */
+void telemetryReloadKey();
+
 /** @return true if a device key has been provisioned on this board. */
 bool telemetryHasKey();
 

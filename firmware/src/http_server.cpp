@@ -7,6 +7,7 @@
 #include "config_manager.hpp"
 #include "auth_manager.hpp"
 #include "status_manager.hpp"
+#include "secure_telemetry.hpp"
 #include "led_controller.hpp"
 #include "relay_controller.hpp"
 #include "ocu_monitor.hpp"
@@ -613,10 +614,11 @@ void httpServerLoop() {
                             resp["code"] = "E-211";
                             resp["message"] = "key contains non-hex characters";
                         } else if (configSetDeviceKey(key)) {
+                            telemetryReloadKey();   // effective now, no reboot
                             resp["type"] = "device_key";
                             resp["success"] = true;
                             resp["deviceKeySet"] = true;
-                            resp["message"] = "Key burned. Reboot the board to start using it.";
+                            resp["message"] = "Key burned and in use. No reboot needed.";
                         } else {
                             resp["type"] = "error";
                             resp["code"] = "E-212";

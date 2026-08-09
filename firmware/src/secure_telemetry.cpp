@@ -196,6 +196,26 @@ void telemetryInit() {
 
 bool telemetryHasKey() { return s_haveKey; }
 
+void telemetryReloadKey() {
+    // Called right after a key is burned, so it takes effect immediately.
+    //
+    // Without this the module keeps using whatever key it loaded at boot - and
+    // on a freshly flashed board that is the compiled-in fallback, not the key
+    // just provisioned. The board would then encrypt with the wrong key and the
+    // server would reject every packet as BAD AUTH, while the board itself
+    // reported deviceKeySet=true. Telling the operator to reboot was not enough:
+    // the obvious way to reboot is to reflash, which erases the key again.
+    //
+    // A fresh boot id comes with it. The sequence restarts at 1, and reusing the
+    // previous boot id under a new key would look to the server like a replay.
+    if (s_pending) {                 // don't strand an in-flight send
+        s_client.setConnectionTimeout(1);
+        s_client.stop();
+        s_pending = false;
+    }
+    telemetryInit();
+}
+
 void telemetryPrintBlockStats() {
     Serial.print(F("[TELEM] blocking per send: n=")); Serial.print(s_blkN);
     if (s_blkN) {

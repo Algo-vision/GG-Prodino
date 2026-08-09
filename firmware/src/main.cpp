@@ -571,7 +571,10 @@ void handleSerialCommands() {
                     else key[i] = (uint8_t)((h << 4) | l);
                 }
                 if (!valid) Serial.println("ERROR: SET_KEY contains non-hex characters");
-                else if (configSetDeviceKey(key)) Serial.println("Reboot to start using the new key");
+                else if (configSetDeviceKey(key)) {
+                    telemetryReloadKey();          // effective now, no reboot
+                    Serial.println("Key burned and in use. No reboot needed.");
+                }
             }
         } else if (cmd == "GET_KEY_STATUS") {
             Serial.println(configHasDeviceKey() ? "Device key: SET" : "Device key: NOT SET");
