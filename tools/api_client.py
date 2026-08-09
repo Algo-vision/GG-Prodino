@@ -2,6 +2,29 @@ import requests
 import json
 
 class ApiClient:
+    # Firmware 1.5.1 changed get_status from one flat object into sections
+    # (config / overview / imu / gps), and renamed two fields. Everything that
+    # reads a status document expects the flat shape, so normalise here rather
+    # than in every caller - and keep working with older firmware, which really
+    # is flat.
+    _SECTIONS = ("config", "overview", "imu", "gps")
+    _RENAMED = (("busVoltage", "systemVoltage"), ("GPSConnected", "gpsConnected"))
+
+    @classmethod
+    def _flatten(cls, doc):
+        if not isinstance(doc, dict):
+            return doc
+        flat = dict(doc)
+        for section in cls._SECTIONS:
+            sub = doc.get(section)
+            if isinstance(sub, dict):
+                for k, v in sub.items():
+                    flat.setdefault(k, v)      # a top-level key always wins
+        for old, new in cls._RENAMED:
+            if old not in flat and new in flat:
+                flat[old] = flat[new]
+        return flat
+
     def __init__(self, base_ip):
         self.base_ip = base_ip
         self.base_url = f"http://{base_ip}/"
@@ -55,7 +78,7 @@ class ApiClient:
             response = self.session.post(self.base_url, data=json.dumps(payload), timeout=5)
 
             if response.status_code == 200:
-                return response.json()
+                return self._flatten(response.json())
             if response.status_code == 401:
                 # Try to re-login automatically
                 if self._try_relogin():
@@ -64,7 +87,7 @@ class ApiClient:
                     response = self.session.post(self.base_url, data=json.dumps(payload), timeout=5)
                     if response.status_code == 200:
                         print("[ApiClient] Auto re-login successful, resumed operation")
-                        return response.json()
+                        return self._flatten(response.json())
                 return {"error": "AUTH_ERROR"}
             return None
         except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
@@ -263,7 +286,7 @@ class ApiClient:
         try:
             response = self.session.post(self.base_url, data=json.dumps(payload), timeout=5)
             if response.status_code == 200:
-                return response.json()
+                return self._flatten(response.json())
             if response.status_code == 401:
                 return {"error": "AUTH_ERROR"}
             return None
@@ -278,7 +301,7 @@ class ApiClient:
         try:
             response = self.session.post(self.base_url, data=json.dumps(payload), timeout=5)
             if response.status_code == 200:
-                return response.json()
+                return self._flatten(response.json())
             if response.status_code == 401:
                 return {"error": "AUTH_ERROR"}
             return None

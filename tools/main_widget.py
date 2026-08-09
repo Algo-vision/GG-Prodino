@@ -145,7 +145,7 @@ class MainWidget(QWidget):
         status_layout = QGridLayout()
         self.status_labels = {}
         # Add IP fields to the status fields list
-        fields = ["firmwareVersion", "controllerIp", "routerIp", "whitelistIps", "motorWorkHours", "busVoltage", "powerConnected", "relays_status", "imuX", "imuY", "imuZ", "imuGx", "imuGy", "imuGz", "pitch", "roll", "yaw", "gpsLat", "gpsLng", "gpsAlt", "gpsTime", "gpsSpeedNorth", "gpsSpeedEast", "gpsSpeedDown", "gpsGroundSpeed", "gpsHeading", "gpsSatellites", "gpsHAcc", "gpsVAcc", "gpsAltEllipsoid", "ledInternal", "ledIo", "gpsValid", "button_tech", "imuValid", "GPSConnected", "optoin_status"]
+        fields = ["firmwareVersion", "controllerIp", "whitelistIps", "motorWorkHours", "busVoltage", "powerConnected", "relays_status", "imuX", "imuY", "imuZ", "imuGx", "imuGy", "imuGz", "pitch", "roll", "yaw", "gpsLat", "gpsLng", "gpsAlt", "gpsTime", "gpsSpeedNorth", "gpsSpeedEast", "gpsSpeedDown", "gpsGroundSpeed", "gpsHeading", "gpsSatellites", "ledInternal", "ledIo", "button_tech", "imuValid", "GPSConnected", "optoin_status", "gpsSane", "imu1Sane", "imu2Sane", "angleSane", "imuTemp", "ocuConnected", "safetyMode", "systemCurrent_A"]
         for i, field in enumerate(fields):
             label = QLabel("-")
             status_layout.addWidget(QLabel(field), i, 0)
