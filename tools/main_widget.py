@@ -636,7 +636,7 @@ class MainWidget(QWidget):
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
             return
 
-        result = self.api.set_device_key(raw)
+        result = self.api_client.set_device_key(raw)
         if result is None:
             QMessageBox.critical(self, "No response",
                                  "The board did not answer. Check the connection.")

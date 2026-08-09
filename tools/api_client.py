@@ -207,7 +207,11 @@ class ApiClient:
             if response.status_code == 403:
                 return {"error": "FORBIDDEN", "message": "Not permitted"}
             return None
-        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+            # Worth printing: silently returning None here surfaces in the GUI as
+            # the generic "Failed to communicate with device", which hides a
+            # transient dropped connection behind what looks like a real fault.
+            print(f"[ApiClient] set_device_key: connection problem: {e}")
             return None
         except Exception as e:
             print(f"Error setting device key: {e}")
