@@ -537,6 +537,51 @@ void httpServerLoop() {
                     resp["imuRollInvert"]  = (bool)g_imuAxisMap.rollInvert;
                     resp["imuYawInvert"]   = (bool)g_imuAxisMap.yawInvert;
                 }
+                else if (msgType == "get_serial_number") {
+                    resp["type"] = "serial_number";
+                    resp["serialNumber"] = serialNumberGet();
+                }
+                else if (msgType == "set_serial_number") {
+                    // Burn the serial over the network so the technician GUI can
+                    // provision a board without a USB cable. Same rule as the
+                    // serial console: an UNPROVISIONED board can always be given
+                    // one, changing an existing serial needs technician mode.
+                    // (The technician button's input floats on this hardware, so
+                    // gating first-time provisioning on it would make a board
+                    // impossible to provision - see main.cpp.)
+                    String sn = doc["serial_number"] | "";
+                    sn.trim();
+                    bool unprovisioned = (serialNumberGet() == "UNCONFIGURED");
+                    if (!technician_mode && !unprovisioned) {
+                        httpStatusCode = 403;
+                        resp["type"] = "error";
+                        resp["code"] = "E-220";
+                        resp["message"] = "Technician mode required to change an existing serial number";
+                    } else if (!unprovisioned) {
+                        // serialNumberBurn() is burn-once: it refuses to
+                        // overwrite. Say so, rather than reporting whatever the
+                        // next check would have complained about.
+                        resp["type"] = "error";
+                        resp["code"] = "E-222";
+                        resp["message"] = "Serial number is already burned (" + serialNumberGet()
+                                        + ") and cannot be changed";
+                    } else if (sn.toInt() < 2000 || sn.toInt() > 2999) {
+                        resp["type"] = "error";
+                        resp["code"] = "E-221";
+                        resp["message"] = "Serial number must be between 2000 and 2999";
+                    } else if (serialNumberBurn(sn.c_str())) {
+                        resp["type"] = "serial_number";
+                        resp["success"] = true;
+                        resp["serialNumber"] = serialNumberGet();
+                        // serialNumberBurn() schedules a reboot 2 s out, so the
+                        // caller should expect the connection to drop.
+                        resp["message"] = "Serial number burned. The board reboots in 2 seconds.";
+                    } else {
+                        resp["type"] = "error";
+                        resp["code"] = "E-223";
+                        resp["message"] = "Failed to write the serial number to flash";
+                    }
+                }
                 else if (msgType == "set_device_key") {
                     // Burn the per-board telemetry key over the network, so the
                     // technician GUI can provision a board without a USB cable.
