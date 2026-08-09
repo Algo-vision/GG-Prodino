@@ -45,3 +45,6 @@ SESSION_SUMMARY_*.md
 
 # Reference copy of the other developer's V1.5.1 - not part of this repo
 GG-GRK_V1.5.1/
+
+# Soak/load test logs - run artifacts, not source
+soak_*.log
