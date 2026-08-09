@@ -234,7 +234,27 @@
             font-size: 0.85rem;
             margin-left: 0.5rem;
         }
-    </style>
+    
+        .section-help { color: #8aa0aa; font-size: 0.9rem; margin: 0 0 1rem; max-width: 70ch; }
+        .section-help code { background: rgba(255,255,255,0.08); padding: 0.1em 0.4em; border-radius: 3px; }
+        .key-result { border: 1px solid #2e9e6b; background: rgba(46,158,107,0.08);
+                      padding: 1rem 1.15rem; border-radius: 6px; margin-bottom: 1.25rem; }
+        .key-result-title { font-weight: 600; margin-bottom: 0.5rem; }
+        .key-line { display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap; }
+        .key-line code { flex: 1 1 420px; word-break: break-all; font-family: monospace;
+                         background: rgba(0,0,0,0.35); padding: 0.6rem 0.7rem; border-radius: 4px; }
+        .key-warn { color: #e0a44e; font-size: 0.88rem; margin: 0.7rem 0 0; }
+        .keys-table { width: 100%; border-collapse: collapse; }
+        .keys-table th { text-align: left; font-size: 0.72rem; letter-spacing: 0.08em;
+                         text-transform: uppercase; color: #8aa0aa; padding: 0.5rem 0.6rem; }
+        .keys-table td { padding: 0.55rem 0.6rem; border-top: 1px solid rgba(255,255,255,0.08);
+                         font-size: 0.92rem; }
+        .pill { font-size: 0.72rem; padding: 0.15em 0.5em; border-radius: 3px; white-space: nowrap; }
+        .pill-online { background: rgba(46,158,107,0.2); color: #55c98d; }
+        .pill-offline { background: rgba(224,164,78,0.18); color: #e0a44e; }
+        .pill-never { background: rgba(255,255,255,0.08); color: #8aa0aa; }
+        .hidden { display: none; }
+</style>
 </head>
 
 <body>
@@ -250,6 +270,40 @@
         </header>
 
         <div id="message" class="message hidden"></div>
+
+        <section>
+            <h2 class="section-title">
+                Board Telemetry Keys
+                <span id="key-count" class="user-count">(0)</span>
+            </h2>
+            <p class="section-help">
+                Each board encrypts its status with its own secret key. Create one here,
+                then paste the <code>SET_KEY:</code> line into that board over USB.
+                <strong>The key is shown once and cannot be retrieved again.</strong>
+            </p>
+            <form id="add-key-form" class="add-user-form">
+                <input type="text" id="new-serial" placeholder="Serial number, e.g. SN2003"
+                       required maxlength="16" autocomplete="off">
+                <button type="submit" class="btn-add">+ Create Key</button>
+            </form>
+
+            <div id="key-result" class="key-result hidden">
+                <div class="key-result-title">Key created for <span id="key-result-serial"></span></div>
+                <p>Paste this into the board's USB serial console, then power-cycle it:</p>
+                <div class="key-line">
+                    <code id="key-command"></code>
+                    <button type="button" class="btn-add" id="btn-copy-key">Copy</button>
+                </div>
+                <p class="key-warn">
+                    This will not be shown again. If you lose it, create a new key and
+                    burn that instead.
+                </p>
+            </div>
+
+            <div id="keys-container">
+                <div class="loading">Loading keys...</div>
+            </div>
+        </section>
 
         <section>
             <h2 class="section-title">Add New User</h2>
@@ -280,6 +334,102 @@
 
     <script>
         const backendUrl = `${window.location.protocol}//${window.location.hostname}:5555`;
+
+        // ---- board telemetry keys -----------------------------------------
+        async function loadKeys() {
+            const box = document.getElementById('keys-container');
+            try {
+                const res = await fetch(`${backendUrl}/api/admin/device-keys`, { credentials: 'include' });
+                if (!res.ok) throw new Error(`server returned ${res.status}`);
+                const rows = await res.json();
+                document.getElementById('key-count').textContent = `(${rows.length})`;
+                if (!rows.length) {
+                    box.innerHTML = '<div class="loading">No boards have keys yet.</div>';
+                    return;
+                }
+                box.innerHTML = `
+                    <table class="keys-table">
+                      <thead><tr>
+                        <th>Serial</th><th>Status</th><th>Last seen</th>
+                        <th>Firmware</th><th>Board IP</th><th>Last message</th><th></th>
+                      </tr></thead>
+                      <tbody>${rows.map(r => {
+                        const cls = r.status === 'online' ? 'pill-online'
+                                  : r.status === 'never seen' ? 'pill-never' : 'pill-offline';
+                        const seen = r.lastSeen ? new Date(r.lastSeen).toLocaleString() : 'never';
+                        const msg = r.lastSeq !== null ? `#${r.lastSeq} (boot ${r.lastBoot})` : '-';
+                        return `<tr>
+                          <td><strong>${r.serialNumber}</strong></td>
+                          <td><span class="pill ${cls}">${r.status}</span></td>
+                          <td>${seen}</td>
+                          <td>${r.firmware || '-'}</td>
+                          <td>${r.controllerIp || '-'}</td>
+                          <td>${msg}</td>
+                          <td><button class="btn-delete" onclick="revokeKey('${r.serialNumber}')">Revoke</button></td>
+                        </tr>`;
+                      }).join('')}</tbody>
+                    </table>`;
+            } catch (err) {
+                box.innerHTML = `<div class="loading">Could not load keys: ${err.message}</div>`;
+            }
+        }
+
+        async function createKey(serial, confirmRotate) {
+            const res = await fetch(`${backendUrl}/api/admin/device-keys`, {
+                method: 'POST', credentials: 'include',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ serialNumber: serial, confirmRotate: !!confirmRotate })
+            });
+            const data = await res.json();
+            if (res.status === 409 && data.needsConfirm) {
+                if (confirm(`${data.error}\n\nRotate it anyway?`)) return createKey(serial, true);
+                return null;
+            }
+            if (!res.ok) throw new Error(data.error || `server returned ${res.status}`);
+            return data;
+        }
+
+        document.getElementById('add-key-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const input = document.getElementById('new-serial');
+            const serial = input.value.trim().toUpperCase();
+            try {
+                const data = await createKey(serial, false);
+                if (!data) return;
+                document.getElementById('key-result-serial').textContent =
+                    data.serialNumber + (data.rotated ? ' (rotated)' : '');
+                document.getElementById('key-command').textContent = data.provisionCommand;
+                document.getElementById('key-result').classList.remove('hidden');
+                input.value = '';
+                loadKeys();
+            } catch (err) {
+                showMessage(err.message, 'error');
+            }
+        });
+
+        document.getElementById('btn-copy-key').addEventListener('click', () => {
+            const txt = document.getElementById('key-command').textContent;
+            navigator.clipboard.writeText(txt).then(
+                () => showMessage('Copied - paste it into the board over USB', 'success'),
+                () => showMessage('Could not copy; select the text manually', 'error'));
+        });
+
+        async function revokeKey(serial) {
+            if (!confirm(`Revoke the key for ${serial}?\n\n`
+                       + `That board stops being accepted immediately. To bring it back you `
+                       + `must create a new key and burn it into the board.`)) return;
+            try {
+                const res = await fetch(`${backendUrl}/api/admin/device-keys/${serial}`,
+                                        { method: 'DELETE', credentials: 'include' });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || `server returned ${res.status}`);
+                showMessage(`Key revoked for ${serial}`, 'success');
+                loadKeys();
+            } catch (err) {
+                showMessage(err.message, 'error');
+            }
+        }
+
         let currentUser = null;
 
         // Check authentication and admin status
@@ -449,7 +599,7 @@
 
         // Initialize
         checkAuth().then(ok => {
-            if (ok) loadUsers();
+            if (ok) { loadUsers(); loadKeys(); }
         });
     </script>
 </body>

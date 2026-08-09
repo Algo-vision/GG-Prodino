@@ -216,6 +216,14 @@ try {
                  `Generate one with tools/gen_device_key.py <SERIAL>`);
 }
 
+function saveDeviceKeys() {
+    // Written with mode 600: this file is every board's secret.
+    const out = {};
+    for (const [sn, buf] of Object.entries(deviceKeys)) out[sn] = buf.toString('hex');
+    fs.writeFileSync(DEVICE_KEYS_FILE, JSON.stringify(out, null, 2), { mode: 0o600 });
+    try { fs.chmodSync(DEVICE_KEYS_FILE, 0o600); } catch (e) { /* best effort */ }
+}
+
 // Replay state per board: serial -> Map(bootIdHex -> highest msg_seq accepted).
 // A packet is accepted when its boot id has never been seen (a genuine new boot,
 // since boot ids are random) or when its sequence advances that boot's counter.
@@ -606,6 +614,87 @@ app.get('/auth/me', (req, res) => {
 // ============================================================
 
 // Get all users (admin only)
+// ===========================================================================
+// TELEMETRY KEYS  (admin only)
+//
+// Replaces hand-editing device_keys.json and scp-ing it to the server. A key is
+// returned ONCE, at the moment it is created, because the technician has to
+// paste it into the board over USB. It is never listed or returned again -
+// neither here nor by the board, which stores it write-only.
+// ===========================================================================
+app.get('/api/admin/device-keys', isAuthenticated, isAdmin, (req, res) => {
+    const rows = Object.keys(deviceKeys).sort().map((sn) => {
+        const dev = devices.get(sn);
+        const boots = replayState.get(sn);
+        let lastBoot = null, lastSeq = null;
+        if (boots && boots.size) {
+            const k = Array.from(boots.keys()).pop();
+            lastBoot = k.slice(0, 8);
+            lastSeq = boots.get(k);
+        }
+        return {
+            serialNumber: sn,
+            hasKey: true,                       // the key itself is never sent
+            lastSeen: dev ? dev.lastSeen : null,
+            status: dev ? getDeviceStatus(dev) : 'never seen',
+            lastBoot, lastSeq,
+            firmware: dev ? dev.deviceInfo.firmwareVersion : null,
+            controllerIp: dev ? dev.deviceInfo.controllerIp : null
+        };
+    });
+    res.json(rows);
+});
+
+app.post('/api/admin/device-keys', isAuthenticated, isAdmin, (req, res) => {
+    const serial = String(req.body.serialNumber || '').trim().toUpperCase();
+    if (!/^[A-Z0-9-]{2,16}$/.test(serial)) {
+        return res.status(400).json({ error: 'Serial number must be 2-16 characters: A-Z, 0-9, -' });
+    }
+    const replacing = !!deviceKeys[serial];
+    if (replacing && !req.body.confirmRotate) {
+        return res.status(409).json({
+            error: `${serial} already has a key. Rotating it stops that board reporting ` +
+                   `until the new key is burned into it.`,
+            needsConfirm: true
+        });
+    }
+
+    const key = crypto.randomBytes(32);
+    deviceKeys[serial] = key;
+    try {
+        saveDeviceKeys();
+    } catch (err) {
+        delete deviceKeys[serial];              // don't keep a key we failed to persist
+        console.error('device-keys write failed:', err.message);
+        return res.status(500).json({ error: 'Could not save the key file on the server' });
+    }
+    // A rotated board must start a fresh nonce history, or its old boot ids
+    // would still be remembered against the new key.
+    replayState.delete(serial);
+
+    console.log(`🔑 ${req.user.email} ${replacing ? 'ROTATED' : 'created'} the telemetry key for ${serial}`);
+    res.json({
+        serialNumber: serial,
+        key: key.toString('hex'),               // shown once, never again
+        rotated: replacing,
+        provisionCommand: `SET_KEY:${key.toString('hex')}`
+    });
+});
+
+app.delete('/api/admin/device-keys/:serial', isAuthenticated, isAdmin, (req, res) => {
+    const serial = String(req.params.serial).toUpperCase();
+    if (!deviceKeys[serial]) return res.status(404).json({ error: 'No key for that serial number' });
+    delete deviceKeys[serial];
+    try {
+        saveDeviceKeys();
+    } catch (err) {
+        return res.status(500).json({ error: 'Could not save the key file on the server' });
+    }
+    replayState.delete(serial);
+    console.log(`🔑 ${req.user.email} REVOKED the telemetry key for ${serial}`);
+    res.json({ revoked: serial });
+});
+
 app.get('/api/admin/users', isAuthenticated, isAdmin, (req, res) => {
     const users = db.getAllUsers();
     // Add device assignments for each user
