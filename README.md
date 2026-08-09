@@ -1,23 +1,126 @@
-# GG-GRK - V1.5
+# GG-GRK - V1.5.1
 
-GRK Controller: an embedded IoT device with IMU, GPS, relay control, MQTT telemetry, and a real-time web dashboard.
+GRK Controller: an embedded IoT device with dual IMU, GPS, relay control, a local
+HTTP API for real-time consumers, encrypted telemetry to the cloud, and a
+real-time web dashboard.
 
 ## Repository Layout
 
 - **[`firmware/`](firmware/)** - Board firmware (PlatformIO/Arduino), HTTP API reference, hardware/LED behavior. See [`firmware/README.md`](firmware/README.md).
-- **[`server/web_ui/`](server/web_ui/)** - GRK Mission Control, a real-time Node.js/Socket.io web dashboard with live GPS tracking.
-- **[`server/mqtt_server/`](server/mqtt_server/)** - Python MQTT debug subscriber with a REST/WebSocket API. See [`server/mqtt_server/README.md`](server/mqtt_server/README.md).
-- **[`tools/`](tools/)** - Desktop GUI client, API test scripts, and OTA uploader. See [`tools/README.md`](tools/README.md).
-- **[`docs/`](docs/)** - Deployment guides:
+- **[`server/web_ui/`](server/web_ui/)** - GRK Mission Control, a real-time Node.js/Socket.io web dashboard with live GPS tracking. Also receives the boards' encrypted telemetry.
+- **[`tools/`](tools/)** - Desktop GUI client, key generator, API and load-test scripts, OTA uploader. See [`tools/README.md`](tools/README.md).
+- **[`docs/`](docs/)**
+  - [**Secure telemetry**](docs/SECURE_TELEMETRY.md) - how the encryption works and how to key a board
+  - [Telemetry benchmark](docs/TELEMETRY_BENCHMARK.md) - why it is built this way, measured on the hardware
+  - [Board ↔ web server data flow](docs/BOARD_TO_WEBSERVER_DATAFLOW.md)
   - [Local Development Setup](docs/local_setup/LOCAL_DEVELOPMENT_SETUP.md)
-  - [Cloud Setup Guide](docs/cloud_setup/) - AWS IoT Core, EC2, and RUTX12 bridge configuration
+  - [Cloud Setup](docs/cloud_setup/) - EC2 dashboard and Google sign-in
 
-## MQTT Topics
+## How the board talks to the outside world
 
-The board publishes to `grk/{serial}/...` topics, e.g. `grk/gps/position`, `grk/imu/orientation`, `grk/relays/state`. See [`firmware/README.md`](firmware/README.md#mqtt-integration) for the full topic list.
+Two independent paths, which do not interfere with each other:
+
+**1. Local HTTP API — for real-time consumers.** Anything on the same network
+(a Jetson, the technician GUI) polls the board directly over JSON-over-HTTP for
+GPS, IMU, relays and so on. Measured: ~18 requests/second sustained, 44 ms
+median. Access is restricted by an IP whitelist plus a login token.
+
+**2. Encrypted telemetry — for the cloud dashboard.** Once a minute the board
+sends its status to the EC2 server. This is the path described below.
+
+## Encrypted telemetry, in short
+
+The board sends its status over **plain HTTP, but the message itself is
+encrypted** — the security is in the message, not in the transport. There is no
+HTTPS/TLS involved.
+
+**Why not just HTTPS?** We measured it on this hardware. A TLS handshake costs
+this 48 MHz chip **9,789 ms of blocked CPU per message** and leaves under 1 KB of
+free RAM — it froze the local API for ~15 seconds at a time and sometimes crashed
+the board. The expensive part is the *handshake*: the public-key maths two
+strangers use to agree on a key. But we are not strangers — we own both ends. So
+we put a shared secret key on the board in advance and skip the negotiation
+entirely. What remains costs **~16 ms**. Full numbers:
+[TELEMETRY_BENCHMARK.md](docs/TELEMETRY_BENCHMARK.md).
+
+**What protects a message.** Each board has its **own 32-byte secret key**, known
+only to that board and the server. Every message is protected with
+**ChaCha20-Poly1305** — the same algorithm TLS 1.3 and WireGuard use:
+
+| | |
+|---|---|
+| **Encrypted** | an eavesdropper sees only random bytes |
+| **Authenticated** | change one bit and the server rejects it; forging a packet without the key is not feasible |
+| **Replay-protected** | capture a packet and re-send it later and the server rejects it |
+| **Per board** | one compromised board affects only itself, and revoking it is deleting one line |
+
+The packet is `version | serial | nonce | ciphertext | tag`, POSTed to
+`/api/ingest`. The serial is in clear so the server knows which key to try; it is
+still covered by the authentication tag, so it cannot be tampered with.
+
+### Where the keys live
+
+```
+   your laptop                    the board                    the EC2 server
+┌────────────────┐          ┌──────────────────┐          ┌──────────────────┐
+│ gen_device_key │  SET_KEY │  flash memory    │          │ device_keys.json │
+│      .py       │─────────►│  WRITE-ONLY:     │          │  {"SN2003":...}  │
+│                │  by USB  │  never readable  │          │                  │
+│ device_keys    │          └──────────────────┘          └──────────────────┘
+│    .json       │───────────────── scp ────────────────────────────►
+└────────────────┘
+      the only file that holds every key - gitignored, mode 600
+```
+
+The key generator writes `tools/device_keys.json`. That one file is the master
+registry; the board gets its key burned in over USB and **can never be asked for
+it again** (no command or endpoint returns it), and the server gets a copy so it
+can decrypt. Both copies are **gitignored and never committed**.
+
+### Putting a new board into service
+
+```bash
+# 1. generate a key for this board (prints a SET_KEY: line to paste)
+python3 tools/gen_device_key.py SN2003
+
+# 2. burn it over USB, then power-cycle
+cd firmware && pio device monitor -b 115200 -f send_on_enter
+#    paste:  SET_KEY:<the 64 hex characters it printed>
+#    verify: GET_KEY_STATUS   ->   Device key: SET
+
+# 3. give the server the same key
+scp -i keys/instance_gg_key.pem tools/device_keys.json \
+    ubuntu@16.171.11.151:~/prodino_web_ui/device_keys.json
+ssh -i keys/instance_gg_key.pem ubuntu@16.171.11.151 \
+    "chmod 600 ~/prodino_web_ui/device_keys.json && pm2 restart grk-backend"
+```
+
+The board also needs a serial number (`SET_SN:2003`), which is what the server
+uses to pick the key.
+
+**Revoking a board:** delete its line from the server's `device_keys.json` and
+restart — that board is rejected immediately, no others are affected.
+**Rotating a key:** re-run step 1 (it warns before overwriting), then repeat 2–3.
+
+### Checking it works
+
+```bash
+# the security tests - no board needed
+python3 tools/test_ingest.py http://16.171.11.151:5555
+#   valid -> 204,  tampered -> 401,  replayed -> 409,  unknown serial -> 401
+
+# what the server is receiving from real boards
+ssh -i keys/instance_gg_key.pem ubuntu@16.171.11.151 \
+    "pm2 logs grk-backend --lines 20 --nostream"
+#   🔐 [SN2003] ingest/tcp boot=9e47ab84 seq=1 1375B pitch=-0.004 roll=0.010
+```
+
+Full detail, including what this does **not** protect against:
+[docs/SECURE_TELEMETRY.md](docs/SECURE_TELEMETRY.md).
 
 ## Getting Started
 
-- To build/flash the board: see [`firmware/README.md`](firmware/README.md#installation-instructions).
-- To run the web dashboard or MQTT debug server locally: see [`docs/local_setup/LOCAL_DEVELOPMENT_SETUP.md`](docs/local_setup/LOCAL_DEVELOPMENT_SETUP.md).
-- To deploy to AWS IoT Core / EC2 / RUTX12: see [`docs/cloud_setup/`](docs/cloud_setup/).
+- Build/flash the board: [`firmware/README.md`](firmware/README.md#installation-instructions).
+- Run the dashboard locally: [`docs/local_setup/LOCAL_DEVELOPMENT_SETUP.md`](docs/local_setup/LOCAL_DEVELOPMENT_SETUP.md).
+- Deploy the dashboard to EC2: [`docs/cloud_setup/`](docs/cloud_setup/).
+- Put a board into service: the three steps above.
