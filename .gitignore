@@ -1,50 +1,30 @@
+# Scratch: personal notes, task inputs, run logs, build artefacts. One rule
+# instead of the dozen individual entries this used to carry.
+temp/
+
+# Build output and local tool environments
 .pio
-.vscode/.browse.c_cpp.db*
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+build/
 .vscode/c_cpp_properties.json
 .vscode/launch.json
+.vscode/.browse.c_cpp.db*
 .vscode/ipch
-.venv/
-*.pyc
-__pycache__/
-.pytest_cache/
-.ipynb_checkpoints/
-build/
-GG-GRK-GUI-*.spec
-server/web_ui/node_modules
-server/web_ui/certs
-keys/
-server/web_ui/.env
-server/web_ui/data/grk_users.db
-code_example_versions
-.gitignore
-HLC1-IMU_Directions.jpg
-MSB IMUs Oriantations (U8-1,U7-2,U7-Combined).jpeg
-new_task_12_07.txt
-GRK_Board_Direct_keys/
-# AWS IoT device credentials embedded for the firmware (contains a PRIVATE KEY - never commit)
-firmware/src/aws_client_certs.h
-GRK_Board_Direct_keys/
-firmware/src/aws_certs_store.h
 
-# Leftover AWS IoT device credentials from the old TLS uplink. The board no
-# longer speaks TLS (see docs/SECURE_TELEMETRY.md); these are ignored so a stale
-# local copy can never be committed.
+# Secrets - never commit
+keys/
+GRK_Board_Direct_keys/
+tools/device_keys.json
+firmware/src/telemetry_key.h
+firmware/src/aws_client_certs.h
+firmware/src/aws_certs_store.h
 firmware/src/aws_ecc_certs.h
 
-# Per-board telemetry keys (secrets - never commit)
-tools/device_keys.json
-server/web_ui/device_keys.json
-firmware/src/telemetry_key.h
-
-# Personal working notes - never commit (they are for us, not the repo)
-VALIDATION_CHECKLIST.md
-BOARD_TLS_INVESTIGATION.md
-GATEWAY_SETUP.md
-AWS_TLS_FEASIBILITY_TEST.md
-SESSION_SUMMARY_*.md
-
-# Reference copy of the other developer's V1.5.1 - not part of this repo
+# The other developer's V1.5.1, kept for reference - not part of this repo
 GG-GRK_V1.5.1/
 
-# Soak/load test logs - run artifacts, not source
-soak_*.log
+# Leftovers from v1.5.2 checkouts that live on other branches
+server/
