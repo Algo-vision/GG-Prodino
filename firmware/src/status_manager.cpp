@@ -618,6 +618,23 @@ JsonDocument statusGenerateJson(JsonDocument* requestDoc) {
     imu["imu2Gx"] = g_status.imu2Gx;
     imu["imu2Gy"] = g_status.imu2Gy;
     imu["imu2Gz"] = g_status.imu2Gz;
+
+    // Calibration state travels with the status, not only in get_calibration.
+    // Without a burned zero the angles below are still perfectly plausible -
+    // they are just measured from the enclosure instead of from the machine -
+    // so a client has no way to tell a calibrated board from an uncalibrated
+    // one by looking at them. Anything polling get_status can now say so.
+    imu["zeroCalValid"] = g_zeroCalValid;
+    {
+        float mp = 0.0f, mr = 0.0f;
+        statusZeroCalAngles(mp, mr);
+        imu["mountPitch"] = mp;
+        imu["mountRoll"]  = mr;
+    }
+    // So a UI can grey out a calibrate button and say WHY, rather than
+    // letting the request fail.
+    imu["restSeconds"] = statusRestSeconds();
+    imu["atRest"] = statusRestSeconds() >= REST_SECONDS_FOR_CALIBRATION;
     imu["imuTemp"] = g_status.imuTemp;
 
     // GPS fields (see "get_gps" in http_server.cpp)
