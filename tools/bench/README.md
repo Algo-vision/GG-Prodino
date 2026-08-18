@@ -3,6 +3,30 @@
 Hardware acceptance tests. They talk to a real controller over the network, so
 the machine running them must be in its IP whitelist.
 
+## `dt_stress_test.py`
+
+Priority 1: what `dt` in the angle formula actually is, at the controller's
+lightest and heaviest load. Needs a board flashed with the instrumented build —
+`env:main` compiles the probe out entirely and answers "unknown request type".
+
+```sh
+cd ../../firmware && pio run -e timing -t upload
+cd ../tools/bench
+./dt_stress_test.py --load idle      # scenario A: no consumer, no serial monitor
+./dt_stress_test.py --load poll      # scenario B: one consumer polling flat out
+```
+
+It arms the probe, applies the load for the window, then reads the **frozen**
+result — the board stops accumulating when the window expires, so the request
+that reads the numbers is never inside them. That matters most for the idle run,
+where one HTTP request is the entire load being excluded.
+
+**Close the USB serial monitor first.** `statusWriteToSerial()` skips itself
+when no host has the port open, so an unopened port already means "no serial
+printing" — but an open monitor silently adds ~55 lines/s to every result.
+
+Results and analysis: [`firmware/docs/P1_dt_stress_test.md`](../../firmware/docs/P1_dt_stress_test.md).
+
 ## `p2_acceptance.py`
 
 Interactive: it tells you what to do to the board and checks the result.

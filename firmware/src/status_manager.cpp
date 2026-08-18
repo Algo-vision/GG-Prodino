@@ -17,6 +17,7 @@
 #include <zero_calibration.hpp>
 #include <rest_detector.hpp>
 #include <gyro_bias.hpp>
+#include "timing_probe.hpp"
 
 // ============================================================================
 // FIRMWARE VERSION (configurable constant)
@@ -185,6 +186,8 @@ void statusInit() {
 }
 
 void statusUpdate() {
+    TP_BEGIN(TP_STATUS);
+    TP_BEGIN(TP_SENSORS);
 
     // Read IMU1 Accelerometer
     float ax, ay, az;
@@ -235,6 +238,18 @@ void statusUpdate() {
         g_status.imuTemp = temp2;
     }
     // else: neither readable - retain the last known value
+    TP_END(TP_SENSORS);
+
+#if TIMING_PROBE
+    // The interval the filter actually runs at, sampled with micros() and
+    // recorded BEFORE the clamp below. See timing_probe.hpp for why neither
+    // detail is optional. The filter's own dt, computed just after this, is
+    // left exactly as V1.5.1 had it.
+    static uint32_t s_lastUpdateMicros = 0;
+    uint32_t nowUs = micros();
+    TP_INTERVAL((uint32_t)(nowUs - s_lastUpdateMicros));
+    s_lastUpdateMicros = nowUs;
+#endif
 
 
     // Calculate time delta, clamped so a stalled main loop cannot integrate one
@@ -363,6 +378,7 @@ void statusUpdate() {
     s_a1[0] = a1x; s_a1[1] = a1y; s_a1[2] = a1z; s_a1Valid = imuValid;
     s_a2[0] = a2x; s_a2[1] = a2y; s_a2[2] = a2z; s_a2Valid = imu2Valid;
 
+    TP_BEGIN(TP_FILTER);
     if (useImu1 && useImu2) {
         // Both sane - fuse for a less noisy estimate
         calculateMergedOrientation(g_status.pitch, g_status.roll, g_status.yaw,
@@ -384,13 +400,14 @@ void statusUpdate() {
                           gpsHeadingValid, gpsHeading);
     }
     // else: neither IMU healthy - leave pitch/roll/yaw at their last known values
+    TP_END(TP_FILTER);
 
     // Read GPS data. Timed on its own: scenarios A and B showed the
     // unattributed part of statusUpdate GROWING per call as the loop
     // slowed (20.68 -> 33.57 ms), which is what draining a queue looks
     // like, and this is the only queue in here.
     gps_data currentGpsData;
-    _gg_hal.get_gps_data(currentGpsData);
+    { TP_BEGIN(TP_GPSREAD); _gg_hal.get_gps_data(currentGpsData); TP_END(TP_GPSREAD); }
     g_status.gpsValid = currentGpsData.valid;
     g_status.gpsConnected = gps_conncted;  // Global from i2c_imu_gps.cpp
     g_status.gpsSatellites = currentGpsData.satellites;
@@ -482,6 +499,7 @@ void statusUpdate() {
     }
 
     // Read power monitor
+    TP_BEGIN(TP_POWER);
     g_status.powerConnected = s_powerMonitorConnected;
     if (s_powerMonitorConnected) {
         g_status.systemVoltage = s_powerMonitor.getBusVoltage_V();
@@ -491,6 +509,7 @@ void statusUpdate() {
         g_status.systemVoltage = -1.0f;  // Indicate error
         g_status.systemCurrent_A = -1.0f;
     }
+    TP_END(TP_POWER);
 
     // ------------------------------------------------------------------
     // Sanity checks: not all zero, not stuck at the same value for
@@ -500,6 +519,7 @@ void statusUpdate() {
     // negative values are physically normal for those signed quantities.
     // ------------------------------------------------------------------
 
+    TP_BEGIN(TP_SANITY);
 
     // Power monitor
     float powerNow[2] = {g_status.systemVoltage, g_status.systemCurrent_A};
@@ -519,7 +539,9 @@ void statusUpdate() {
     double gpsNow[3] = {g_status.gpsLat, g_status.gpsLng, g_status.gpsAlt};
     bool gpsSaneCheck = checkSane(gpsNow, s_prevGps, 3, s_gpsStuckCount, SANITY_STUCK_THRESHOLD);
     g_status.gpsSane = g_status.gpsValid && gpsSaneCheck;
+    TP_END(TP_SANITY);
 
+    TP_END(TP_STATUS);
 }
 
 JsonDocument statusGenerateJson(JsonDocument* requestDoc) {

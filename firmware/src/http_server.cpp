@@ -14,6 +14,7 @@
 #include "KMPProDinoMKRZero.h"
 #include "gg_hal.hpp"
 #include <rest_detector.hpp>
+#include "timing_probe.hpp"
 #include <Arduino_DebugUtils.h>  // For NVIC_SystemReset()
 
 // ============================================================================
@@ -682,6 +683,22 @@ void httpServerLoop() {
                     resp["lastGpsLng"] = g_status.lastGpsLng;
                     resp["lastGpsAlt"] = g_status.lastGpsAlt;
                 }
+#if TIMING_PROBE
+                // Bench instrumentation, present only in the timing build.
+                // Arm, leave the board alone for the window, then read the
+                // frozen result - so the readout is never part of what was
+                // measured. See timing_probe.hpp.
+                else if (msgType == "reset_timing") {
+                    uint32_t windowS = doc["window_s"].is<uint32_t>()
+                                           ? doc["window_s"].as<uint32_t>()
+                                           : 60;
+                    timingProbeArm(windowS);
+                    timingProbeToJson(resp);
+                }
+                else if (msgType == "get_timing") {
+                    timingProbeToJson(resp);
+                }
+#endif
                 else {
                     resp["type"] = "error";
                     resp["code"] = "E-200";

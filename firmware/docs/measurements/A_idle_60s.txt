@@ -1,0 +1,41 @@
+P1 dt stress test - SCENARIO A (floor) - FULL ATTRIBUTION RUN
+date 2026-08-18 | branch v1.5.1.1 | firmware 1.5.1 env:timing (10 probe blocks)
+board 192.168.1.198 | client 192.168.1.169 | GPS ANTENNA DISCONNECTED
+no HTTP consumer, no serial monitor, 60 s window
+supersedes A_idle_60s.txt (same conditions, 5 probe blocks)
+
+  state=frozen  window=60s  elapsed=60000ms
+  filter updates : 2282
+  effective rate : 38.06 Hz
+  dt min         :    19.98 ms
+  dt mean        :    26.27 ms
+  dt max         :    89.52 ms
+  clamp hits     : 0
+
+  dt distribution
+   16.0 -  25.0 ms      1930   84.6%
+   25.0 -  40.0 ms       119    5.2%
+   40.0 -  60.0 ms        12    0.5%
+   60.0 - 100.0 ms       221    9.7%
+  >= 100.0 ms              0    0.0%
+
+  where the time goes        calls      mean        max     total
+  loop                      2284     26.28 ms     89.50 ms   60023 ms
+  status                    2283     25.93 ms     81.77 ms   59204 ms
+  gps_read                  2283     18.96 ms     74.81 ms   43288 ms
+  http                      2284      0.04 ms     26.05 ms      87 ms
+  serial                      59     10.01 ms     10.01 ms     590 ms
+  sensors                   2283      4.72 ms      4.73 ms   10770 ms
+  power                     2283      1.43 ms      1.44 ms    3262 ms
+  filter                    2283      0.65 ms      0.66 ms    1476 ms
+  ocu                       2283      0.03 ms      0.23 ms      63 ms
+  sanity                    2283      0.05 ms      0.06 ms     112 ms
+
+ATTRIBUTION OF statusUpdate (59204 ms total):
+  gps_read  43288  73.1%
+  sensors   10770  18.2%
+  power      3262   5.5%
+  filter     1476   2.5%
+  sanity      112   0.2%
+  --------------------
+  accounted 58908  99.5%   unexplained remainder 296 ms (0.5%)

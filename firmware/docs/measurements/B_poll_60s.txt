@@ -1,0 +1,56 @@
+P1 dt stress test - SCENARIO B (1 consumer, flat out) - FULL ATTRIBUTION RUN
+date 2026-08-18 | branch v1.5.1.1 | firmware 1.5.1 env:timing (10 probe blocks)
+board 192.168.1.198 | client 192.168.1.169 | GPS ANTENNA DISCONNECTED
+1 consumer, get_status, sequential, new TCP connection per request
+no serial monitor, 60 s window
+supersedes B_poll_60s.txt (same conditions, 5 probe blocks)
+
+  state=frozen  window=60s  elapsed=60052ms
+  filter updates : 720
+  effective rate : 12.01 Hz
+  dt min         :    20.00 ms
+  dt mean        :    83.24 ms
+  dt max         :   221.26 ms
+  clamp hits     : 309      (42.9% of updates)
+  client polls   : 777 in 60.0s = 12.9 req/s
+
+  dt distribution
+   16.0 -  25.0 ms        81   11.2%
+   25.0 -  40.0 ms         2    0.3%
+   40.0 -  60.0 ms       214   29.7%
+   60.0 - 100.0 ms       114   15.8%
+  >= 100.0 ms            309   42.9%
+
+  where the time goes        calls      mean        max     total
+  loop                       722     83.32 ms    221.26 ms   60154 ms
+  http                       722     42.74 ms    155.68 ms   30857 ms
+  status                     721     39.69 ms     81.36 ms   28615 ms
+  gps_read                   721     32.72 ms     74.38 ms   23588 ms
+  serial                      57     10.01 ms     10.01 ms     570 ms
+  sensors                    721      4.72 ms      4.73 ms    3401 ms
+  power                      721      1.43 ms      1.44 ms    1030 ms
+  filter                     721      0.65 ms      0.66 ms     466 ms
+  sanity                     721      0.05 ms      0.06 ms      35 ms
+  ocu                        721      0.02 ms      0.03 ms      16 ms
+
+ATTRIBUTION OF statusUpdate (28615 ms total):
+  gps_read  23588  82.4%
+  sensors    3401  11.9%
+  power      1030   3.6%
+  filter      466   1.6%
+  sanity       35   0.1%
+  --------------------
+  accounted 28520  99.7%   unexplained remainder 95 ms (0.3%)
+
+LOOP TIME SPLIT:
+  http     30857  51.3%   (39.71 ms per request, 777 requests)
+  status   28615  47.6%
+  rest      ~682   1.1%
+
+PER-CALL MEANS, A vs B - only ONE block moves:
+  gps_read  18.96 -> 32.72 ms   +72.6%
+  sensors    4.72 ->  4.72 ms    0.0%
+  power      1.43 ->  1.43 ms    0.0%
+  filter     0.65 ->  0.65 ms    0.0%
+  sanity     0.05 ->  0.05 ms    0.0%
+  gps_read MAX is unchanged: 74.81 -> 74.38 ms

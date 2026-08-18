@@ -41,6 +41,7 @@
 #include "ocu_monitor.hpp"
 #include "relay_controller.hpp"
 #include "status_manager.hpp"
+#include "timing_probe.hpp"
 
 // ============================================================================
 // FIRMWARE VERSION
@@ -93,11 +94,6 @@ bool manual_led_control_active = false;
 
 /** Manual LED state value */
 LED_STATES manual_led_state = OFF;
-
-// ============================================================================
-// FUNCTION PROTOTYPES
-// ============================================================================
-
 
 // ============================================================================
 // SETUP
@@ -213,8 +209,10 @@ void setup() {
 // ============================================================================
 
 void loop() {
+  TP_BEGIN(TP_LOOP);
   // Closes the measurement window the moment it expires, so the HTTP
   // request that reads the results cannot land inside them.
+  TP_SERVICE();
 
   // Handle OTA updates in technician mode
   if (technician_mode) {
@@ -239,15 +237,15 @@ void loop() {
   configUpdateBurnedHours();
 
   // Send/check OCU heartbeat
-  ocuMonitorUpdate();
+  { TP_BEGIN(TP_OCU); ocuMonitorUpdate(); TP_END(TP_OCU); }
 
   // 2. Handle HTTP requests
-  httpServerLoop();
+  { TP_BEGIN(TP_HTTP); httpServerLoop(); TP_END(TP_HTTP); }
 
   // 3. Regular maintenance tasks
   static unsigned long lastSerialOutput = 0;
   if (millis() - lastSerialOutput > 1000) {
-    statusWriteToSerial();
+    { TP_BEGIN(TP_SERIAL); statusWriteToSerial(); TP_END(TP_SERIAL); }
     lastSerialOutput = millis();
   }
   relayControllerUpdate();
@@ -260,5 +258,5 @@ void loop() {
   // Update LED status
   ledControllerUpdate();
 
+  TP_END(TP_LOOP);
 }
-
