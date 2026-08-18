@@ -153,6 +153,33 @@ extern DeviceStatus g_status;
 // ============================================================================
 
 /** IMU X-axis offset (set during calibration) */
+/**
+ * @brief Burn the current attitude as this installation's level reference.
+ *
+ * Requires the machine to have been at rest for REST_SECONDS_FOR_CALIBRATION,
+ * because it writes to flash and a bad one is worse than none.
+ *
+ * @param err Out: why it was refused, when it returns false.
+ * @return true if measured, stored and applied.
+ */
+bool statusBurnZeroCalibration(const char *&err);
+
+/**
+ * @brief Initiated calibration: discard accumulated drift.
+ *
+ * At rest the accelerometer alone gives the true pitch and roll, so the
+ * filter is snapped onto them and yaw is zeroed. Unlike the zero calibration
+ * this stores nothing - it corrects the estimate, it does not redefine level,
+ * and it is valid in ANY attitude, level or not.
+ */
+bool statusInitiatedCalibration(const char *&err);
+
+/** @brief Unbroken seconds the machine has been observed at rest; 0 if moving. */
+float statusRestSeconds();
+
+/** @brief Mounting angles implied by the burned calibration, for the GUI. */
+void statusZeroCalAngles(float &pitchDeg, float &rollDeg);
+
 extern float g_imuXOffset;
 
 /** IMU Y-axis offset */

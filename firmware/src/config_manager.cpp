@@ -15,6 +15,13 @@
 /** FlashStorage object for persistent configuration */
 FlashStorage(g_configStore, Config);
 
+float g_imu1ZeroG[3]     = {0.0f, 0.0f, 0.0f};
+float g_imu2ZeroG[3]     = {0.0f, 0.0f, 0.0f};
+bool  g_zeroCalValid     = false;
+float g_imu1GyroBias[3]  = {0.0f, 0.0f, 0.0f};
+float g_imu2GyroBias[3]  = {0.0f, 0.0f, 0.0f};
+bool  g_gyroBiasValid    = false;
+
 // ============================================================================
 // GLOBAL CONFIGURATION STATE
 // ============================================================================
@@ -89,6 +96,27 @@ void configSave() {
     configData.imu_pitch_invert = g_imuAxisMap.pitchInvert;
     configData.imu_roll_invert  = g_imuAxisMap.rollInvert;
     configData.imu_yaw_invert   = g_imuAxisMap.yawInvert;
+
+    // Zero calibration and gyro bias.
+    //
+    // These MUST be written on every save. configSave() builds a fresh Config
+    // from globals, so a field omitted here is a field erased - and the
+    // work-hours counter calls this every five minutes, which would quietly
+    // wipe a technician's calibration a few minutes after it was burned.
+    if (g_zeroCalValid) {
+        configData.zero_cal_marker = ZERO_CAL_MARKER;
+        for (int i = 0; i < 3; ++i) {
+            configData.imu1_zero_g[i] = g_imu1ZeroG[i];
+            configData.imu2_zero_g[i] = g_imu2ZeroG[i];
+        }
+    }
+    if (g_gyroBiasValid) {
+        configData.gyro_bias_marker = GYRO_BIAS_MARKER;
+        for (int i = 0; i < 3; ++i) {
+            configData.imu1_gyro_bias[i] = g_imu1GyroBias[i];
+            configData.imu2_gyro_bias[i] = g_imu2GyroBias[i];
+        }
+    }
 
     // Preserve serial number from existing flash data
     Config existingData = g_configStore.read();
@@ -208,6 +236,34 @@ void configLoad() {
     s_burnedHoursLastSaveMs = millis();
     
     // Log loaded configuration
+    // Zero calibration and gyro bias, each accepted only on its own marker.
+    // Anything else - erased flash, or a record written before these fields
+    // existed - leaves the controller uncalibrated, which is the safe read.
+    if (configData.zero_cal_marker == ZERO_CAL_MARKER) {
+        for (int i = 0; i < 3; ++i) {
+            g_imu1ZeroG[i] = configData.imu1_zero_g[i];
+            g_imu2ZeroG[i] = configData.imu2_zero_g[i];
+        }
+        g_zeroCalValid = true;
+        Serial.println("Zero calibration loaded from flash.");
+    } else {
+        g_zeroCalValid = false;
+        Serial.println("NO zero calibration burned - angles are reported in the");
+        Serial.println("sensor frame, uncorrected for how the unit is mounted.");
+    }
+
+    if (configData.gyro_bias_marker == GYRO_BIAS_MARKER) {
+        for (int i = 0; i < 3; ++i) {
+            g_imu1GyroBias[i] = configData.imu1_gyro_bias[i];
+            g_imu2GyroBias[i] = configData.imu2_gyro_bias[i];
+        }
+        g_gyroBiasValid = true;
+        Serial.println("Gyro bias seeded from flash.");
+    } else {
+        g_gyroBiasValid = false;
+        Serial.println("No stored gyro bias - it will be learned at the first rest.");
+    }
+
     Serial.println("Configuration loaded from FlashStorage.");
     Serial.print("Controller IP: ");
     Serial.println(g_controllerIP.toString());
@@ -384,4 +440,34 @@ String serialNumberGet() {
 bool serialNumberIsModifiable() {
     Config configData = g_configStore.read();
     return !(configData.serial_number_set && configData.validation_marker == CONFIG_VALID_MARKER);
+}
+
+bool configBurnZeroCal(const float imu1G[3], const float imu2G[3]) {
+    // Length is the only thing that can be checked here - direction is
+    // whatever the bracket gives it. A zero-length vector means a dead or
+    // unread sensor, and installing that would rotate every later reading by
+    // garbage, so refuse and keep whatever was already burned.
+    float n1 = sqrt(imu1G[0]*imu1G[0] + imu1G[1]*imu1G[1] + imu1G[2]*imu1G[2]);
+    float n2 = sqrt(imu2G[0]*imu2G[0] + imu2G[1]*imu2G[1] + imu2G[2]*imu2G[2]);
+    if (n1 < 0.5f || n2 < 0.5f) {
+        return false;
+    }
+
+    for (int i = 0; i < 3; ++i) {
+        g_imu1ZeroG[i] = imu1G[i];
+        g_imu2ZeroG[i] = imu2G[i];
+    }
+    g_zeroCalValid = true;
+    configSave();
+    return true;
+}
+
+void configStoreGyroBias(const float bias1[3], const float bias2[3]) {
+    for (int i = 0; i < 3; ++i) {
+        g_imu1GyroBias[i] = bias1[i];
+        g_imu2GyroBias[i] = bias2[i];
+    }
+    g_gyroBiasValid = true;
+    // Deliberately no configSave() - the periodic one carries it. Writing on
+    // every estimate change would erase a flash page every few seconds.
 }

@@ -56,7 +56,7 @@ pio run -e main        # build the embedded firmware (the default env)
 pio test -e native     # host-native unit tests (requires gcc/g++ on PATH)
 ```
 
-The `native` environment is test-only and covers the hardware-free logic: `calculations`, `imu_mount_orientation`, `sanity_check`, and `ocu_connection_state`. It is never built by a plain `pio run`.
+The `native` environment is test-only and covers the hardware-free logic: `calculations`, `imu_mount_orientation`, `sanity_check`, `ocu_connection_state`, `zero_calibration`, and the rest detector and gyro-bias estimator. It is never built by a plain `pio run`.
 
 ## Technician Mode & OTA
 - Hold the button for 5 seconds during startup to enter technician mode.

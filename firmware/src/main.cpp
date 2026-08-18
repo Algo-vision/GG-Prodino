@@ -12,7 +12,7 @@
  * - led_controller: Status LED blink patterns
  * - relay_controller: Relay auto-reset functionality
  *
- * @version 1.5.1
+ * @version 1.5.1.1
  */
 
 // ============================================================================
@@ -46,7 +46,7 @@
 // FIRMWARE VERSION
 // ============================================================================
 
-#define FIRMWARE_VERSION "1.5.1"
+#define FIRMWARE_VERSION "1.5.1.1"
 
 // ============================================================================
 // NETWORK CONFIGURATION
@@ -98,7 +98,6 @@ LED_STATES manual_led_state = OFF;
 // FUNCTION PROTOTYPES
 // ============================================================================
 
-void calibrateIMU();
 
 // ============================================================================
 // SETUP
@@ -175,8 +174,19 @@ void setup() {
 
   Serial.println(technician_mode ? "Technician mode enabled." : "Normal mode.");
 
-  // Calibrate IMU sensors
-  calibrateIMU();
+  // NO IMU calibration here, deliberately.
+  //
+  // V1.5.1 averaged 100 accelerometer and 100 gyro samples per IMU at this
+  // point - four seconds of blocking boot - and treated the result as both
+  // "level" and "zero rotation". Both assume the machine is standing still
+  // and on flat ground at the instant it is switched on, and neither can be
+  // promised: power up on a slope and the slope becomes level, power up on a
+  // running vehicle and a real rotation rate becomes zero.
+  //
+  // Level is now burned once by a technician who can see the machine is flat
+  // (config_manager.hpp), and the gyro's zero is learned whenever the machine
+  // is actually observed to be at rest (gyro_bias.hpp). statusInit() loads
+  // both from flash below.
 
   // Initialize application modules
   authInit();
@@ -203,6 +213,9 @@ void setup() {
 // ============================================================================
 
 void loop() {
+  // Closes the measurement window the moment it expires, so the HTTP
+  // request that reads the results cannot land inside them.
+
   // Handle OTA updates in technician mode
   if (technician_mode) {
     ArduinoOTA.handle();
@@ -246,133 +259,6 @@ void loop() {
 
   // Update LED status
   ledControllerUpdate();
+
 }
 
-// ============================================================================
-// IMU CALIBRATION
-// ============================================================================
-
-void calibrateIMU() {
-  // Calibrate Accelerometer (100 readings)
-  Serial.println("Calibrating IMU... Keep the device flat and still.");
-  float ax_sum = 0.0f, ay_sum = 0.0f, az_sum = 0.0f;
-  int ax_count = 0;
-
-  for (int i = 0; i < 100; i++) {
-    float ax, ay, az;
-    if (readAccelerometer(ax, ay, az)) {
-      applyImuAxisMap(ax, ay, az, g_imuAxisMap);
-      ax_sum += ax;
-      ay_sum += ay;
-      az_sum += az;
-      ax_count++;
-    }
-    delay(10);
-  }
-
-  // Divide by the number of reads that actually SUCCEEDED. Dividing by the
-  // loop count would scale the offset down by the failure rate on a flaky
-  // sensor, silently biasing that IMU's pitch/roll for the whole session.
-  if (ax_count > 0) {
-    g_imuXOffset = ax_sum / ax_count;
-    g_imuYOffset = ay_sum / ax_count;
-  } else {
-    g_imuXOffset = 0.0f;
-    g_imuYOffset = 0.0f;
-    Serial.println("WARNING: IMU1 accelerometer never responded - offsets left at zero");
-  }
-  // Note: Z offset not used in calculations (gravity component)
-
-  Serial.println("Accelerometer calibration complete.");
-  Serial.print("Accel Offsets: X=");
-  Serial.print(g_imuXOffset);
-  Serial.print(", Y=");
-  Serial.println(g_imuYOffset);
-
-  // Calibrate Gyroscope (100 readings)
-  Serial.println("Calibrating Gyroscope... Keep the device flat and still.");
-  float gx_sum = 0.0f, gy_sum = 0.0f, gz_sum = 0.0f;
-
-  for (int i = 0; i < 100; i++) {
-    float gx, gy, gz;
-    _gg_hal.get_gyro_data(gx, gy, gz);
-    applyImuAxisMap(gx, gy, gz, g_imuAxisMap);
-    gx_sum += gx;
-    gy_sum += gy;
-    gz_sum += gz;
-    delay(10);
-  }
-
-  g_gyroXOffset = gx_sum / 100.0f;
-  g_gyroYOffset = gy_sum / 100.0f;
-  g_gyroZOffset = gz_sum / 100.0f;
-
-  Serial.println("Gyroscope calibration complete.");
-  Serial.print("Gyro Offsets: X=");
-  Serial.print(g_gyroXOffset);
-  Serial.print(", Y=");
-  Serial.print(g_gyroYOffset);
-  Serial.print(", Z=");
-  Serial.println(g_gyroZOffset);
-
-  // Calibrate IMU2 Accelerometer (100 readings)
-  Serial.println("Calibrating IMU2... Keep the device flat and still.");
-  float ax2_sum = 0.0f, ay2_sum = 0.0f, az2_sum = 0.0f;
-  int ax2_count = 0;
-
-  for (int i = 0; i < 100; i++) {
-    float ax2, ay2, az2;
-    if (readAccelerometer_2(ax2, ay2, az2)) {
-      applyImuAxisMap(ax2, ay2, az2, g_imuAxisMap);
-      ax2_sum += ax2;
-      ay2_sum += ay2;
-      az2_sum += az2;
-      ax2_count++;
-    }
-    delay(10);
-  }
-
-  // See the IMU1 note above - divide by successful reads, not the loop count.
-  if (ax2_count > 0) {
-    g_imu2XOffset = ax2_sum / ax2_count;
-    g_imu2YOffset = ay2_sum / ax2_count;
-  } else {
-    g_imu2XOffset = 0.0f;
-    g_imu2YOffset = 0.0f;
-    Serial.println("WARNING: IMU2 accelerometer never responded - offsets left at zero");
-  }
-  // Note: Z offset not used in calculations (gravity component)
-
-  Serial.println("IMU2 accelerometer calibration complete.");
-  Serial.print("IMU2 Accel Offsets: X=");
-  Serial.print(g_imu2XOffset);
-  Serial.print(", Y=");
-  Serial.println(g_imu2YOffset);
-
-  // Calibrate IMU2 Gyroscope (100 readings)
-  Serial.println(
-      "Calibrating IMU2 gyroscope... Keep the device flat and still.");
-  float gx2_sum = 0.0f, gy2_sum = 0.0f, gz2_sum = 0.0f;
-
-  for (int i = 0; i < 100; i++) {
-    float gx2, gy2, gz2;
-    _gg_hal.get_gyro_data_2(gx2, gy2, gz2);
-    applyImuAxisMap(gx2, gy2, gz2, g_imuAxisMap);
-    gx2_sum += gx2;
-    gy2_sum += gy2;
-    gz2_sum += gz2;
-    delay(10);
-  }
-
-  g_gyro2XOffset = gx2_sum / 100.0f;
-  g_gyro2YOffset = gy2_sum / 100.0f;
-  g_gyro2ZOffset = gz2_sum / 100.0f;
-
-  Serial.println("IMU2 gyroscope calibration complete.");
-  Serial.print("IMU2 Gyro Offsets: X=");
-  Serial.print(g_gyro2XOffset);
-  Serial.print(", Y=");
-  Serial.print(g_gyro2YOffset);
-  Serial.print(", Z=");
-  Serial.println(g_gyro2ZOffset);
-}

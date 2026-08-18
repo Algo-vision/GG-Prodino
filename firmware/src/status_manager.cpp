@@ -14,6 +14,9 @@
 #include <Ethernet.h>
 #include <Adafruit_INA219.h>
 #include "ocu_monitor.hpp"
+#include <zero_calibration.hpp>
+#include <rest_detector.hpp>
+#include <gyro_bias.hpp>
 
 // ============================================================================
 // FIRMWARE VERSION (configurable constant)
@@ -51,6 +54,25 @@ float g_gyro2ZOffset = 0.0f;
 
 /** Last update timestamp for dt calculation */
 static unsigned long s_lastUpdateTime = 0;
+
+/** Mounting transforms, rebuilt whenever a calibration is burned. Identity
+ *  until one is - an uncalibrated controller reports the sensor frame rather
+ *  than a guess. */
+static float s_R1[9];
+static float s_R2[9];
+
+static RestDetector s_rest;
+static GyroBias s_bias1;
+static GyroBias s_bias2;
+
+/** Most recent bias-corrected, mount-corrected accelerometer vectors. The
+ *  calibration commands need the same numbers the filter just used, and
+ *  re-reading the sensor from an HTTP handler would both cost I2C time and
+ *  break the rule that only loop() touches the sensors. */
+static float s_a1[3] = {0.0f, 0.0f, 0.0f};
+static float s_a2[3] = {0.0f, 0.0f, 0.0f};
+static bool  s_a1Valid = false;
+static bool  s_a2Valid = false;
 
 /** Previous GPS altitude for vertical speed calculation */
 static double s_previousGpsAltitude = 0.0;
@@ -119,8 +141,32 @@ const char* statusGetFirmwareVersion() {
     return FIRMWARE_VERSION;
 }
 
+/** Rebuild both mounting transforms from whatever is currently burned. */
+static void rebuildZeroCal() {
+    if (g_zeroCalValid) {
+        if (!zeroCalBuildRotation(g_imu1ZeroG, s_R1)) zeroCalIdentity(s_R1);
+        if (!zeroCalBuildRotation(g_imu2ZeroG, s_R2)) zeroCalIdentity(s_R2);
+    } else {
+        zeroCalIdentity(s_R1);
+        zeroCalIdentity(s_R2);
+    }
+}
+
 void statusInit() {
     s_lastUpdateTime = millis();
+
+    rebuildZeroCal();
+    restDetectorReset(s_rest);
+
+    // Seed the bias from flash rather than measuring it here. setup() cannot
+    // know whether the machine is standing still - see gyro_bias.hpp.
+    gyroBiasReset(s_bias1);
+    gyroBiasReset(s_bias2);
+    if (g_gyroBiasValid) {
+        s_bias1.x = g_imu1GyroBias[0]; s_bias1.y = g_imu1GyroBias[1]; s_bias1.z = g_imu1GyroBias[2];
+        s_bias2.x = g_imu2GyroBias[0]; s_bias2.y = g_imu2GyroBias[1]; s_bias2.z = g_imu2GyroBias[2];
+        s_bias1.valid = s_bias2.valid = true;
+    }
     s_previousGpsAltitude = 0.0;
     s_previousGpsTime = 0;
     s_filteredGpsSpeedDown = 0.0f;
@@ -139,6 +185,7 @@ void statusInit() {
 }
 
 void statusUpdate() {
+
     // Read IMU1 Accelerometer
     float ax, ay, az;
     bool imuValid = readAccelerometer(ax, ay, az);
@@ -151,9 +198,9 @@ void statusUpdate() {
     float gx, gy, gz;
     _gg_hal.get_gyro_data(gx, gy, gz);
     applyImuAxisMap(gx, gy, gz, g_imuAxisMap);
-    g_status.imuGx = gx - g_gyroXOffset;
-    g_status.imuGy = gy - g_gyroYOffset;
-    g_status.imuGz = gz - g_gyroZOffset;
+    g_status.imuGx = gx - s_bias1.x;
+    g_status.imuGy = gy - s_bias1.y;
+    g_status.imuGz = gz - s_bias1.z;
 
     g_status.imuValid = imuValid;
 
@@ -169,9 +216,9 @@ void statusUpdate() {
     float gx2, gy2, gz2;
     _gg_hal.get_gyro_data_2(gx2, gy2, gz2);
     applyImuAxisMap(gx2, gy2, gz2, g_imuAxisMap);
-    g_status.imu2Gx = gx2 - g_gyro2XOffset;
-    g_status.imu2Gy = gy2 - g_gyro2YOffset;
-    g_status.imu2Gz = gz2 - g_gyro2ZOffset;
+    g_status.imu2Gx = gx2 - s_bias2.x;
+    g_status.imu2Gy = gy2 - s_bias2.y;
+    g_status.imu2Gz = gz2 - s_bias2.z;
 
     g_status.imu2Valid = imu2Valid;
 
@@ -189,6 +236,7 @@ void statusUpdate() {
     }
     // else: neither readable - retain the last known value
 
+
     // Calculate time delta, clamped so a stalled main loop cannot integrate one
     // instantaneous gyro sample across a long gap (see STATUS_UPDATE_MAX_DT_S).
     unsigned long currentTime = millis();
@@ -196,6 +244,45 @@ void statusUpdate() {
     s_lastUpdateTime = currentTime;
     if (dt > STATUS_UPDATE_MAX_DT_S) {
         dt = STATUS_UPDATE_MAX_DT_S;
+    }
+
+    // ------------------------------------------------------------------
+    // Is the machine standing still, and if it has been for long enough,
+    // what does the gyro read when it should read nothing?
+    //
+    // Fed from whichever IMU is answering. Accelerometer MAGNITUDE is what
+    // the test uses and rotation cannot change a magnitude, so the mounting
+    // transform is irrelevant here and the sensor-frame values are used.
+    // ------------------------------------------------------------------
+    if (imuValid) {
+        restDetectorUpdate(s_rest, dt,
+                           g_status.imuX, g_status.imuY, g_status.imuZ,
+                           g_status.imuGx, g_status.imuGy, g_status.imuGz);
+    } else if (imu2Valid) {
+        restDetectorUpdate(s_rest, dt,
+                           g_status.imu2X, g_status.imu2Y, g_status.imu2Z,
+                           g_status.imu2Gx, g_status.imu2Gy, g_status.imu2Gz);
+    } else {
+        restDetectorReset(s_rest);
+    }
+
+    if (s_rest.stillSeconds >= REST_SECONDS_FOR_BIAS) {
+        // RAW rates, deliberately. Feeding back the corrected ones would
+        // drive the estimate to zero and undo the very correction it exists
+        // to provide.
+        bool moved = false;
+        if (imuValid)  moved |= gyroBiasUpdate(s_bias1, gx,  gy,  gz,  dt);
+        if (imu2Valid) moved |= gyroBiasUpdate(s_bias2, gx2, gy2, gz2, dt);
+        if (moved) {
+            // Mirrored into the legacy globals so anything still reading them
+            // sees the live value, and handed to config so the periodic save
+            // carries it across the next power cycle.
+            g_gyroXOffset = s_bias1.x; g_gyroYOffset = s_bias1.y; g_gyroZOffset = s_bias1.z;
+            g_gyro2XOffset = s_bias2.x; g_gyro2YOffset = s_bias2.y; g_gyro2ZOffset = s_bias2.z;
+            const float b1[3] = {s_bias1.x, s_bias1.y, s_bias1.z};
+            const float b2[3] = {s_bias2.x, s_bias2.y, s_bias2.z};
+            configStoreGyroBias(b1, b2);
+        }
     }
 
     // ------------------------------------------------------------------
@@ -251,34 +338,57 @@ void statusUpdate() {
     bool useImu1 = g_status.imu1Sane;
     bool useImu2 = g_status.imu2Sane;
 
+    // ------------------------------------------------------------------
+    // Into the machine's frame before anything is computed from it.
+    //
+    // Both vectors are rotated, not just gravity: a sensor tilted on its
+    // bracket has its rotation axes tilted by exactly the same amount, so a
+    // gyro rate about the sensor's X is not a rate about the machine's.
+    //
+    // The offsets passed to the filters below are now zero. The correction
+    // has already been applied here, and correctly - see zero_calibration.hpp
+    // for why subtracting a constant from ax/ay was only ever right at the
+    // attitude it was captured in.
+    // ------------------------------------------------------------------
+    float a1x = g_status.imuX,  a1y = g_status.imuY,  a1z = g_status.imuZ;
+    float w1x = g_status.imuGx, w1y = g_status.imuGy, w1z = g_status.imuGz;
+    zeroCalApply(s_R1, a1x, a1y, a1z);
+    zeroCalApply(s_R1, w1x, w1y, w1z);
+
+    float a2x = g_status.imu2X,  a2y = g_status.imu2Y,  a2z = g_status.imu2Z;
+    float w2x = g_status.imu2Gx, w2y = g_status.imu2Gy, w2z = g_status.imu2Gz;
+    zeroCalApply(s_R2, a2x, a2y, a2z);
+    zeroCalApply(s_R2, w2x, w2y, w2z);
+
+    s_a1[0] = a1x; s_a1[1] = a1y; s_a1[2] = a1z; s_a1Valid = imuValid;
+    s_a2[0] = a2x; s_a2[1] = a2y; s_a2[2] = a2z; s_a2Valid = imu2Valid;
+
     if (useImu1 && useImu2) {
         // Both sane - fuse for a less noisy estimate
         calculateMergedOrientation(g_status.pitch, g_status.roll, g_status.yaw,
-                          g_status.imuX, g_status.imuY, g_status.imuZ,
-                          g_status.imuGx, g_status.imuGy, g_status.imuGz,
-                          g_status.imu2X, g_status.imu2Y, g_status.imu2Z,
-                          g_status.imu2Gx, g_status.imu2Gy, g_status.imu2Gz, dt,
-                          g_imuXOffset, g_imuYOffset,
-                          g_imu2XOffset, g_imu2YOffset,
+                          a1x, a1y, a1z, w1x, w1y, w1z,
+                          a2x, a2y, a2z, w2x, w2y, w2z, dt,
+                          0.0f, 0.0f, 0.0f, 0.0f,
                           gpsHeadingValid, gpsHeading);
     } else if (useImu1) {
         // Only IMU1 usable
         calculateOrientation_1(g_status.pitch, g_status.roll, g_status.yaw,
-                          g_status.imuX, g_status.imuY, g_status.imuZ,
-                          g_status.imuGx, g_status.imuGy, g_status.imuGz, dt,
-                          g_imuXOffset, g_imuYOffset,
+                          a1x, a1y, a1z, w1x, w1y, w1z, dt,
+                          0.0f, 0.0f,
                           gpsHeadingValid, gpsHeading);
     } else if (useImu2) {
         // Only IMU2 usable
         calculateOrientation_2(g_status.pitch, g_status.roll, g_status.yaw,
-                          g_status.imu2X, g_status.imu2Y, g_status.imu2Z,
-                          g_status.imu2Gx, g_status.imu2Gy, g_status.imu2Gz, dt,
-                          g_imu2XOffset, g_imu2YOffset,
+                          a2x, a2y, a2z, w2x, w2y, w2z, dt,
+                          0.0f, 0.0f,
                           gpsHeadingValid, gpsHeading);
     }
     // else: neither IMU healthy - leave pitch/roll/yaw at their last known values
 
-    // Read GPS data
+    // Read GPS data. Timed on its own: scenarios A and B showed the
+    // unattributed part of statusUpdate GROWING per call as the loop
+    // slowed (20.68 -> 33.57 ms), which is what draining a queue looks
+    // like, and this is the only queue in here.
     gps_data currentGpsData;
     _gg_hal.get_gps_data(currentGpsData);
     g_status.gpsValid = currentGpsData.valid;
@@ -390,6 +500,7 @@ void statusUpdate() {
     // negative values are physically normal for those signed quantities.
     // ------------------------------------------------------------------
 
+
     // Power monitor
     float powerNow[2] = {g_status.systemVoltage, g_status.systemCurrent_A};
     bool powerSaneCheck = checkSane(powerNow, s_prevPower, 2, s_powerStuckCount,
@@ -408,6 +519,7 @@ void statusUpdate() {
     double gpsNow[3] = {g_status.gpsLat, g_status.gpsLng, g_status.gpsAlt};
     bool gpsSaneCheck = checkSane(gpsNow, s_prevGps, 3, s_gpsStuckCount, SANITY_STUCK_THRESHOLD);
     g_status.gpsSane = g_status.gpsValid && gpsSaneCheck;
+
 }
 
 JsonDocument statusGenerateJson(JsonDocument* requestDoc) {
@@ -594,4 +706,98 @@ void statusWriteToSerial() {
 
 bool statusAllDevicesConnected() {
     return s_allDevicesConnected;
+}
+
+float statusRestSeconds() {
+    return s_rest.stillSeconds;
+}
+
+void statusZeroCalAngles(float &pitchDeg, float &rollDeg) {
+    pitchDeg = rollDeg = 0.0f;
+    if (!g_zeroCalValid) {
+        return;
+    }
+    // The attitude the sensor was sitting at when level was declared - i.e.
+    // how the bracket holds it. Useful to a technician deciding whether a
+    // burn looks sane before trusting it.
+    const float x = g_imu1ZeroG[0], y = g_imu1ZeroG[1], z = g_imu1ZeroG[2];
+    pitchDeg = atan2(-y, z) * 180.0 / M_PI;
+    rollDeg  = atan2(-x, sqrt(y * y + z * z)) * 180.0 / M_PI;
+}
+
+bool statusBurnZeroCalibration(const char *&err) {
+    if (s_rest.stillSeconds < REST_SECONDS_FOR_CALIBRATION) {
+        err = "machine is not standing still";
+        return false;
+    }
+    if (!g_status.imu1Sane || !g_status.imu2Sane) {
+        // Both, not either. A zero burned from one IMU would leave the other
+        // uncorrected, and the angle would jump the moment the filter fell
+        // back to it.
+        err = "both IMUs must be healthy to burn a zero calibration";
+        return false;
+    }
+
+    // Sensor-frame gravity, NOT the mount-corrected vectors - this is what
+    // defines the correction, so it has to be measured before one is applied.
+    const float g1[3] = {g_status.imuX,  g_status.imuY,  g_status.imuZ};
+    const float g2[3] = {g_status.imu2X, g_status.imu2Y, g_status.imu2Z};
+
+    if (!configBurnZeroCal(g1, g2)) {
+        err = "measured gravity vector was unusable - nothing was changed";
+        return false;
+    }
+
+    rebuildZeroCal();
+
+    // The filter still holds angles computed through the OLD transform, and
+    // would take its time constant to walk to the new ones. Level was just
+    // declared, so say so immediately.
+    g_status.pitch = 0.0f;
+    g_status.roll  = 0.0f;
+
+    err = nullptr;
+    return true;
+}
+
+bool statusInitiatedCalibration(const char *&err) {
+    if (s_rest.stillSeconds < REST_SECONDS_FOR_CALIBRATION) {
+        err = "machine is not standing still";
+        return false;
+    }
+
+    // Average whichever IMUs are healthy, in the machine frame, exactly as
+    // the filter does - so the correction lands on the same reference the
+    // reported angle uses.
+    float ax = 0.0f, ay = 0.0f, az = 0.0f;
+    int n = 0;
+    if (s_a1Valid && g_status.imu1Sane) {
+        ax += s_a1[0]; ay += s_a1[1]; az += s_a1[2]; n++;
+    }
+    if (s_a2Valid && g_status.imu2Sane) {
+        // IMU2 sits rotated 180 deg in X/Y, so its in-plane components are
+        // negated into the common frame - the same convention
+        // calculateMergedOrientation() uses.
+        ax += -s_a2[0]; ay += -s_a2[1]; az += s_a2[2]; n++;
+    }
+    if (n == 0) {
+        err = "no healthy IMU to calibrate from";
+        return false;
+    }
+    ax /= n; ay /= n; az /= n;
+
+    // At rest the accelerometer is reading gravity and nothing else, so this
+    // IS the attitude - whatever the filter had drifted to is simply wrong.
+    g_status.pitch = atan2(-ay, az) * 180.0 / M_PI;
+    g_status.roll  = atan2(-ax, sqrt(ay * ay + az * az)) * 180.0 / M_PI;
+
+    // Gravity says nothing about heading, so there is nothing to correct yaw
+    // against while stationary - it is zeroed, as specified. The GPS gate
+    // needs GPS_HEADING_MIN_SPEED_KMH before it touches yaw again, so this
+    // stays put until the machine actually moves.
+    g_status.yaw = 0.0f;
+    s_yawAlignedToGps = false;
+
+    err = nullptr;
+    return true;
 }

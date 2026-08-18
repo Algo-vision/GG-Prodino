@@ -13,6 +13,7 @@
 #include "imu_mount_orientation.hpp"
 #include "KMPProDinoMKRZero.h"
 #include "gg_hal.hpp"
+#include <rest_detector.hpp>
 #include <Arduino_DebugUtils.h>  // For NVIC_SystemReset()
 
 // ============================================================================
@@ -589,6 +590,66 @@ void httpServerLoop() {
                     resp["imu2Gz"] = g_status.imu2Gz;
 
                     resp["imuTemp"] = g_status.imuTemp;
+                }
+                else if (msgType == "burn_zero_calibration") {
+                    // The technician-GUI equivalent of burning a serial
+                    // number: declares THIS attitude to be level for THIS
+                    // installation and writes it to flash. Never happens on
+                    // its own - a controller that has never been calibrated
+                    // reports the sensor frame and says so.
+                    const char *err = nullptr;
+                    bool ok = statusBurnZeroCalibration(err);
+                    resp["type"] = "zero_calibration_result";
+                    resp["success"] = ok;
+                    resp["restSeconds"] = statusRestSeconds();
+                    if (ok) {
+                        float p = 0.0f, r = 0.0f;
+                        statusZeroCalAngles(p, r);
+                        resp["mountPitch"] = p;
+                        resp["mountRoll"] = r;
+                    } else {
+                        resp["code"] = "E-300";
+                        resp["message"] = err ? err : "calibration refused";
+                        httpStatusCode = 409;
+                    }
+                }
+                else if (msgType == "calibrate_now") {
+                    // Initiated calibration: throw away accumulated drift.
+                    // Stores nothing, and is valid at any attitude.
+                    const char *err = nullptr;
+                    bool ok = statusInitiatedCalibration(err);
+                    resp["type"] = "calibrate_now_result";
+                    resp["success"] = ok;
+                    resp["restSeconds"] = statusRestSeconds();
+                    if (ok) {
+                        resp["pitch"] = g_status.pitch;
+                        resp["roll"] = g_status.roll;
+                        resp["yaw"] = g_status.yaw;
+                    } else {
+                        resp["code"] = "E-301";
+                        resp["message"] = err ? err : "calibration refused";
+                        httpStatusCode = 409;
+                    }
+                }
+                else if (msgType == "get_calibration") {
+                    resp["type"] = "calibration";
+                    resp["zeroCalValid"] = g_zeroCalValid;
+                    float p = 0.0f, r = 0.0f;
+                    statusZeroCalAngles(p, r);
+                    resp["mountPitch"] = p;
+                    resp["mountRoll"] = r;
+                    resp["gyroBiasValid"] = g_gyroBiasValid;
+                    JsonArray b1 = resp["gyroBias1"].to<JsonArray>();
+                    JsonArray b2 = resp["gyroBias2"].to<JsonArray>();
+                    for (int i = 0; i < 3; ++i) {
+                        b1.add(g_imu1GyroBias[i]);
+                        b2.add(g_imu2GyroBias[i]);
+                    }
+                    // So the GUI can grey out the calibrate button, and say
+                    // WHY, instead of letting the request fail.
+                    resp["restSeconds"] = statusRestSeconds();
+                    resp["restRequiredS"] = REST_SECONDS_FOR_CALIBRATION;
+                    resp["atRest"] = statusRestSeconds() >= REST_SECONDS_FOR_CALIBRATION;
                 }
                 else if (msgType == "get_gps") {
                     resp["type"] = "gps";
