@@ -1,16 +1,109 @@
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QLabel, QPushButton, QHBoxLayout, QTableWidget, QTableWidgetItem, QComboBox, QFileDialog, QMessageBox, QGroupBox, QGridLayout, QLineEdit, QCheckBox, QScrollArea)
 from PyQt5.QtCore import QTimer, pyqtSignal, Qt
+from PyQt5.QtGui import QPixmap
 from firmware_uploader import upload_firmware
+import os
 import time
 import random
 import socket
 import threading
 import json
 
-# Display label -> firmware wire value, for the IMU Mount Orientation control.
-# See firmware/include/i2c_imu_gps.hpp (ImuMountOrientation) for what each
-# orientation means; the "Forward/Backward/Left/Right" labels are a naming
-# convention that should be verified against the real MSB hardware.
+# Which sensor axis each angle rotates about. Firmware default is
+# pitch=X, roll=Y, yaw=Z - see lib/GG/src/imu_mount_orientation.hpp.
+# The three angles must each use a different axis; the firmware rejects
+# anything else.
+IMU_AXES = ["X", "Y", "Z"]
+IMU_ANGLES = [
+    # (angle key, GUI label, axis field from get_config, default axis, invert field)
+    ("pitch", "Pitch", "imuPitchAxis", "X", "imuPitchInvert"),
+    ("roll",  "Roll",  "imuRollAxis",  "Y", "imuRollInvert"),
+    ("yaw",   "Yaw",   "imuYawAxis",   "Z", "imuYawInvert"),
+]
+
+# Axis diagram shown under the axis fields in the Config box, alongside this
+# file so the GUI's assets travel with it.
+MSB_AXIS_IMAGE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "MSB_Axis.png")
+
+# The four status sections, mirroring the get_overview / get_imu / get_gps /
+# get_config firmware commands (src/http_server.cpp). get_status returns all
+# four nested under these keys - see statusGenerateJson() in
+# src/status_manager.cpp.
+STATUS_SECTIONS = [
+    ("config", "Config", [
+        "firmwareVersion",
+        "controllerIp",
+        "whitelistIps",
+        "technicianMode",
+        "burnedHours",
+        "sessionHours",
+        "techLedColor",
+        "imuPitchAxis",
+        "imuRollAxis",
+        "imuYawAxis",
+        "imuPitchInvert",
+        "imuRollInvert",
+        "imuYawInvert",
+    ]),
+    ("overview", "Overview", [
+        "powerConnected",
+        "powerSane",
+        "systemVoltage",
+        "systemCurrent_A",
+        "relays_status",
+        "optoin_status",
+        "safetyMode",
+        "safetyModeDurationMs",
+        "ocuConnected",
+        "ocuDisconnectedDurationMs",
+    ]),
+    ("imu", "IMU", [
+        "angleSane",
+        "pitch",
+        "roll",
+        "yaw",
+        "imuValid",
+        "imu1Sane",
+        "imuX",
+        "imuY",
+        "imuZ",
+        "imuGx",
+        "imuGy",
+        "imuGz",
+        "imu2Valid",
+        "imu2Sane",
+        "imu2X",
+        "imu2Y",
+        "imu2Z",
+        "imu2Gx",
+        "imu2Gy",
+        "imu2Gz",
+        "imuTemp",
+        "zeroCalValid",
+        "mountPitch",
+        "mountRoll",
+        "restSeconds",
+        "atRest",
+    ]),
+    ("gps", "GPS", [
+        "gpsConnected",
+        "gpsSane",
+        "gpsSatellites",
+        "gpsLat",
+        "gpsLng",
+        "gpsAlt",
+        "gpsHeading",
+        "gpsGroundSpeed",
+        "gpsSpeedNorth",
+        "gpsSpeedEast",
+        "gpsSpeedDown",
+        "gpsTime",
+        "lastGpsLat",
+        "lastGpsLng",
+        "lastGpsAlt",
+    ]),
+]
 
 class MainWidget(QWidget):
     reconnect_requested = pyqtSignal()
@@ -33,9 +126,9 @@ class MainWidget(QWidget):
         self.timer.timeout.connect(self.update_status)
         self.status_ignore_deadline = 0  # Timestamp until which to ignore status updates (for reboot)
         self.init_ui()
-        # One-shot sync of slow-changing config (currently just IMU mount
-        # orientation) - not part of the fast get_status/UDP polling loop.
-        QTimer.singleShot(0, self.sync_imu_mount_orientation)
+        # One-shot sync of slow-changing config (currently just the IMU axis
+        # map) - not part of the fast get_status polling loop.
+        QTimer.singleShot(0, self.sync_imu_axis_map)
         # Start polling with offset (if specified) for multi-client scenarios
         if self.client_offset_ms > 0:
             print(f"MainWidget: Starting polling with {self.client_offset_ms}ms offset...")
@@ -93,25 +186,56 @@ class MainWidget(QWidget):
         except Exception as e:
             print(f"UDP Setup Error: {e}")
 
+    def config_field(self, status, key, default=None):
+        """Read a field that now lives only under the "config" category.
+
+        firmwareVersion / controllerIp / whitelistIps / technicianMode used to
+        be duplicated at the top level of get_status; they are not any more.
+        The top-level lookup is kept as a fallback for older firmware.
+        """
+        config = status.get("config")
+        if isinstance(config, dict) and key in config:
+            return config[key]
+        return status.get(key, default)
+
+    def apply_status_labels(self, status):
+        """Fill the Overview/IMU/GPS boxes from a get_status response.
+
+        Fields live under the "overview"/"imu"/"gps" objects, but we fall back
+        to the top level so a flat payload (older firmware, UDP packet) still
+        renders instead of showing all dashes.
+        """
+        for section, labels in self.status_labels.items():
+            section_data = status.get(section)
+            if not isinstance(section_data, dict):
+                section_data = {}
+            for field, label in labels.items():
+                val = section_data.get(field, status.get(field, "-"))
+                if isinstance(val, list):
+                    val = ", ".join(str(x) for x in val)
+                label.setText(str(val))
+
+    def clear_status_labels(self):
+        for labels in self.status_labels.values():
+            for label in labels.values():
+                label.setText("-")
+
     def handle_udp_status(self, status):
         """Update UI from UDP status packet"""
         if not status: return
-        
-        for k, v in self.status_labels.items():
-            val = status.get(k, "-")
-            if isinstance(val, list):
-                val = ", ".join(str(x) for x in val)
-            v.setText(str(val))
-            
+
+        self.apply_status_labels(status)
+        self.apply_calibration_state(status)
+
         # Enable technician mode section if in technician mode
-        self.technician_mode = status.get("technicianMode", False)
+        self.technician_mode = self.config_field(status, "technicianMode", False)
         self.tech_mode_box.setEnabled(self.technician_mode)
         self.fw_upload_btn.setEnabled(self.technician_mode and self.firmware_path is not None)
 
         # Update IP configuration fields only if not editing
         if not self.is_editing_ip:
-            self.controller_ip_edit.setText(status.get("controllerIp", self.base_ip))
-            whitelist = status.get("whitelistIps", [])
+            self.controller_ip_edit.setText(self.config_field(status, "controllerIp", self.base_ip))
+            whitelist = self.config_field(status, "whitelistIps", []) or []
             self.whitelist_ip1_edit.setText(whitelist[0] if len(whitelist) > 0 else "")
             self.whitelist_ip2_edit.setText(whitelist[1] if len(whitelist) > 1 else "")
             self.whitelist_ip3_edit.setText(whitelist[2] if len(whitelist) > 2 else "192.168.1.33")
@@ -126,23 +250,58 @@ class MainWidget(QWidget):
     def on_ip_editing_started(self):
         self.is_editing_ip = True
 
+    def add_axis_diagram(self, group_layout, row):
+        """Add the MSB axis diagram spanning both columns. Returns the next row.
+
+        Missing or unreadable image is not fatal - the GUI still has to work
+        from a checkout without the asset, so we fall back to a note.
+        """
+        pixmap = QPixmap(MSB_AXIS_IMAGE)
+        image_label = QLabel()
+        if pixmap.isNull():
+            image_label.setText(f"(axis diagram not found: {MSB_AXIS_IMAGE})")
+            image_label.setWordWrap(True)
+            image_label.setStyleSheet("color: gray; font-style: italic;")
+        else:
+            # Cap the width so a large asset can't stretch the Config column.
+            if pixmap.width() > 320:
+                pixmap = pixmap.scaledToWidth(320, Qt.SmoothTransformation)
+            image_label.setPixmap(pixmap)
+        image_label.setAlignment(Qt.AlignCenter)
+
+        group_layout.addWidget(QLabel("MSB axes:"), row, 0, 1, 2)
+        group_layout.addWidget(image_label, row + 1, 0, 1, 2)
+        self.axis_image_label = image_label
+        return row + 2
+
     def init_ui(self):
         # Create a container widget for all content
         container = QWidget()
         layout = QVBoxLayout()
-        # Status group
-        self.status_group = QGroupBox("Device Status")
-        status_layout = QGridLayout()
+        # Status groups - one box per firmware command (get_overview / get_imu /
+        # get_gps / get_config), laid out side by side. self.status_labels is
+        # keyed by section, then by field name.
+        status_row = QHBoxLayout()
+        self.status_groups = {}
         self.status_labels = {}
-        # Add IP fields to the status fields list
-        fields = ["firmwareVersion", "controllerIp", "whitelistIps", "motorWorkHours", "busVoltage", "powerConnected", "relays_status", "imuX", "imuY", "imuZ", "imuGx", "imuGy", "imuGz", "pitch", "roll", "yaw", "gpsLat", "gpsLng", "gpsAlt", "gpsTime", "gpsSpeedNorth", "gpsSpeedEast", "gpsSpeedDown", "gpsGroundSpeed", "gpsHeading", "gpsSatellites", "ledInternal", "ledIo", "button_tech", "imuValid", "GPSConnected", "optoin_status", "gpsSane", "imu1Sane", "imu2Sane", "angleSane", "imuTemp", "ocuConnected", "safetyMode", "systemCurrent_A"]
-        for i, field in enumerate(fields):
-            label = QLabel("-")
-            status_layout.addWidget(QLabel(field), i, 0)
-            status_layout.addWidget(label, i, 1)
-            self.status_labels[field] = label
-        self.status_group.setLayout(status_layout)
-        layout.addWidget(self.status_group)
+        for section, title, fields in STATUS_SECTIONS:
+            group = QGroupBox(title)
+            group_layout = QGridLayout()
+            self.status_labels[section] = {}
+            for i, field in enumerate(fields):
+                label = QLabel("-")
+                group_layout.addWidget(QLabel(field), i, 0)
+                group_layout.addWidget(label, i, 1)
+                self.status_labels[section][field] = label
+            next_row = len(fields)
+            # The axis diagram belongs with the imu*Axis fields it explains.
+            if section == "config":
+                next_row = self.add_axis_diagram(group_layout, next_row)
+            group_layout.setRowStretch(next_row, 1)  # keep rows top-aligned
+            group.setLayout(group_layout)
+            self.status_groups[section] = group
+            status_row.addWidget(group)
+        layout.addLayout(status_row)
 
         # IP Configuration Group
         ip_config_box = QGroupBox("IP Configuration")
@@ -175,90 +334,59 @@ class MainWidget(QWidget):
         ip_config_box.setLayout(ip_config_layout)
         layout.addWidget(ip_config_box)
 
-        # Technician Mode Section - contains Serial Number and Firmware Uploader
-        self.tech_mode_box = QGroupBox("Technician Mode (Hold button during startup to enable)")
-        tech_mode_layout = QVBoxLayout()
-        
-        # NOTE: no serial-number controls here. V1.5.1 has no
-        # set_serial_number / get_serial_number command - those came later -
-        # so these fields could only ever have returned "unknown request
-        # type". The firmware uploader below stays: OTA does exist in V1.5.1.
-
-        # Firmware uploader subsection
-        fw_layout = QHBoxLayout()
-        self.fw_path_label = QLabel("No file selected")
-        self.fw_select_btn = QPushButton("Select Firmware")
-        self.fw_select_btn.clicked.connect(self.select_firmware)
-        self.fw_upload_btn = QPushButton("Upload")
-        self.fw_upload_btn.clicked.connect(self.upload_firmware)
-        self.fw_upload_btn.setEnabled(False)
-        fw_layout.addWidget(self.fw_path_label)
-        fw_layout.addWidget(self.fw_select_btn)
-        fw_layout.addWidget(self.fw_upload_btn)
-        tech_mode_layout.addLayout(fw_layout)
-        
-        self.tech_mode_box.setLayout(tech_mode_layout)
-        self.tech_mode_box.setEnabled(False)  # Disabled until technician mode is active
-        layout.addWidget(self.tech_mode_box)
-
-        # IMU Axis Map. V1.5.1 replaced the single "mount orientation" enum with
-        # an explicit per-axis map, so the old dropdown sent a command this
-        # firmware does not implement. These three choices are what
-        # set_imu_axis_map takes, and the firmware rejects a map that uses one
-        # axis twice.
-        axis_box = QGroupBox("IMU Axis Map")
-        axis_layout = QGridLayout()
-        self.axis_combos = {}
-        self.axis_inverts = {}
-        for col, name in enumerate(("pitch", "roll", "yaw")):
-            axis_layout.addWidget(QLabel(name.capitalize() + " axis:"), 0, col * 2)
+        # IMU Axis Mapping - which sensor axis each angle rotates about, so the
+        # angles still read correctly when the sensor is mounted in a different
+        # orientation. See the MSB axis diagram in the Config box above.
+        imu_axis_box = QGroupBox("IMU Axis Mapping (which axis each angle rotates about)")
+        imu_axis_layout = QHBoxLayout()
+        self.imu_axis_combos = {}
+        self.imu_invert_checkboxes = {}
+        for angle, label, _axis_field, default_axis, _invert_field in IMU_ANGLES:
             combo = QComboBox()
-            combo.addItems(["X", "Y", "Z"])
-            axis_layout.addWidget(combo, 0, col * 2 + 1)
-            self.axis_combos[name] = combo
-            inv = QCheckBox("invert")
-            axis_layout.addWidget(inv, 1, col * 2 + 1)
-            self.axis_inverts[name] = inv
-        self.axis_apply_btn = QPushButton("Set Axis Map")
-        self.axis_apply_btn.clicked.connect(self.set_imu_axis_map)
-        axis_layout.addWidget(self.axis_apply_btn, 2, 0, 1, 6)
-        axis_box.setLayout(axis_layout)
-        layout.addWidget(axis_box)
+            combo.addItems(IMU_AXES)
+            combo.setCurrentText(default_axis)
+            # Negates the axis - for a sensor mounted flipped end-for-end,
+            # where the angle would otherwise run backwards.
+            invert = QCheckBox("Invert")
+            invert.setToolTip(f"Negate the {label.lower()} axis (reverses its direction)")
+            imu_axis_layout.addWidget(QLabel(f"{label}:"))
+            imu_axis_layout.addWidget(combo)
+            imu_axis_layout.addWidget(invert)
+            self.imu_axis_combos[angle] = combo
+            self.imu_invert_checkboxes[angle] = invert
+        self.imu_axis_btn = QPushButton("Set Axis Mapping")
+        self.imu_axis_btn.clicked.connect(self.set_imu_axis_map)
+        imu_axis_layout.addWidget(self.imu_axis_btn)
+        imu_axis_layout.addStretch()
+        imu_axis_box.setLayout(imu_axis_layout)
+        layout.addWidget(imu_axis_box)
 
-        # ---- Calibration ---------------------------------------------------
-        # The zero calibration does not gate the readings - it only moves the
-        # reference. An uncalibrated board reports perfectly plausible angles
-        # measured from the ENCLOSURE rather than from the machine, and nothing
-        # about the numbers reveals that. Hence a status line that is impossible
-        # to miss when it is wrong.
+        # Calibration. Two buttons that are easy to confuse, so the box says
+        # what each one does rather than relying on the names.
         cal_box = QGroupBox("Calibration")
         cal_layout = QVBoxLayout()
 
-        self.cal_status_label = QLabel("Calibration: unknown")
+        self.cal_status_label = QLabel("-")
         self.cal_status_label.setWordWrap(True)
         cal_layout.addWidget(self.cal_status_label)
 
-        self.rest_label = QLabel("At rest: unknown")
-        self.rest_label.setStyleSheet("color: #666; font-size: 11px;")
-        cal_layout.addWidget(self.rest_label)
-
-        cal_btn_row = QHBoxLayout()
+        cal_buttons = QHBoxLayout()
         self.burn_zero_btn = QPushButton("Burn Zero Calibration")
         self.burn_zero_btn.setToolTip(
-            "Declares the machine's CURRENT attitude to be level and writes it "
-            "to flash. Only press this with the machine standing on flat ground.")
+            "Declare the machine's CURRENT attitude to be level, and store it "
+            "in flash.\nPress only with the machine standing on flat ground.")
         self.burn_zero_btn.clicked.connect(self.burn_zero_calibration)
-        cal_btn_row.addWidget(self.burn_zero_btn)
+        cal_buttons.addWidget(self.burn_zero_btn)
 
         self.calibrate_now_btn = QPushButton("Re-sync to Gravity")
         self.calibrate_now_btn.setToolTip(
-            "Takes pitch and roll straight from the accelerometer and zeroes yaw.\n\n"
-            "This does NOT level the machine or zero the reading - on a slope it "
-            "will still report the slope. It only removes error that has "
-            "accumulated since the last time gravity was consulted.")
+            "Take pitch and roll straight from the accelerometer and zero "
+            "yaw.\nDoes NOT level anything - on a slope it reports the slope.\n"
+            "Stores nothing; use it to clear drift accumulated over a long run.")
         self.calibrate_now_btn.clicked.connect(self.calibrate_now)
-        cal_btn_row.addWidget(self.calibrate_now_btn)
-        cal_layout.addLayout(cal_btn_row)
+        cal_buttons.addWidget(self.calibrate_now_btn)
+        cal_buttons.addStretch()
+        cal_layout.addLayout(cal_buttons)
 
         cal_box.setLayout(cal_layout)
         layout.addWidget(cal_box)
@@ -293,6 +421,27 @@ class MainWidget(QWidget):
         led_box.setLayout(led_layout)
         layout.addWidget(led_box)
 
+        # Technician Mode Section - contains Firmware Uploader
+        self.tech_mode_box = QGroupBox("Technician Mode (Hold button during startup to enable)")
+        tech_mode_layout = QVBoxLayout()
+        
+        # Firmware uploader subsection
+        fw_layout = QHBoxLayout()
+        self.fw_path_label = QLabel("No file selected")
+        self.fw_select_btn = QPushButton("Select Firmware")
+        self.fw_select_btn.clicked.connect(self.select_firmware)
+        self.fw_upload_btn = QPushButton("Upload")
+        self.fw_upload_btn.clicked.connect(self.upload_firmware)
+        self.fw_upload_btn.setEnabled(False)
+        fw_layout.addWidget(self.fw_path_label)
+        fw_layout.addWidget(self.fw_select_btn)
+        fw_layout.addWidget(self.fw_upload_btn)
+        tech_mode_layout.addLayout(fw_layout)
+        
+        self.tech_mode_box.setLayout(tech_mode_layout)
+        self.tech_mode_box.setEnabled(False)  # Disabled until technician mode is active
+        layout.addWidget(self.tech_mode_box)
+
         # Internal LED
         int_led_box = QGroupBox("Internal LED")
         int_led_layout = QHBoxLayout()
@@ -319,8 +468,6 @@ class MainWidget(QWidget):
         self.setLayout(main_layout)
         
         self.firmware_path = None
-        
-        # Initial fetch of serial number
 
     def update_status(self):
         # Check if we should ignore status updates (e.g. while waiting for reboot)
@@ -341,60 +488,20 @@ class MainWidget(QWidget):
         elif status:
             # Successfully got status - reset the waiting flag
             if self.waiting_for_reset:
-                print("[GUI] Board is back online, refreshing serial number...")
+                print("[GUI] Board is back online.")
                 self.waiting_for_reset = False
-            
-            for k, v in self.status_labels.items():
-                val = status.get(k, "-")
-                if isinstance(val, list):
-                    val = ", ".join(str(x) for x in val)
-                v.setText(str(val))
+
+            self.apply_status_labels(status)
+            self.apply_calibration_state(status)
             # Enable technician mode section if in technician mode
-            self.technician_mode = status.get("technicianMode", False)
+            self.technician_mode = self.config_field(status, "technicianMode", False)
             self.tech_mode_box.setEnabled(self.technician_mode)
-
-            # ---- Calibration state -----------------------------------------
-            # Loud when it is wrong. An uncalibrated board reports believable
-            # angles measured from the enclosure, so nothing about the numbers
-            # themselves would tell a technician the board was never calibrated.
-            imu_group = status.get("imu") or status
-            valid = imu_group.get("zeroCalValid")
-            if valid is None:
-                self.cal_status_label.setText(
-                    "Calibration: unknown (firmware does not report it)")
-                self.cal_status_label.setStyleSheet("color: #888;")
-            elif valid:
-                self.cal_status_label.setText(
-                    "Calibrated  \u2713   mounting angle: pitch %.2f\u00b0, roll %.2f\u00b0"
-                    % (imu_group.get("mountPitch", 0.0), imu_group.get("mountRoll", 0.0)))
-                self.cal_status_label.setStyleSheet("color: #226b45; font-weight: bold;")
-            else:
-                self.cal_status_label.setText(
-                    "NOT CALIBRATED - angles are measured from the enclosure, "
-                    "not from the machine")
-                self.cal_status_label.setStyleSheet(
-                    "color: #b00020; font-weight: bold;")
-
-            # Why a button might refuse, before it is pressed.
-            still = imu_group.get("restSeconds")
-            at_rest = imu_group.get("atRest")
-            if still is None:
-                self.rest_label.setText("At rest: unknown")
-                self.burn_zero_btn.setEnabled(True)
-                self.calibrate_now_btn.setEnabled(True)
-            else:
-                self.rest_label.setText(
-                    "Standing still for %.1f s%s" % (still, "" if at_rest
-                    else "  -  hold still to calibrate"))
-                self.burn_zero_btn.setEnabled(bool(at_rest))
-                self.calibrate_now_btn.setEnabled(bool(at_rest))
-
             self.fw_upload_btn.setEnabled(self.technician_mode and self.firmware_path is not None)
 
             # Update IP configuration fields only if not editing
             if not self.is_editing_ip:
-                self.controller_ip_edit.setText(status.get("controllerIp", self.base_ip))
-                whitelist = status.get("whitelistIps", [])
+                self.controller_ip_edit.setText(self.config_field(status, "controllerIp", self.base_ip))
+                whitelist = self.config_field(status, "whitelistIps", []) or []
                 self.whitelist_ip1_edit.setText(whitelist[0] if len(whitelist) > 0 else "")
                 self.whitelist_ip2_edit.setText(whitelist[1] if len(whitelist) > 1 else "")
 
@@ -424,8 +531,7 @@ class MainWidget(QWidget):
             self.timer.stop()
             QMessageBox.critical(self, "Error", "Failed to communicate with device.")
             self.reconnect_requested.emit()
-            for v in self.status_labels.values():
-                v.setText("-")
+            self.clear_status_labels()
 
     def toggle_led_controls(self, state):
         # Enable/disable LED combo and button based on checkbox state
@@ -443,7 +549,7 @@ class MainWidget(QWidget):
 
     def toggle_relay(self, relay_id):
         # Get current relay state from status label
-        relays = self.status_labels["relays_status"].text().split(", ")
+        relays = self.status_labels["overview"]["relays_status"].text().split(", ")
         if len(relays) > relay_id:
             current = relays[relay_id]
             corrent_bool = current == 'True'
@@ -464,90 +570,160 @@ class MainWidget(QWidget):
         self.update_status()
 
     def set_imu_axis_map(self):
-        axes = {n: self.axis_combos[n].currentText() for n in ("pitch", "roll", "yaw")}
-        if len(set(axes.values())) != 3:
-            QMessageBox.warning(self, "IMU Axis Map",
-                "Pitch, roll and yaw must each use a different axis.")
+        axes = {angle: combo.currentText() for angle, combo in self.imu_axis_combos.items()}
+        inverts = {angle: box.isChecked() for angle, box in self.imu_invert_checkboxes.items()}
+
+        # The firmware rejects a non-permutation too, but catching it here gives
+        # an immediate, clearer message than a round trip.
+        if len(set(axes.values())) != len(axes):
+            QMessageBox.warning(self, "IMU Axis Mapping",
+                "Pitch, Roll and Yaw must each use a different axis.")
             return
+
         ok, msg = self.api_client.set_imu_axis_map(
             axes["pitch"], axes["roll"], axes["yaw"],
-            self.axis_inverts["pitch"].isChecked(),
-            self.axis_inverts["roll"].isChecked(),
-            self.axis_inverts["yaw"].isChecked())
+            inverts["pitch"], inverts["roll"], inverts["yaw"])
         if ok:
-            QMessageBox.information(self, "IMU Axis Map", msg)
+            QMessageBox.information(self, "IMU Axis Mapping",
+                f"{msg}\n\nReboot the device, then re-burn the zero calibration - "
+                "the stored one was measured through the old axis map.")
         else:
-            QMessageBox.critical(self, "IMU Axis Map Failed", msg)
-
-    def burn_zero_calibration(self):
-        if QMessageBox.question(
-                self, "Burn zero calibration",
-                "Declare the machine's CURRENT attitude to be level?\n\n"
-                "This writes to flash and redefines what every future reading is "
-                "measured against. Only do this with the machine standing on flat "
-                "ground.",
-                QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
-            return
-        ok, data = self.api_client.burn_zero_calibration()
-        if ok:
-            QMessageBox.information(self, "Zero calibration burned",
-                "Level recorded.\n\nMounting angle measured: pitch %.3f deg, "
-                "roll %.3f deg." % (data.get("mountPitch", 0.0), data.get("mountRoll", 0.0)))
-        else:
-            QMessageBox.warning(self, "Calibration refused",
-                "%s\n\nThe machine must be standing still for %s seconds; it has "
-                "been still for %.1f." % (data.get("message", "refused"),
-                                          data.get("restRequiredS", "?"),
-                                          data.get("restSeconds", 0.0)))
-
-    def calibrate_now(self):
-        # Capture the angles first, so the dialog can report how far the
-        # correction actually moved them. At rest the complementary filter has
-        # normally already converged onto the accelerometer, which makes this a
-        # near no-op - and saying so is far more useful than "done", which reads
-        # as though the reading was zeroed.
-        before = self.api_client.get_imu() or {}
-        ok, data = self.api_client.calibrate_now()
-        if ok:
-            bp, br = before.get("pitch"), before.get("roll")
-            ap, ar = data.get("pitch", 0.0), data.get("roll", 0.0)
-            if bp is None or br is None:
-                moved = ""
+            if msg == "Authentication Error":
+                self.timer.stop()
+                QMessageBox.warning(self, "Authentication Error", "Invalid session token. Please log in again.")
+                self.reconnect_requested.emit()
             else:
-                moved = ("\n\nCorrection applied: pitch %+.3f\u00b0, roll %+.3f\u00b0"
-                         % (ap - bp, ar - br))
-                if abs(ap - bp) < 0.1 and abs(ar - br) < 0.1:
-                    moved += "\n(essentially nothing - there was no drift to remove)"
-            QMessageBox.information(self, "Re-synced to gravity",
-                "Pitch and roll are now taken straight from the accelerometer, "
-                "and yaw is zeroed.\n\n"
-                "This reports the attitude the machine is ACTUALLY in - it does "
-                "not level it. On a slope it will still read the slope.\n\n"
-                "pitch %.3f\u00b0   roll %.3f\u00b0   yaw %.3f\u00b0%s"
-                % (ap, ar, data.get("yaw", 0.0), moved))
-        else:
-            QMessageBox.warning(self, "Calibration refused",
-                "%s\n\nStill for %.1f s." % (data.get("message", "refused"),
-                                              data.get("restSeconds", 0.0)))
+                QMessageBox.critical(self, "IMU Axis Mapping Failed", f"Failed to set IMU axis map: {msg}")
 
-    def sync_imu_mount_orientation(self):
-        """One-shot sync of the axis-map controls from the device's config.
-
-        V1.5.1 reports imuPitchAxis / imuRollAxis / imuYawAxis plus an invert
-        flag for each, in place of the single orientation enum earlier firmware
-        used.
-        """
+    def sync_imu_axis_map(self):
+        """One-shot sync of the axis combos and invert boxes from the device."""
         config = self.api_client.get_config()
         if not config or config.get("error"):
             return
-        for name in ("pitch", "roll", "yaw"):
-            axis = config.get("imu%sAxis" % name.capitalize())
-            if axis:
-                idx = self.axis_combos[name].findText(str(axis).upper())
-                if idx >= 0:
-                    self.axis_combos[name].setCurrentIndex(idx)
-            self.axis_inverts[name].setChecked(
-                bool(config.get("imu%sInvert" % name.capitalize(), False)))
+        for angle, _label, axis_field, default_axis, invert_field in IMU_ANGLES:
+            axis = config.get(axis_field, default_axis)
+            index = self.imu_axis_combos[angle].findText(axis)
+            if index >= 0:
+                self.imu_axis_combos[angle].setCurrentIndex(index)
+            self.imu_invert_checkboxes[angle].setChecked(bool(config.get(invert_field, False)))
+
+    # ------------------------------------------------------------------
+    # Calibration
+    # ------------------------------------------------------------------
+
+    def apply_calibration_state(self, status):
+        """Drive the calibration line and buttons from a status document.
+
+        Without a burned zero the angles above are still perfectly plausible -
+        they are just measured from the enclosure instead of from the machine -
+        so nothing in the numbers reveals an uncalibrated board. This line is
+        the only place that says so.
+        """
+        imu = status.get("imu")
+        if not isinstance(imu, dict):
+            imu = status
+        if "zeroCalValid" not in imu:
+            # Firmware without the calibration commands (plain V1.5.1). Say so
+            # rather than leaving two buttons that can only fail.
+            self.cal_status_label.setText(
+                "This firmware has no calibration commands (V1.5.1.1 or later needed).")
+            self.cal_status_label.setStyleSheet("color: gray; font-style: italic;")
+            self.burn_zero_btn.setEnabled(False)
+            self.calibrate_now_btn.setEnabled(False)
+            return
+
+        zero_valid = bool(imu.get("zeroCalValid"))
+        at_rest = bool(imu.get("atRest"))
+        rest_s = imu.get("restSeconds", 0.0)
+
+        if zero_valid:
+            text = ("Zero calibration burned - mounting angles pitch %.2f deg, roll %.2f deg."
+                    % (imu.get("mountPitch", 0.0), imu.get("mountRoll", 0.0)))
+            style = "color: green;"
+        else:
+            text = ("NO zero calibration burned - angles are reported in the sensor "
+                    "frame, uncorrected for how the unit is mounted.")
+            style = "color: red; font-weight: bold;"
+
+        if at_rest:
+            text += "  At rest."
+        else:
+            try:
+                text += "  Machine is moving (still for %.1f s) - both buttons refused." % float(rest_s)
+            except (TypeError, ValueError):
+                text += "  Machine is moving - both buttons refused."
+
+        self.cal_status_label.setText(text)
+        self.cal_status_label.setStyleSheet(style)
+        # Grey out rather than let the request come back 409. The line above
+        # already says why.
+        self.burn_zero_btn.setEnabled(at_rest)
+        self.calibrate_now_btn.setEnabled(at_rest)
+
+    def burn_zero_calibration(self):
+        """Redefine level. Destructive to the previous calibration, so confirm."""
+        confirm = QMessageBox.question(
+            self, "Burn Zero Calibration",
+            "This declares the machine's CURRENT attitude to be level, and writes "
+            "it to flash.\n\nOnly press this with the machine standing on flat "
+            "ground. Any tilt it has now becomes the new zero.\n\nContinue?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if confirm != QMessageBox.Yes:
+            return
+
+        ok, data = self.api_client.burn_zero_calibration()
+        if data.get("error") == "AUTH_ERROR":
+            self.timer.stop()
+            QMessageBox.warning(self, "Authentication Error", "Invalid session token. Please log in again.")
+            self.reconnect_requested.emit()
+            return
+        if ok:
+            QMessageBox.information(
+                self, "Zero Calibration Burned",
+                "This attitude is now level.\n\nMounting angles measured: "
+                "pitch %.2f deg, roll %.2f deg.\n\nThese are how the bracket holds "
+                "the sensor - if they look nothing like the installation, the burn "
+                "is suspect."
+                % (data.get("mountPitch", 0.0), data.get("mountRoll", 0.0)))
+        else:
+            QMessageBox.warning(
+                self, "Zero Calibration Refused",
+                "%s\n\nNothing was changed; any previous calibration is intact."
+                % data.get("message", "Unknown error"))
+
+    def calibrate_now(self):
+        """Clear accumulated drift. Reports the correction it applied, so that
+        'nothing happened' is visible rather than ambiguous - at rest the filter
+        has often converged on gravity already."""
+        before = self.api_client.get_imu() or {}
+
+        ok, data = self.api_client.calibrate_now()
+        if data.get("error") == "AUTH_ERROR":
+            self.timer.stop()
+            QMessageBox.warning(self, "Authentication Error", "Invalid session token. Please log in again.")
+            self.reconnect_requested.emit()
+            return
+        if not ok:
+            QMessageBox.warning(
+                self, "Re-sync Refused",
+                "%s\n\nNothing was changed." % data.get("message", "Unknown error"))
+            return
+
+        try:
+            d_pitch = float(data.get("pitch", 0.0)) - float(before.get("pitch", 0.0))
+            d_roll = float(data.get("roll", 0.0)) - float(before.get("roll", 0.0))
+            correction = ("\n\nCorrection applied: pitch %+.2f deg, roll %+.2f deg."
+                          % (d_pitch, d_roll))
+        except (TypeError, ValueError):
+            correction = ""
+
+        QMessageBox.information(
+            self, "Re-synced to Gravity",
+            "Pitch and roll taken from the accelerometer, yaw zeroed.\n\n"
+            "Now reading: pitch %.2f deg, roll %.2f deg, yaw %.2f deg.%s\n\n"
+            "Note this does not redefine level - on a slope it reports the slope."
+            % (data.get("pitch", 0.0), data.get("roll", 0.0), data.get("yaw", 0.0),
+               correction))
 
     def select_firmware(self):
         path, _ = QFileDialog.getOpenFileName(self, "Select Firmware", "", "Binary Files (*.bin)")

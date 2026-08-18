@@ -2,29 +2,6 @@ import requests
 import json
 
 class ApiClient:
-    # Firmware 1.5.1 changed get_status from one flat object into sections
-    # (config / overview / imu / gps), and renamed two fields. Everything that
-    # reads a status document expects the flat shape, so normalise here rather
-    # than in every caller - and keep working with older firmware, which really
-    # is flat.
-    _SECTIONS = ("config", "overview", "imu", "gps")
-    _RENAMED = (("busVoltage", "systemVoltage"), ("GPSConnected", "gpsConnected"))
-
-    @classmethod
-    def _flatten(cls, doc):
-        if not isinstance(doc, dict):
-            return doc
-        flat = dict(doc)
-        for section in cls._SECTIONS:
-            sub = doc.get(section)
-            if isinstance(sub, dict):
-                for k, v in sub.items():
-                    flat.setdefault(k, v)      # a top-level key always wins
-        for old, new in cls._RENAMED:
-            if old not in flat and new in flat:
-                flat[old] = flat[new]
-        return flat
-
     def __init__(self, base_ip):
         self.base_ip = base_ip
         self.base_url = f"http://{base_ip}/"
@@ -78,7 +55,7 @@ class ApiClient:
             response = self.session.post(self.base_url, data=json.dumps(payload), timeout=5)
 
             if response.status_code == 200:
-                return self._flatten(response.json())
+                return response.json()
             if response.status_code == 401:
                 # Try to re-login automatically
                 if self._try_relogin():
@@ -87,7 +64,7 @@ class ApiClient:
                     response = self.session.post(self.base_url, data=json.dumps(payload), timeout=5)
                     if response.status_code == 200:
                         print("[ApiClient] Auto re-login successful, resumed operation")
-                        return self._flatten(response.json())
+                        return response.json()
                 return {"error": "AUTH_ERROR"}
             return None
         except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
@@ -173,12 +150,45 @@ class ApiClient:
             print(f"ApiClient.set_ip_config: An unexpected error occurred: {e}")
             return False, f"An unexpected error occurred: {e}"
 
+
+
+
+
+    def set_imu_axis_map(self, pitch_axis, roll_axis, yaw_axis,
+                         pitch_invert=False, roll_invert=False, yaw_invert=False):
+        """Set which sensor axis each angle rotates about, and whether to negate it.
+
+        Axes are "X"/"Y"/"Z" and must all differ; the invert flags handle a
+        sensor mounted flipped end-for-end along that axis.
+        """
+        payload = {"type": "set_imu_axis_map", "token": self.token,
+                   "pitch_axis": pitch_axis, "roll_axis": roll_axis, "yaw_axis": yaw_axis,
+                   "pitch_invert": bool(pitch_invert),
+                   "roll_invert": bool(roll_invert),
+                   "yaw_invert": bool(yaw_invert)}
+        try:
+            response = self.session.post(self.base_url, data=json.dumps(payload), timeout=5)
+            if response.status_code == 200:
+                data = response.json()
+                if data.get("success"):
+                    return True, data.get("message", "IMU axis map updated")
+                else:
+                    return False, data.get("message", "Unknown error")
+            if response.status_code == 401:
+                return False, "Authentication Error"
+            return False, f"HTTP Error: {response.status_code}"
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
+            return False, "Connection Error"
+        except Exception as e:
+            print(f"Error setting IMU axis map: {e}")
+            return False, str(e)
+
     def get_config(self):
         payload = {"type": "get_config", "token": self.token}
         try:
             response = self.session.post(self.base_url, data=json.dumps(payload), timeout=5)
             if response.status_code == 200:
-                return self._flatten(response.json())
+                return response.json()
             if response.status_code == 401:
                 return {"error": "AUTH_ERROR"}
             return None
@@ -188,56 +198,64 @@ class ApiClient:
             print(f"Error getting config: {e}")
             return None
 
-    def set_imu_axis_map(self, pitch_axis, roll_axis, yaw_axis,
-                         pitch_invert=False, roll_invert=False, yaw_invert=False):
-        """Which sensor axis each reported angle rotates about.
+    def _calibration_command(self, msg_type):
+        """Send one of the two calibration commands.
 
-        Replaces set_imu_mount_orientation, which V1.5.1 removed. The firmware
-        rejects a map that uses the same axis twice.
+        Both answer HTTP 409 when refused - "the machine is moving" is a state
+        conflict, not a malformed request - so unlike the rest of this client a
+        non-200 here still carries a body worth showing the technician.
         """
-        payload = {"type": "set_imu_axis_map", "token": self.token,
-                   "pitch_axis": pitch_axis, "roll_axis": roll_axis, "yaw_axis": yaw_axis,
-                   "pitch_invert": bool(pitch_invert), "roll_invert": bool(roll_invert),
-                   "yaw_invert": bool(yaw_invert)}
+        payload = {"type": msg_type, "token": self.token}
         try:
-            r = self.session.post(self.base_url, data=json.dumps(payload), timeout=5)
-            d = r.json()
-            if r.status_code == 200 and d.get("type") != "error":
-                return True, d.get("message", "Axis map updated")
-            return False, d.get("message", "Unknown error")
+            response = self.session.post(self.base_url, data=json.dumps(payload), timeout=8)
+            if response.status_code == 401:
+                return False, {"error": "AUTH_ERROR", "message": "Authentication Error"}
+            data = response.json()
+            return bool(data.get("success")), data
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
+            return False, {"message": "Connection Error"}
         except Exception as e:
-            return False, str(e)
+            print(f"Error in {msg_type}: {e}")
+            return False, {"message": str(e)}
 
     def burn_zero_calibration(self):
         """Record the machine's current attitude as level, in flash.
 
-        Refused unless the machine has been standing still long enough; the
-        response carries restSeconds so a caller can say why.
+        Only with the machine standing on flat ground - this is what "level"
+        means from now on. Refused unless it has been still for long enough and
+        both IMUs are healthy; a refusal leaves the previous calibration alone.
         """
-        payload = {"type": "burn_zero_calibration", "token": self.token}
-        try:
-            r = self.session.post(self.base_url, data=json.dumps(payload), timeout=8)
-            d = r.json()
-            return bool(d.get("success")), d
-        except Exception as e:
-            return False, {"message": str(e)}
+        return self._calibration_command("burn_zero_calibration")
 
     def calibrate_now(self):
-        """Discard accumulated drift. Stores nothing; valid at any attitude."""
-        payload = {"type": "calibrate_now", "token": self.token}
+        """Discard accumulated drift: re-sync pitch/roll to gravity, zero yaw.
+
+        Stores nothing and does not redefine level - on a slope it reports the
+        slope. Valid at any attitude, as long as the machine is standing still.
+        """
+        return self._calibration_command("calibrate_now")
+
+    def get_calibration(self):
+        payload = {"type": "get_calibration", "token": self.token}
         try:
-            r = self.session.post(self.base_url, data=json.dumps(payload), timeout=8)
-            d = r.json()
-            return bool(d.get("success")), d
+            response = self.session.post(self.base_url, data=json.dumps(payload), timeout=5)
+            if response.status_code == 200:
+                return response.json()
+            if response.status_code == 401:
+                return {"error": "AUTH_ERROR"}
+            return None
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
+            return None
         except Exception as e:
-            return False, {"message": str(e)}
+            print(f"Error getting calibration: {e}")
+            return None
 
     def get_imu(self):
         payload = {"type": "get_imu", "token": self.token}
         try:
             response = self.session.post(self.base_url, data=json.dumps(payload), timeout=5)
             if response.status_code == 200:
-                return self._flatten(response.json())
+                return response.json()
             if response.status_code == 401:
                 return {"error": "AUTH_ERROR"}
             return None
