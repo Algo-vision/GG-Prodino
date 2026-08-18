@@ -1,4 +1,14 @@
-# GG-GRK Firmware - V1.5.1
+# GG-GRK Firmware - V1.5.1.1
+
+V1.5.1 with Priority 2 on top, and nothing else. Level is burned once by a
+technician instead of being guessed at every power-on, the gyro's zero is
+learned whenever the machine is genuinely at rest, and a technician can
+re-sync the filter to gravity on demand. See
+[Calibration](#calibration) and the three commands 13-15 below.
+
+Priority 1 - the `dt` stress test that measured this build - is in
+[`docs/P1_dt_stress_test.md`](docs/P1_dt_stress_test.md); its probe compiles
+out of `env:main` entirely.
 
 ## Overview
 
@@ -54,7 +64,14 @@ Two vendor libraries are used as-is and are out of scope for any internal renami
 ```sh
 pio run -e main        # build the embedded firmware (the default env)
 pio test -e native     # host-native unit tests (requires gcc/g++ on PATH)
+pio run -e timing      # bench only: env:main plus the dt probe
 ```
+
+`env:timing` is `env:main` with `-D TIMING_PROBE=1`, which is the only thing
+that compiles the probe in. Everywhere else it expands to nothing, so
+`pio run -e main` produces a byte-identical binary with the probe sources
+present or absent (verified: md5 `6021299ed8caa82c7a1c6e598c4df0e2` both ways).
+**Never ship `env:timing`.**
 
 The `native` environment is test-only and covers the hardware-free logic: `calculations`, `imu_mount_orientation`, `sanity_check`, `ocu_connection_state`, `zero_calibration`, and the rest detector and gyro-bias estimator. It is never built by a plain `pio run`.
 
@@ -108,6 +125,9 @@ Payloads are JSON objects. Responses are JSON. Every request except `login` must
 | 10 | `reset_led_control` | Force the IO LED back to automatic control, OFF |
 | 11 | `set_ip_config` | Set controller IP and whitelist (reboots) |
 | 12 | `set_imu_axis_map` | Set which sensor axis each angle rotates about |
+| 13 | `burn_zero_calibration` | Record the machine's current attitude as level, in flash |
+| 14 | `calibrate_now` | Discard accumulated drift; re-sync pitch/roll to gravity, zero yaw |
+| 15 | `get_calibration` | Read calibration state and whether the machine is at rest |
 
 ### 1. Login
 **Request:**
@@ -333,7 +353,72 @@ Each axis is `"X"`, `"Y"` or `"Z"` (case-sensitive). All three must be **differe
   "reboot_required": true
 }
 ```
-Reboot the device so the IMUs recalibrate against the new axis map.
+Reboot the device, then re-burn the zero calibration (command 13) - the stored one was measured through the old map.
+
+### 13. Burn Zero Calibration
+Records the attitude the machine is standing in **right now** as this installation's level reference, and writes it to flash. It is never done automatically: a controller that has never been calibrated reports the sensor frame and says so, rather than assuming whatever slope it was switched on over is flat.
+
+**Request:**
+```json
+{ "type": "burn_zero_calibration", "token": "<token>" }
+```
+**Response:**
+```json
+{
+  "type": "zero_calibration_result",
+  "success": true,
+  "restSeconds": 7.4,
+  "mountPitch": -2.31,
+  "mountRoll": 0.88
+}
+```
+`mountPitch` / `mountRoll` are the angles the sensor was sitting at when level was declared - i.e. how the bracket holds it - so a technician can sanity-check the burn before trusting it.
+
+Refused (**HTTP 409**, `code` `E-300`) unless the machine has been at rest for `REST_SECONDS_FOR_CALIBRATION` (2 s) **and both IMUs are sane**. Both, not either: a zero burned from one IMU leaves the other uncorrected, and the angle would jump the moment the filter fell back to it. A refusal leaves the previous calibration untouched.
+
+### 14. Calibrate Now
+Initiated calibration: throws away accumulated drift. At rest the accelerometer alone gives the true pitch and roll, so the filter is snapped onto them and yaw is zeroed - gravity says nothing about heading, so there is nothing to correct yaw against while stationary.
+
+Unlike command 13 this **stores nothing**, does not redefine level, and is valid at **any** attitude, level or not. It is the answer to error accumulating over a long run, and to angles left wrong by a hard enough shock to clip a reading.
+
+**Request:**
+```json
+{ "type": "calibrate_now", "token": "<token>" }
+```
+**Response:**
+```json
+{
+  "type": "calibrate_now_result",
+  "success": true,
+  "restSeconds": 3.1,
+  "pitch": 12.44,
+  "roll": -0.62,
+  "yaw": 0.0
+}
+```
+Refused (**HTTP 409**, `code` `E-301`) unless the machine has been at rest for 2 s. **It is the operator's responsibility to send this when they know the machine is standing still** - the rest check is a guard, not a guarantee.
+
+### 15. Get Calibration
+**Request:**
+```json
+{ "type": "get_calibration", "token": "<token>" }
+```
+**Response:**
+```json
+{
+  "type": "calibration",
+  "zeroCalValid": true,
+  "mountPitch": -2.31,
+  "mountRoll": 0.88,
+  "gyroBiasValid": true,
+  "gyroBias1": [0.041, -0.017, 0.006],
+  "gyroBias2": [0.038, -0.021, 0.009],
+  "restSeconds": 7.4,
+  "restRequiredS": 2.0,
+  "atRest": true
+}
+```
+`restSeconds` / `restRequiredS` / `atRest` exist so a GUI can grey out a calibrate button **and say why**, instead of letting the request fail. `zeroCalValid`, `mountPitch`, `mountRoll`, `restSeconds` and `atRest` also ride along in `get_status` and `get_imu`, because without a burned zero the reported angles are still perfectly plausible - they are just measured from the enclosure instead of from the machine - and a client has no other way to tell a calibrated board from an uncalibrated one.
 
 ### Error Response
 ```json
@@ -388,7 +473,7 @@ Units: acceleration `g`, angular velocity `°/s`, orientation `°`, GPS coordina
 - **angleSane:** The calculated angles pass the sanity check.
 - **imuTemp:** On-chip die temperature [°C], averaged over whichever IMUs are readable. Reads above ambient due to self-heating; absolute accuracy is poor (datasheet `Toff` = ±15 °C) but the *change since boot* is accurate and is what drives gyro bias drift.
 - **imuX/Y/Z, imu2X/Y/Z:** Linear acceleration per axis.
-- **imuGx/Gy/Gz, imu2Gx/Gy/Gz:** Angular velocity per axis, with the startup calibration offset removed.
+- **imuGx/Gy/Gz, imu2Gx/Gy/Gz:** Angular velocity per axis, with the learned gyro bias removed (see [Calibration](#calibration)).
 
 **`gps`**
 - **gpsConnected:** True if the GPS module is communicating.
@@ -412,7 +497,7 @@ The IMU can be bolted to the chassis in any orientation. Rather than enumerating
 | Roll  | `Y` | no |
 | Yaw   | `Z` | no |
 
-Each angle also has an **Invert** flag that negates it, for a sensor mounted flipped end-for-end along that axis. Set it all from the desktop GUI ("IMU Axis Mapping", with the `test/tools/MSB_Axis.png` diagram shown in the Config panel for reference) or via the `set_imu_axis_map` API. It persists in flash and applies to **both** IMUs, to the accelerometer and gyroscope alike, and to the startup calibration.
+Each angle also has an **Invert** flag that negates it, for a sensor mounted flipped end-for-end along that axis. Set it all from the desktop GUI ("IMU Axis Mapping", with the `test/tools/MSB_Axis.png` diagram shown in the Config panel for reference) or via the `set_imu_axis_map` API. It persists in flash and applies to **both** IMUs, to the accelerometer and gyroscope alike.
 
 The defaults above are the identity mapping and reproduce exactly the behaviour of firmware that predates this setting. They follow the orientation math in `lib/GG/src/calculations.cpp`, which derives pitch from the accelerometer's Y/Z components and integrates `gx`, and derives roll from X and integrates `gy`. **If your convention is "X = roll, Y = pitch", set Pitch=`Y` and Roll=`X`** - that is exactly what this feature is for.
 
@@ -421,7 +506,46 @@ Implementation notes:
 - The map must be a **permutation** - two angles cannot share an axis, which would drop one sensor axis and double-count another. The API rejects it, the GUI blocks it, and an invalid map read back from flash falls back to the default.
 - Inversion is applied **after** the axis is chosen, so it negates the remapped component, not the same-named raw one.
 - Invert flags are stored as bytes and must be exactly 0 or 1; that is how junk from a pre-invert firmware's flash is rejected, falling back to the default map.
-- Reboot after changing it: the startup calibration offsets are captured through the map.
+- Re-burn the zero calibration after changing it: the stored gravity direction was measured through the old map, and is meaningless under a new one.
+
+## Calibration
+
+Three separate things, often confused. Two of them are new in V1.5.1.1.
+
+| | what it corrects | when | stored? |
+| :-- | :-- | :-- | :-- |
+| **Axis map** | how the sensor is bolted on, to the nearest 90° | once, at install | yes |
+| **Zero calibration** | the residual tilt of the bracket, to a fraction of a degree | once, by a technician on flat ground | yes, flash |
+| **Gyro bias** | the rate the gyro reports when it is not turning | continuously, whenever the machine is at rest | yes, as a seed |
+| **Calibrate now** | drift the filter has accumulated since | on demand, machine stationary | no |
+
+### What V1.5.1 did, and why it changed
+
+`setup()` averaged 100 accelerometer and 100 gyro samples per IMU - four seconds of blocking boot - and treated the result as both "level" and "zero rotation". Both assume the machine is standing still **and** on flat ground at the instant it is switched on, and neither can be promised. Power up on a slope and the slope becomes level. Power up on a running vehicle and a real rotation rate becomes the gyro's zero, after which yaw drifts for the whole session.
+
+V1.5.1.1 does neither at boot. `main.cpp` has no `calibrateIMU()`.
+
+### Zero calibration
+
+A technician who can see the machine is flat sends `burn_zero_calibration` (command 13). What is stored is the **gravity direction** each IMU reads at that moment, not an offset - and that distinction is the whole point. Subtracting a constant from `ax`/`ay` is only correct at the attitude it was captured in; a rotation is correct at every attitude. Both the accelerometer and the gyro vectors are rotated through it, because a sensor tilted on its bracket has its rotation axes tilted by exactly the same amount.
+
+Until one is burned the transform is the identity: the controller reports the sensor frame, uncorrected, and says so via `zeroCalValid`. That is the honest default - it is not a guess about how the unit is mounted.
+
+Both markers are validated independently in flash (`ZERO_CAL_MARKER`, `GYRO_BIAS_MARKER`), so a record written by firmware that predates these fields reads as "uncalibrated" rather than installing whatever bytes happened to be there.
+
+> **A USB flash erases the whole chip.** `bossac --erase` takes the stored configuration with it, including the zero calibration - re-burn it after any USB update. The gyro bias does not need re-burning; it re-learns at the first rest.
+
+### Gyro bias
+
+Learned, never assumed. The rest detector (`lib/GG/src/rest_detector.hpp`) watches for `|a|` within 0.15 g of 1 g and every gyro axis under 8 °/s; after 1 s of that the bias estimator (`lib/GG/src/gyro_bias.hpp`) pulls toward the raw rates with a 30 s time constant. It is fed the **raw** rates deliberately - feeding back the corrected ones would drive the estimate to zero and undo the correction it exists to provide.
+
+It rides to flash on the periodic `configSave()` rather than writing on every update, which would erase a flash page every few seconds. On the next power cycle it is loaded as a starting point, not as truth.
+
+> The rest thresholds are **bench numbers** - a stationary board never exceeded 0.098 g or 4.35 °/s across 66271 samples. A machine idling with its engine running will vibrate considerably more. Confirm them on the vehicle before relying on them.
+
+### Calibrate now
+
+`calibrate_now` (command 14) corrects the estimate without redefining anything. It exists for two failure modes: error accumulating over a long run, and angles left wrong after a shock hard enough to clip a reading. Pitch and roll are recomputed from gravity alone; yaw is zeroed, because at rest there is no reference to correct it against with this hardware. The GPS gate needs real motion before it touches yaw again, so the zero stands until the machine moves.
 
 ## Orientation & Yaw Correction
 
@@ -438,7 +562,7 @@ Yaw has no such reference — gravity says nothing about rotation about the vert
 **Wrap-safe.** The correction takes the shortest signed path to the target bearing, so a heading change across the ±180° seam turns the short way instead of spinning the long way round.
 
 **Limits worth knowing:**
-- The correction **bounds** drift rather than eliminating it. A constant residual gyro bias leaves a steady-state offset of roughly `bias × TAU` — a 2°/s bias settles about 10° off. (Simulated: uncorrected, that same bias drifts 120° in 60 s.) Startup calibration removes most of the bias; eliminating the remainder entirely would need an integral bias estimator.
+- The correction **bounds** drift rather than eliminating it. A constant residual gyro bias leaves a steady-state offset of roughly `bias × TAU` — a 2°/s bias settles about 10° off. (Simulated: uncorrected, that same bias drifts 120° in 60 s.) The rest-time bias estimator removes most of the bias; eliminating the remainder entirely would need an integral bias estimator.
 - Yaw becomes an **absolute bearing** once corrected, not a relative angle from power-on.
 - **Convention:** blending assumes yaw and `gpsHeading` share a sense of rotation. If they turn opposite ways the filter pulls yaw toward the mirrored bearing instead of converging — invert the yaw axis in the [IMU axis map](#imu-axis-mapping), which flips the sign of the gyro rate feeding yaw.
 
@@ -489,10 +613,12 @@ Every error response carries a stable `code` field alongside `message`:
 | `E-203` | 200 | `Invalid IP address or whitelist entry provided.` | Malformed address, or more than 3 whitelist entries |
 | `E-204` | 200 | `Invalid IMU axis (expected X, Y or Z)` | Bad axis token |
 | `E-205` | 200 | `Pitch, roll and yaw must each use a different axis` | Axis map not a permutation |
+| `E-300` | 409 | `machine is not standing still` / `both IMUs must be healthy to burn a zero calibration` / `measured gravity vector was unusable - nothing was changed` | `burn_zero_calibration` refused |
+| `E-301` | 409 | `machine is not standing still` / `no healthy IMU to calibrate from` | `calibrate_now` refused |
 
 Codes are stable across releases; `message` text is not guaranteed to be. Clients should branch on `code`.
 
-Note the split: transport and authentication failures use HTTP status codes; application-level rejections return **HTTP 200** with an error body.
+Note the split: transport and authentication failures use HTTP status codes; application-level rejections return **HTTP 200** with an error body. The two calibration refusals are the exception - they are 409 Conflict, because "not right now" is a state conflict rather than a malformed request.
 
 ### OTA Update Errors
 
@@ -601,6 +727,6 @@ Firmware can be updated Over-The-Air (OTA) through the desktop GUI (see [`test/t
 - **Default Whitelist IPs:** `192.168.1.20`, `192.168.1.169`, `192.168.1.33` (configurable via GUI and API; maximum 3 entries).
 - **Serial Console:** 115200 baud.
 - **OTA Updates:** Only available in technician mode (hold the technician button for 5 seconds during startup), and can be initiated via the GUI or a separate uploader tool.
-- **IMU Calibration:** Both IMUs self-calibrate on startup; keep the device still and flat during this process. Re-run it (by rebooting) after changing the IMU axis map.
+- **IMU Calibration:** Nothing is calibrated at startup. Burn the zero calibration once, with the machine on flat ground (command 13), and re-burn it after changing the IMU axis map. See [Calibration](#calibration).
 - **Connection model:** The HTTP server uses one connection per request (`Connection: close`), which is intentional for the 8-socket W5500.
 - **Sensor sampling:** `statusUpdate()` runs **only** from `loop()`, on a fixed 10 ms cadence (`STATUS_UPDATE_INTERVAL_MS`). API responses report the most recent sample and never trigger a read, so values can be up to 10 ms old. This is deliberate: the pitch/roll filter uses a fixed per-step weight, so sampling per HTTP request made the angles depend on the polling rate. See [imuLimitations.md](imuLimitations.md) section 4.1.
