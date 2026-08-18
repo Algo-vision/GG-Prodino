@@ -250,10 +250,12 @@ class MainWidget(QWidget):
         self.burn_zero_btn.clicked.connect(self.burn_zero_calibration)
         cal_btn_row.addWidget(self.burn_zero_btn)
 
-        self.calibrate_now_btn = QPushButton("Calibrate Now (clear drift)")
+        self.calibrate_now_btn = QPushButton("Re-sync to Gravity")
         self.calibrate_now_btn.setToolTip(
-            "Re-seats pitch and roll on the accelerometer and zeroes yaw. "
-            "Stores nothing, and is valid at any attitude - not just level.")
+            "Takes pitch and roll straight from the accelerometer and zeroes yaw.\n\n"
+            "This does NOT level the machine or zero the reading - on a slope it "
+            "will still report the slope. It only removes error that has "
+            "accumulated since the last time gravity was consulted.")
         self.calibrate_now_btn.clicked.connect(self.calibrate_now)
         cal_btn_row.addWidget(self.calibrate_now_btn)
         cal_layout.addLayout(cal_btn_row)
@@ -499,11 +501,30 @@ class MainWidget(QWidget):
                                           data.get("restSeconds", 0.0)))
 
     def calibrate_now(self):
+        # Capture the angles first, so the dialog can report how far the
+        # correction actually moved them. At rest the complementary filter has
+        # normally already converged onto the accelerometer, which makes this a
+        # near no-op - and saying so is far more useful than "done", which reads
+        # as though the reading was zeroed.
+        before = self.api_client.get_imu() or {}
         ok, data = self.api_client.calibrate_now()
         if ok:
-            QMessageBox.information(self, "Calibrated",
-                "Drift cleared.\n\npitch %.3f  roll %.3f  yaw %.3f"
-                % (data.get("pitch", 0.0), data.get("roll", 0.0), data.get("yaw", 0.0)))
+            bp, br = before.get("pitch"), before.get("roll")
+            ap, ar = data.get("pitch", 0.0), data.get("roll", 0.0)
+            if bp is None or br is None:
+                moved = ""
+            else:
+                moved = ("\n\nCorrection applied: pitch %+.3f\u00b0, roll %+.3f\u00b0"
+                         % (ap - bp, ar - br))
+                if abs(ap - bp) < 0.1 and abs(ar - br) < 0.1:
+                    moved += "\n(essentially nothing - there was no drift to remove)"
+            QMessageBox.information(self, "Re-synced to gravity",
+                "Pitch and roll are now taken straight from the accelerometer, "
+                "and yaw is zeroed.\n\n"
+                "This reports the attitude the machine is ACTUALLY in - it does "
+                "not level it. On a slope it will still read the slope.\n\n"
+                "pitch %.3f\u00b0   roll %.3f\u00b0   yaw %.3f\u00b0%s"
+                % (ap, ar, data.get("yaw", 0.0), moved))
         else:
             QMessageBox.warning(self, "Calibration refused",
                 "%s\n\nStill for %.1f s." % (data.get("message", "refused"),

@@ -590,6 +590,18 @@ void httpServerLoop() {
                     resp["imu2Gz"] = g_status.imu2Gz;
 
                     resp["imuTemp"] = g_status.imuTemp;
+
+                    // Same calibration state get_status carries, so a client
+                    // polling either command sees it.
+                    resp["zeroCalValid"] = g_zeroCalValid;
+                    {
+                        float mp = 0.0f, mr = 0.0f;
+                        statusZeroCalAngles(mp, mr);
+                        resp["mountPitch"] = mp;
+                        resp["mountRoll"]  = mr;
+                    }
+                    resp["restSeconds"] = statusRestSeconds();
+                    resp["atRest"] = statusRestSeconds() >= REST_SECONDS_FOR_CALIBRATION;
                 }
                 else if (msgType == "burn_zero_calibration") {
                     // The technician-GUI equivalent of burning a serial
