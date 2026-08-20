@@ -10,6 +10,7 @@
 #include <i2c_imu_gps.hpp>
 #include <imu_mount_orientation.hpp>
 #include <sanity_check.hpp>
+#include <imu_agreement.hpp>
 #include "calculations.hpp"
 #include <Ethernet.h>
 #include <Adafruit_INA219.h>
@@ -349,6 +350,34 @@ void statusUpdate() {
     g_status.imu1Sane = imu1Health;
     g_status.imu2Sane = imu2Health;
 
+    // Two sensors reading the same gravity vector should agree. Only
+    // meaningful while both are actually responding.
+    if (imuValid && imu2Valid) {
+        uint8_t axes = 0;
+        g_status.imusAgree = imuAxesAgree(g_status.imuX, g_status.imuY, g_status.imuZ,
+                                          g_status.imu2X, g_status.imu2Y, g_status.imu2Z,
+                                          &axes);
+        g_status.imuAgreeAxes = axes;
+
+        // Specified behaviour: when the raw values are too far apart, sane
+        // goes false. Both of them - nothing in the comparison identifies
+        // which sensor is the wrong one.
+        //
+        // These flags select which IMU drives the orientation filter, so
+        // with both clear the filter stops updating and pitch/roll/yaw hold
+        // their last values until the two agree again.
+        if (!g_status.imusAgree) {
+            g_status.imu1Sane = false;
+            g_status.imu2Sane = false;
+            g_status.imuDisagreeCount++;
+        }
+    } else {
+        // One sensor missing is a different fault, already carried by
+        // imu1Sane / imu2Sane. Nothing to compare, so claim nothing.
+        g_status.imusAgree = true;
+        g_status.imuAgreeAxes = 0;
+    }
+
     // Select which IMU(s) drive the orientation filter, by sanity.
     bool useImu1 = g_status.imu1Sane;
     bool useImu2 = g_status.imu2Sane;
@@ -621,6 +650,9 @@ JsonDocument statusGenerateJson(JsonDocument* requestDoc) {
     // IMU fields (see "get_imu" in http_server.cpp)
     JsonObject imu = resp["imu"].to<JsonObject>();
     imu["angleSane"] = g_status.angleSane;
+    imu["imusAgree"] = g_status.imusAgree;
+    imu["imuAgreeAxes"] = g_status.imuAgreeAxes;
+    imu["imuDisagreeCount"] = g_status.imuDisagreeCount;
     imu["pitch"] = g_status.pitch;
     imu["roll"] = g_status.roll;
     imu["yaw"] = g_status.yaw;

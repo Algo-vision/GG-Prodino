@@ -70,6 +70,11 @@ chosen load, reads the frozen result.
 the board while shaking it, which is the case that motivated the calibration
 change.
 
+`imu_agreement_test.py` - the two-IMU agreement check under vibration and
+through a sweep of attitudes. It tests for **false positives**: a trip clears
+both sane flags, which freezes the reported angles, so on a moving machine a
+spurious one is worse than the fault it looks for.
+
 ---
 
 ## The rest of the system, which is not on this branch

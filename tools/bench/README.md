@@ -63,6 +63,43 @@ had not drifted. If they jump, the zero calibration itself is wrong.
 so powering up on a running machine captured a real rotation rate as "zero" and
 yaw drifted for the whole session.
 
+## `imu_agreement_test.py`
+
+P3 item 2 — the two-IMU agreement check.
+
+```sh
+./imu_agreement_test.py           # ~2.5 minutes
+./imu_agreement_test.py --quick   # shorter windows
+```
+
+**It tests for false positives, not for detection.** Both sensors sit on one
+board reading one gravity vector, so a genuine disagreement cannot be provoked
+without physically moving one relative to the other. That path is covered by
+`firmware/test/test_imu_agreement` — eight cases including a dead sensor reading
+zero, an inverted axis, and one reading 2.5x the other.
+
+What can bite in the field is the opposite. When the check trips it clears
+**both** `imu1Sane` and `imu2Sane`, and those flags select which IMU drives the
+orientation filter — so a spurious trip freezes pitch, roll and yaw at their
+last values. On a moving machine that is worse than the fault being looked for.
+
+| step | you do | it proves |
+|:--|:--|:--|
+| 1 | flat and still | a healthy pair agrees, at least one axis is compared |
+| 2 | nothing | it does not trip while nothing is happening |
+| 3 | **tilt to ~45 deg** | coverage RISES with tilt — two axes compared, not zero |
+| 4 | **shake it hard** | no false trip under vibration. The one that matters |
+| 5 | rotate through many attitudes | coverage never drops to zero axes |
+| 6 | flat again | the flags recover and the angles are live |
+
+It reads `imuDisagreeCount` rather than polling `imusAgree`: the check runs at
+loop rate (~95 Hz) and this polls at about 30, so a brief trip would freeze the
+angles and never land in a sample. A latched counter cannot miss one.
+
+Every phase also reports the **worst per-axis ratio** it saw against the x2
+limit, so the margin is visible rather than assumed. On the bench, level, that
+figure is 1.03.
+
 ## What it cannot check here
 
 The rest thresholds are bench numbers - a stationary board never exceeded

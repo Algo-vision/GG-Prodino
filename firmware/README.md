@@ -73,7 +73,7 @@ that compiles the probe in. Everywhere else it expands to nothing, so
 present or absent (verified: md5 `6021299ed8caa82c7a1c6e598c4df0e2` both ways).
 **Never ship `env:timing`.**
 
-The `native` environment is test-only and covers the hardware-free logic: `calculations`, `imu_mount_orientation`, `sanity_check`, `ocu_connection_state`, `zero_calibration`, and the rest detector and gyro-bias estimator. It is never built by a plain `pio run`.
+The `native` environment is test-only and covers the hardware-free logic: `calculations`, `imu_mount_orientation`, `sanity_check`, `ocu_connection_state`, `zero_calibration`, `imu_agreement`, and the rest detector and gyro-bias estimator. It is never built by a plain `pio run`.
 
 ## Technician Mode & OTA
 - Hold the button for 5 seconds during startup to enter technician mode.
@@ -471,6 +471,9 @@ Units: acceleration `g`, angular velocity `°/s`, orientation `°`, GPS coordina
 - **imuValid / imu2Valid:** True if that IMU is communicating (I2C read succeeded).
 - **imu1Sane / imu2Sane:** That IMU is healthy **and** its accelerometer is currently usable as a horizon. **These select which IMU(s) drive the orientation filter** - see [Sanity Checks](#sanity-checks).
 - **angleSane:** The calculated angles pass the sanity check.
+- **imusAgree:** The two accelerometers read the same gravity vector. False clears both `imu1Sane` and `imu2Sane`, which stops the orientation filter — see [Sanity Checks](#sanity-checks).
+- **imuAgreeAxes:** How many axes carried enough signal (> `IMU_AGREE_DEADBAND_G`) to be worth comparing. **Zero means `imusAgree` is "no evidence", not "verified".**
+- **imuDisagreeCount:** Disagreements latched since boot. The check runs at loop rate, so a brief trip would not appear in a polled sample.
 - **imuTemp:** On-chip die temperature [°C], averaged over whichever IMUs are readable. Reads above ambient due to self-heating; absolute accuracy is poor (datasheet `Toff` = ±15 °C) but the *change since boot* is accurate and is what drives gyro bias drift.
 - **imuX/Y/Z, imu2X/Y/Z:** Linear acceleration per axis.
 - **imuGx/Gy/Gz, imu2Gx/Gy/Gz:** Angular velocity per axis, with the learned gyro bias removed (see [Calibration](#calibration)).
@@ -584,6 +587,37 @@ These two flags then **select which IMU(s) feed the orientation filter**:
 | neither healthy | Angles frozen at their last values |
 
 A misbehaving-but-responding IMU is therefore excluded from the fusion rather than silently averaged in at full weight, which is what the previous `imuValid`-based selection did.
+
+**Both flags are also cleared when the two accelerometers disagree.**
+
+Two sensors reading one gravity vector should agree. When they do not, one of them is wrong and nothing in the comparison says which — so neither is trusted and both flags go false, which is the specified behaviour. See `lib/GG/src/imu_agreement.hpp`.
+
+The comparison is a ratio, per axis, with IMU2's 180° in-plane mount undone first — without that a healthy pair would be comparing `+x` against `−x` and fail permanently. It also catches two things a ratio cannot express: opposite signs on an axis carrying real signal, and one sensor reading zero while the other does not.
+
+An axis is only compared when at least one sensor reads more than `IMU_AGREE_DEADBAND_G` (0.5 g) on it. **This deadband is the difference between a working check and one that fires constantly.** Measured on a level board:
+
+| axis | IMU1 | IMU2 | difference | ratio |
+|:--|--:|--:|--:|--:|
+| X | −0.0147 g | −0.0043 g | 0.0104 g | **3.39** |
+| Y | −0.0336 g | −0.0022 g | 0.0314 g | **15.50** |
+| Z | +1.0356 g | +1.0103 g | 0.0253 g | 1.03 |
+
+X and Y fail a ×2 test by 3× and 15× while disagreeing by three hundredths of a g. They are perpendicular to gravity, so both sensors are reporting their own zero-g offset and the ratio is noise divided by noise. Without the deadband the check would clear both sane flags on every healthy board sitting level.
+
+The threshold also decides how much of the attitude range is covered. The whole vector is about 1 g shared between three axes, so a high threshold means few axes qualify:
+
+| deadband | check has nothing to compare past | at least one axis always covered? |
+|:--|:--|:--|
+| 1.000 g | ~15° of tilt | no |
+| 0.800 g | ~39° | no |
+| 0.598 g | ~56° | **yes** |
+| **0.500 g** (configured) | ~61° | **yes, with margin** |
+
+0.598 g is 1/√3 of the measured vector length — the smallest any axis can be, which happens when all three are equal. At or below it the check can never go quiet, whatever attitude the machine is in.
+
+`imuAgreeAxes` reports how many axes carried enough signal to compare. **Zero means `imusAgree` is "no evidence", not "verified".** `imuDisagreeCount` latches every failure since boot, because the check runs at loop rate (~95 Hz) while anything polling over HTTP samples far slower — a brief trip would freeze the angles and never land in a sample.
+
+Since a trip clears both flags, a false positive stops the orientation filter and freezes pitch, roll and yaw at their last values. `tools/bench/imu_agreement_test.py` exists to test for exactly that, under vibration and through a sweep of attitudes.
 
 The "coast" fallback matters: if a sane-check failure caused the IMU to be dropped outright, then every time the vehicle accelerated hard both IMUs would drop and the angles would freeze. Instead the gyro keeps integrating and only the accelerometer correction is suspended — accurate short-term, drifting slowly, and far better than following a false horizon. See [imuLimitations.md](imuLimitations.md) for what this gate does and does not catch.
 

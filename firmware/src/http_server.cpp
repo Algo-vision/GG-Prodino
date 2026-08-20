@@ -568,6 +568,9 @@ void httpServerLoop() {
                     resp["type"] = "imu";
 
                     resp["angleSane"] = g_status.angleSane;
+                    resp["imusAgree"] = g_status.imusAgree;
+                    resp["imuAgreeAxes"] = g_status.imuAgreeAxes;
+                    resp["imuDisagreeCount"] = g_status.imuDisagreeCount;
                     resp["pitch"] = g_status.pitch;
                     resp["roll"] = g_status.roll;
                     resp["yaw"] = g_status.yaw;

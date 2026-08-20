@@ -75,6 +75,25 @@ struct DeviceStatus {
     bool imu2Sane = false;
     bool angleSane = false;
 
+    /** Do the two accelerometers tell the same story? See imu_agreement.hpp.
+     *  When they disagree, BOTH imu1Sane and imu2Sane are cleared, per the
+     *  V1.5.1.1 specification: nothing identifies which of the two is the
+     *  wrong one, so neither can be trusted. Reported separately so a client
+     *  can tell this apart from a sensor that stopped responding. */
+    bool imusAgree = true;
+
+    /** How many axes carried enough signal to be worth comparing. ZERO means
+     *  imusAgree is 'no evidence', not 'verified' - the deadband can leave
+     *  the check with nothing to look at. See IMU_AGREE_DEADBAND_G. */
+    uint8_t imuAgreeAxes = 0;
+
+    /** Times the agreement check has failed since boot. Latched, because the
+     *  check runs at loop rate (~95 Hz) while anything watching over HTTP
+     *  polls at perhaps 20 - a brief false positive during vibration would
+     *  freeze the angles for a moment and never be seen. A counter cannot
+     *  miss it. */
+    uint32_t imuDisagreeCount = 0;
+
     // On-chip die temperature, averaged over whichever IMUs are readable.
     // Reads above ambient because of self-heating. Absolute accuracy is poor
     // (datasheet Toff = +/-15 degC); the change since boot is the useful part.
