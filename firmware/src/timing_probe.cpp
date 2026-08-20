@@ -4,6 +4,7 @@
 
 #include <Arduino.h>
 #include "status_manager.hpp"   // STATUS_UPDATE_MAX_DT_S
+#include <i2c_imu_gps.hpp>      // g_gpsPvtFresh
 
 namespace {
 
@@ -36,6 +37,13 @@ struct BlockStats {
     uint64_t sumUs;
 };
 
+/** NAV-PVT solutions parsed during the window. Without this a GPS read that
+ *  became cheap because it STOPPED WORKING is indistinguishable from one
+ *  that became cheap because it got efficient - and the first would look
+ *  like a win. Free-running counter, so snapshot it at arm.
+ */
+uint32_t      s_gpsPvtAtArm = 0;
+
 ProbeState    s_state = PROBE_IDLE;
 uint32_t      s_windowMs = 0;
 uint32_t      s_startMs = 0;
@@ -65,6 +73,8 @@ void clearStats() {
         s_blocks[b].maxUs = 0;
         s_blocks[b].sumUs = 0;
     }
+
+    s_gpsPvtAtArm = g_gpsPvtFresh;
 }
 
 /** Mean as a float, or 0 with no samples - so a JSON reader never has to
@@ -160,6 +170,8 @@ void timingProbeToJson(JsonDocument &resp) {
         edges.add(kBucketEdgeUs[i] == 0xFFFFFFFFu ? 0 : kBucketEdgeUs[i]);
         hist.add(s_dt.buckets[i]);
     }
+
+    resp["gpsPvtFresh"] = (uint32_t)(g_gpsPvtFresh - s_gpsPvtAtArm);
 
     JsonObject blocks = resp["blocks"].to<JsonObject>();
     for (uint8_t b = 0; b < TP_BLOCK_COUNT; b++) {

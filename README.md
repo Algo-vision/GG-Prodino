@@ -4,10 +4,10 @@ Firmware for the GRK Pro Dino controller, plus the tools used to configure and
 verify it on the bench.
 
 This branch is **Ron's V1.5.1 delivery, unmodified, with Priority 2 on top and
-the Priority 1 measurement** — and nothing else. The P1 probe compiles out of
-the production build entirely, so `pio run -e main` is byte-identical with it
-present or absent. The GPS, HTTP and I2C performance work that measurement led
-to is *not* here; it lives on `perf-experiments`, pending review.
+the Priority 1 measurement**, plus the GPS fix that measurement led to and
+Priority 3 item 2. The P1 probe compiles out of the production build entirely,
+so `pio run -e main` is byte-identical with it present or absent. The HTTP and
+I2C performance work is *not* here; it stays on `perf-experiments`.
 
 ---
 
@@ -112,8 +112,8 @@ Git removed the tracked files when you switched branches and left those behind.
 | branch | what it is |
 |:-------|:-----------|
 | `v1.5.1` | Ron's V1.5.1 build imported verbatim - the reference to diff against |
-| **`v1.5.1.1`** | **this one:** V1.5.1 + Priority 2 |
-| `perf-experiments` | GPS, HTTP and I2C performance work, with the measurements. Not reviewed |
+| **`v1.5.1.1`** | **this one:** V1.5.1 + Priority 2 + the GPS read fix + P3 item 2 |
+| `perf-experiments` | HTTP and I2C performance work, with the measurements. Not reviewed |
 | `v1.5.2` | the wider system: encrypted telemetry, web dashboard, MQTT |
 
 ---

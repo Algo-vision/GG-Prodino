@@ -57,6 +57,18 @@ void initUbloxGNSS();
 // IMU helper functions
 void imuWriteByte(uint8_t reg, uint8_t value);
 bool imuReadBytes(uint8_t reg, uint8_t *data, uint8_t len);
+#if defined(TIMING_PROBE) && TIMING_PROBE
+// Bench counters for the I2C clock experiment. A NACK or a short read is the
+// LOUD failure mode; the quiet one is a corrupted byte that still ACKs, which
+// these cannot see - status_manager watches the sample values for that.
+extern volatile uint32_t g_gpsI2CAddrFail;   // module did not ACK its address
+extern volatile uint32_t g_gpsI2CAvailFail;  // 0xFD/0xFE length read failed
+// Fresh NAV-PVT solutions parsed. The whole point of dropping NMEA was to
+// make the read cheap - this is how we tell a cheap read that WORKS from a
+// cheap read that is receiving nothing at all.
+extern volatile uint32_t g_gpsPvtFresh;
+#endif
+
 bool readAccelerometer(float &ax, float &ay, float &az);
 bool readGyroscope(float &gx, float &gy, float &gz);
 /** Read the on-chip die temperature in degrees C. Not ambient - it reads a

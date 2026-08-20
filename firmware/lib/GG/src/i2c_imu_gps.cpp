@@ -6,6 +6,15 @@
 
 TinyGPSPlus gps; // Declare the TinyGPSPlus object globally within this file
 char gpsBuffer[GPS_BUFFER_LEN]; // Declare gpsBuffer globally within this file
+
+#if defined(TIMING_PROBE) && TIMING_PROBE
+volatile uint32_t g_gpsI2CAddrFail = 0;
+volatile uint32_t g_gpsI2CAvailFail = 0;
+volatile uint32_t g_gpsPvtFresh = 0;
+#define TP_COUNT(c) ((c)++)
+#else
+#define TP_COUNT(c) ((void)0)
+#endif
 SFE_UBLOX_GNSS myGNSS; // SparkFun u-blox GNSS for UBX protocol (hAcc/vAcc)
 
 bool imu_initialized = false;
@@ -40,9 +49,19 @@ static bool ensureImuInit(bool &initFlag, unsigned long &lastAttempt, void (*ini
 void initUbloxGNSS()
 {
     if (myGNSS.begin(Wire, GPS_ADDR)) {
-        // Disable NMEA output on I2C to avoid conflicts with TinyGPSPlus
-        // We only want UBX NAV-PVT for accuracy data
-        myGNSS.setI2COutput(COM_TYPE_UBX | COM_TYPE_NMEA);
+        // UBX only. NMEA was the overwhelming majority of the bytes this
+        // module put on the bus - measured at ~3 kB/s with both protocols
+        // enabled, against ~500 B/s for the NAV-PVT messages alone - and
+        // every one of those bytes had to be clocked across a 100 kHz bus
+        // by the main loop. NAV-PVT already carries position, velocity,
+        // heading, satellite count, accuracy and time, so the NMEA stream
+        // was duplicating what we were already receiving in binary.
+        //
+        // Turning it off also ends a race: the manual I2C read fed
+        // TinyGPSPlus while getPVT() drained the remainder into the UBX
+        // parser, so each parser saw an arbitrary fraction of the stream.
+        // There is now one reader and one parser.
+        myGNSS.setI2COutput(COM_TYPE_UBX);
         myGNSS.setNavigationFrequency(5); // 5Hz to match our update rate
         myGNSS.setAutoPVT(true); // Enable automatic NAV-PVT messages
         gnss_initialized = true;
@@ -289,111 +308,90 @@ bool readImuTemperature_2(float &tempC)
 }
 
 
+
+/** Last complete solution. getPVT() only reports fresh data when the module
+ *  has actually produced a new one - roughly 5 times a second - while this is
+ *  called on every loop pass, so the caller needs something to read in
+ *  between. The struct it hands us is a fresh local each time. */
+static gps_data s_lastFix;
+static bool s_lastFixInit = false;
+
 bool readGPSCoords(gps_data &data)
 {
+    if (!s_lastFixInit) {
+        memset(&s_lastFix, 0, sizeof(s_lastFix));
+        s_lastFixInit = true;
+    }
+
+    // Does the module still answer at all? One address byte, and it is the
+    // only way to tell 'no new fix yet' apart from 'the module is gone'.
     Wire.beginTransmission(GPS_ADDR);
-    byte error = Wire.endTransmission();
-    if (error != 0)
-    {
+    if (Wire.endTransmission() != 0) {
+        TP_COUNT(g_gpsI2CAddrFail);
         gps_conncted = false;
-        data.latitude = 0.0;
-        data.longitude = 0.0;
-        data.altitude = 0.0;
-        data.time_str[0] = '\0'; // Clear time string
-        data.speed_north = 0.0;
-        data.speed_east = 0.0;
-        data.speed_down = 0.0;
-        data.ground_speed = 0.0;
-        data.heading = 0.0;
-        data.valid = false;
-        data.satellites = 0;
-        data.hAcc = 0.0;
-        data.vAcc = 0.0;
-        data.altEllipsoid = 0.0;
-        return false; // GPS not connected
+        memset(&s_lastFix, 0, sizeof(s_lastFix));
+        data = s_lastFix;
+        return false;
     }
     gps_conncted = true;
-    // Read GPS data from I2C and feed TinyGPSPlus
-    Wire.requestFrom(GPS_ADDR, (uint8_t)GPS_BUFFER_LEN);
-    uint8_t i = 0;
-    while (Wire.available() && i < GPS_BUFFER_LEN - 1)
-    {
-        char c = Wire.read();
-        gpsBuffer[i++] = c;
-        gps.encode(c); // feed TinyGPSPlus parser
-    }
-    gpsBuffer[i] = '\0'; // Null-terminate the buffer
 
-    // Directly use the parsed data from TinyGPSPlus
-    data.latitude = gps.location.lat();
-    data.longitude = gps.location.lng();
-    data.altitude = gps.altitude.meters();
-    data.satellites = gps.satellites.isValid() ? gps.satellites.value() : 0;
-    
-    if (gps.date.isValid() && gps.time.isValid()) {
-        sprintf(data.time_str, "%04d-%02d-%02d %02d:%02d:%02d",
-                gps.date.year(), gps.date.month(), gps.date.day(),
-                gps.time.hour(), gps.time.minute(), gps.time.second());
-    } else {
-        data.time_str[0] = '\0';
+    if (!gnss_initialized) {
+        data = s_lastFix;
+        return data.valid;
     }
 
-    data.ground_speed = gps.speed.kmph(); // Ground speed in km/h
-    if (gps.course.isValid()) {
-        float course_deg = gps.course.deg();
-        
-        // Debugging for date/timestamp mixup issue
-        Serial.print("DEBUG: Raw GPS Course: "); Serial.println(course_deg);
-        Serial.print("DEBUG: GPS Date: "); Serial.println(gps.date.value());
+    // With setAutoPVT the module pushes NAV-PVT on its own and this does not
+    // block: it reads whatever is waiting, parses it, and returns true only
+    // when a new solution actually arrived. Nothing is left in the module's
+    // buffer, which is what the library requires - stopping early loses the
+    // bytes that were already fetched.
+    if (myGNSS.getPVT()) {
+        TP_COUNT(g_gpsPvtFresh);
+        s_lastFix.latitude     = myGNSS.getLatitude()  / 10000000.0;
+        s_lastFix.longitude    = myGNSS.getLongitude() / 10000000.0;
+        s_lastFix.altitude     = myGNSS.getAltitudeMSL() / 1000.0;   // mm -> m
+        s_lastFix.altEllipsoid = (double)myGNSS.getAltitude();       // mm
+        s_lastFix.satellites   = myGNSS.getSIV();
+        s_lastFix.hAcc         = (float)myGNSS.getHorizontalAccEst();
+        s_lastFix.vAcc         = (float)myGNSS.getVerticalAccEst();
 
-        // Range validation: if not in [0, 360], reset to 0
-        if (course_deg < 0.0 || course_deg > 360.0) {
-            course_deg = 0.0;
+        // getGroundSpeed is mm/s; the API reports km/h.
+        s_lastFix.ground_speed = myGNSS.getGroundSpeed() * 0.0036f;
+
+        // getHeading is degrees x 1e-5, heading OF MOTION - course over
+        // ground, not where the machine points. Below walking pace it is
+        // noise, so it is suppressed exactly as the previous code did.
+        float course_deg = myGNSS.getHeading() / 100000.0f;
+        if (course_deg < 0.0f || course_deg > 360.0f) {
+            course_deg = 0.0f;
+        }
+        if (s_lastFix.ground_speed < 1.0f) {
+            course_deg = 0.0f;
+        }
+        s_lastFix.heading     = course_deg;
+        float heading_rad     = course_deg * 3.14159265358979323846f / 180.0f;
+        s_lastFix.speed_north = s_lastFix.ground_speed * cos(heading_rad);
+        s_lastFix.speed_east  = s_lastFix.ground_speed * sin(heading_rad);
+        s_lastFix.speed_down  = 0.0f;  // Placeholder
+
+        uint16_t year = myGNSS.getYear();
+        if (year > 2020) {
+            sprintf(s_lastFix.time_str, "%04d-%02d-%02d %02d:%02d:%02d",
+                    year, myGNSS.getMonth(), myGNSS.getDay(),
+                    myGNSS.getHour(), myGNSS.getMinute(), myGNSS.getSecond());
+        } else {
+            s_lastFix.time_str[0] = '\0';
         }
 
-        // COG is only valid if moving. Filter out noise if speed is too low (< 1.0 km/h)
-        if (data.ground_speed < 1.0) {
-             course_deg = 0.0; // Or keep previous value, but 0 is safer for now
-        }
-
-        // Convert to radians ONLY for speed calculation (sin/cos expect radians)
-        float heading_rad = course_deg * 3.14159265358979323846 / 180.0; 
-        data.speed_north = data.ground_speed * cos(heading_rad);
-        data.speed_east = data.ground_speed * sin(heading_rad);
-        
-        // Return the heading in degrees
-        data.heading = course_deg;
-    } else {
-        data.speed_north = 0.0;
-        data.speed_east = 0.0;
-        data.heading = 0.0; 
-    }
-    data.speed_down = 0.0;  // Placeholder
-
-    // Robust GPS validity check:
-    // 1. Location must be valid AND not at 0,0 (ocean/default value)
-    // 2. Must have at least 1 satellite
-    // 3. Year must be > 2020 (sanity check - filters cold start junk dates like 1980/2000)
-    bool locationValid = gps.location.isValid() && 
-                         (fabs(data.latitude) > 0.0001 || fabs(data.longitude) > 0.0001);
-    bool hasEnoughSatellites = data.satellites >= 1;
-    bool dateReasonable = gps.date.isValid() && gps.date.year() > 2020;
-
-    data.valid = locationValid && hasEnoughSatellites && dateReasonable;
-
-    // Read accuracy data from UBX protocol (SparkFun library)
-    if (gnss_initialized) {
-        // getPVT() returns true if fresh NAV-PVT data is available
-        if (myGNSS.getPVT()) {
-            data.hAcc = (float)myGNSS.getHorizontalAccEst(); // mm
-            data.vAcc = (float)myGNSS.getVerticalAccEst();   // mm
-            data.altEllipsoid = (double)myGNSS.getAltitude(); // mm
-        }
-    } else {
-        data.hAcc = 0.0;
-        data.vAcc = 0.0;
-        data.altEllipsoid = 0.0;
+        // Same three conditions the NMEA path used: a real position, at least
+        // one satellite, and a date that is not cold-start junk. getGnssFixOk
+        // is the module's own verdict and is stricter than any of them.
+        bool locationValid = myGNSS.getGnssFixOk() &&
+                             (fabs(s_lastFix.latitude) > 0.0001 ||
+                              fabs(s_lastFix.longitude) > 0.0001);
+        s_lastFix.valid = locationValid && (s_lastFix.satellites >= 1) && (year > 2020);
     }
 
+    data = s_lastFix;
     return data.valid;
 }

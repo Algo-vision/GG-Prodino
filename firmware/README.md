@@ -550,6 +550,42 @@ It rides to flash on the periodic `configSave()` rather than writing on every up
 
 `calibrate_now` (command 14) corrects the estimate without redefining anything. It exists for two failure modes: error accumulating over a long run, and angles left wrong after a shock hard enough to clip a reading. Pitch and roll are recomputed from gravity alone; yaw is zeroed, because at rest there is no reference to correct it against with this hardware. The GPS gate needs real motion before it touches yaw again, so the zero stands until the machine moves.
 
+## GPS
+
+The u-blox module is configured for **UBX only** (`COM_TYPE_UBX`) at
+`setNavigationFrequency(5)` — five solutions a second, unchanged from V1.5.1.
+
+Everything comes from one NAV-PVT packet: position, altitude, ground speed,
+heading, satellite count, accuracy estimates and the date and time. The SparkFun
+library is the only reader; it asks the module's byte-available registers how
+much is waiting and drains exactly that.
+
+**Why not NMEA as well.** V1.5.1 enabled `COM_TYPE_UBX | COM_TYPE_NMEA` and read
+the text with TinyGPSPlus while `getPVT()` drained the remainder into the UBX
+parser. Two problems:
+
+- **Cost.** The module emitted ~3 kB/s against ~500 B/s for NAV-PVT alone, and
+  every byte crossed a 100 kHz I2C bus. Together with a blind 128-byte read
+  issued on every call whether anything was waiting or not, the GPS read was
+  **72% of the controller's entire wall-clock time** when idle. It is now 8%.
+  See [`docs/P1_dt_stress_test.md`](docs/P1_dt_stress_test.md).
+- **Correctness.** Both protocols shared one byte stream, so each parser
+  received an arbitrary fraction of it. It worked only because reads happened
+  often enough that each eventually caught whole messages. There is now one
+  reader and one parser, and every field comes from the same instant rather than
+  from whichever epoch each parser happened to catch.
+
+NAV-PVT is a superset of what the NMEA sentences carried, so nothing was lost.
+
+`gpsSane` still follows the usual not-all-zero / not-stuck rule, and `gpsValid`
+still requires a real position, at least one satellite and a plausible date —
+plus `getGnssFixOk()`, the module's own verdict, which the NMEA path could not
+consult.
+
+**Heading is course over ground, not where the machine points.** They coincide
+while driving forwards and are 180° apart in reverse, which nothing currently
+detects — see [Orientation & Yaw Correction](#orientation--yaw-correction).
+
 ## Orientation & Yaw Correction
 
 Pitch and roll are **self-correcting**: the accelerometer's gravity vector is an absolute long-term reference, so a complementary filter (`ALPHA = 0.98`) holds them steady no matter how long the board runs.

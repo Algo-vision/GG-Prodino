@@ -147,16 +147,45 @@ change in loop rate (`sensors` 4.72 ms, `power` 1.43 ms, `filter` 0.65 ms,
 
 ## 5. What to do about it
 
-**Nothing in this section is on this branch.** V1.5.1.1 is V1.5.1 plus Priority
-2, deliberately — the point of it is a small reviewable delta, not a
-performance release. The work below was written and measured on
-`perf-experiments`, and needs review before any of it is proposed for a build.
+**The GPS fix is now on this branch**, reviewed and accepted. The HTTP and I2C
+work is not, and stays on `perf-experiments`.
 
-In short, from those measurements: asking the u-blox how many bytes are waiting
-instead of always reading 128 takes idle from 38 to 75 Hz; configuring it for
-UBX only (it emits UBX *and* NMEA, ~3 kB/s against ~500 B/s, with NMEA
-duplicating what the binary already carries) reaches 94.7 Hz with the nav rate
-left exactly as V1.5.1 has it, and drops loaded clamping from 42.9% to 2.4%.
+The module was configured for `COM_TYPE_UBX | COM_TYPE_NMEA` — both protocols —
+emitting ~3 kB/s against ~500 B/s for the NAV-PVT messages alone, with NMEA
+duplicating information the binary already carried. It is now UBX only, and the
+hand-written 128-byte read is gone: the SparkFun library is the sole reader and
+asks the module how much is waiting before taking it. **`setNavigationFrequency(5)`
+is untouched** — the module still produces five solutions a second; it simply
+stops transmitting each one twice.
+
+Measured on one board, one network, two runs per case, before and after:
+
+| idle | before | after |
+|:--|--:|--:|
+| filter update rate | 36.39 Hz | **94.76 Hz** |
+| dt mean | 27.48 ms | **10.55 ms** |
+| dt maximum | 91.6 – 125.2 ms | **29.8 ms** |
+| GPS read, mean | 19.77 ms | **0.85 ms** |
+| GPS share of every second | **71.9%** | **8.1%** |
+| filter time constant | 1.35 s | **0.52 s** |
+
+| one consumer | before | after |
+|:--|--:|--:|
+| filter update rate | 11.98 Hz | **17.3 – 19.3 Hz** |
+| dt mean | 83.45 ms | **52.0 – 57.9 ms** |
+| **updates above the 0.1 s clamp** | **42.5%** | **6.6 – 8.6%** |
+| GPS read, mean | 33.01 ms | **3.55 – 3.92 ms** |
+| client requests served | 10.7 /s | 16.3 /s |
+
+Verified the path is delivering and not merely cheap: **5.13 Hz of NAV-PVT
+parsed**, matching the module's configured rate. A GPS read that became cheap by
+breaking would otherwise look like a win.
+
+An intermediate version that only fixed the blind read and left NMEA enabled
+reached 75 Hz idle but barely moved loaded clamping — 42.9% to 36.7%. Under load
+the cost is dominated by the volume of data the module emits, not by how it is
+requested, which is why turning NMEA off is what actually closes that case.
+
 Raising I2C to 400 kHz was tested and is **not** recommended — the gain was
 real, but SparkFun recommend 100 kHz for u-blox parts and the case for leaving
 the vendor's recommendation was not made.
