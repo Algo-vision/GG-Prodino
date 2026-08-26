@@ -105,6 +105,15 @@ static Adafruit_INA219 s_powerMonitor;
 /** Power monitor connection status */
 static bool s_powerMonitorConnected = false;
 
+/** Read the INA219 every N-th status update instead of every one. At the
+ *  10 ms cadence, 10 means ~9.5 samples a second. Voltage and current guard
+ *  against faults on the scale of tenths of a second - nothing consumes them
+ *  faster - yet reading them every update cost 1.4 ms of I2C per update,
+ *  ~14% of the controller's entire second. The price of the decimation is
+ *  worst-case ~95 ms of extra latency before a power fault is noticed. */
+static const uint8_t POWER_READ_DECIMATION = 10;
+static uint8_t s_powerReadCountdown = 0;   // 0 = read on the next update
+
 // ============================================================================
 // SANITY-CHECK STATE ("not all zero, not stuck" - see statusUpdate())
 // ============================================================================
@@ -525,18 +534,25 @@ void statusUpdate() {
         g_status.technicianMode = true;
     }
 
-    // Read power monitor
-    TP_BEGIN(TP_POWER);
+    // Read power monitor - on every POWER_READ_DECIMATION-th update; between
+    // reads the last values stand. See the constant for the reasoning.
     g_status.powerConnected = s_powerMonitorConnected;
-    if (s_powerMonitorConnected) {
-        g_status.systemVoltage = s_powerMonitor.getBusVoltage_V();
-        // The INA219 library reports milliamps; the API exposes amps.
-        g_status.systemCurrent_A = s_powerMonitor.getCurrent_mA() / 1000.0f;
+    bool freshPowerRead = (s_powerReadCountdown == 0);
+    if (freshPowerRead) {
+        s_powerReadCountdown = POWER_READ_DECIMATION - 1;
+        TP_BEGIN(TP_POWER);
+        if (s_powerMonitorConnected) {
+            g_status.systemVoltage = s_powerMonitor.getBusVoltage_V();
+            // The INA219 library reports milliamps; the API exposes amps.
+            g_status.systemCurrent_A = s_powerMonitor.getCurrent_mA() / 1000.0f;
+        } else {
+            g_status.systemVoltage = -1.0f;  // Indicate error
+            g_status.systemCurrent_A = -1.0f;
+        }
+        TP_END(TP_POWER);
     } else {
-        g_status.systemVoltage = -1.0f;  // Indicate error
-        g_status.systemCurrent_A = -1.0f;
+        s_powerReadCountdown--;
     }
-    TP_END(TP_POWER);
 
     // ------------------------------------------------------------------
     // Sanity checks: not all zero, not stuck at the same value for
@@ -548,11 +564,16 @@ void statusUpdate() {
 
     TP_BEGIN(TP_SANITY);
 
-    // Power monitor
-    float powerNow[2] = {g_status.systemVoltage, g_status.systemCurrent_A};
-    bool powerSaneCheck = checkSane(powerNow, s_prevPower, 2, s_powerStuckCount,
-                                     SANITY_STUCK_THRESHOLD, /*requireNonNegative=*/true);
-    g_status.powerSane = s_powerMonitorConnected && powerSaneCheck;
+    // Power monitor - judged only when a fresh read happened this update.
+    // Between reads the cached values are identical BY CONSTRUCTION, and the
+    // stuck detector would call that a frozen sensor within
+    // SANITY_STUCK_THRESHOLD updates of the first skip.
+    if (freshPowerRead) {
+        float powerNow[2] = {g_status.systemVoltage, g_status.systemCurrent_A};
+        bool powerSaneCheck = checkSane(powerNow, s_prevPower, 2, s_powerStuckCount,
+                                        SANITY_STUCK_THRESHOLD, /*requireNonNegative=*/true);
+        g_status.powerSane = s_powerMonitorConnected && powerSaneCheck;
+    }
 
     // NOTE: imu1Sane / imu2Sane are computed earlier in this function, before
     // the orientation filter, because they now select which IMU(s) feed it.
