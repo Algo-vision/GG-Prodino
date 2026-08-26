@@ -4,7 +4,7 @@ from PyQt5.QtGui import QPixmap
 from firmware_uploader import upload_firmware
 import os
 import time
-import random
+
 import socket
 import threading
 import json
@@ -111,7 +111,13 @@ class MainWidget(QWidget):
     upload_finished_signal = pyqtSignal(bool, str)
     status_update_signal = pyqtSignal(dict) # New signal for UDP updates
     
-    def __init__(self, api_client, base_ip, parent=None, client_offset_ms=0, polling_interval_ms=50): # 1 second polling
+    def __init__(self, api_client, base_ip, parent=None, client_offset_ms=0, polling_interval_ms=0):
+        # polling_interval_ms is the MINIMUM gap between the end of one poll
+        # and the start of the next. 0 (the default) polls as fast as the link
+        # allows - the next request goes out as soon as the previous answer is
+        # in and pending UI events have run. The old fixed 50 ms cadence dated
+        # from when the board could only take ~20 req/s; it now serves 30-65
+        # depending on which sections are requested.
         super().__init__(parent)
         self.api_client = api_client
         self.base_ip = base_ip
@@ -123,7 +129,15 @@ class MainWidget(QWidget):
         self.waiting_for_reset = False  # Flag to indicate we're waiting for board reset
         print(f"MainWidget.__init__: api_client.base_url is {self.api_client.base_url}")
         print(f"MainWidget.__init__: client_offset={client_offset_ms}ms, polling_interval={polling_interval_ms}ms")
+        # Single-shot, re-armed at the END of each update_status. A repeating
+        # timer ran the interval and the HTTP round trip in SERIES (the jitter
+        # code reset the countdown after every poll), so 50 ms + ~29 ms wire
+        # time made a 12.5 Hz GUI out of a 34 Hz link. Chaining single-shots
+        # makes the gap start when the poll ends - with a 0 gap the loop runs
+        # at whatever the link gives, and the event loop still services user
+        # clicks between polls.
         self.timer = QTimer(self)
+        self.timer.setSingleShot(True)
         self.timer.timeout.connect(self.update_status)
         self.status_ignore_deadline = 0  # Timestamp until which to ignore status updates (for reboot)
         self.init_ui()
@@ -147,11 +161,9 @@ class MainWidget(QWidget):
         self.start_udp_listener()
     
     def start_polling(self):
-        """Start the status polling timer (Fallback / Auth check)"""
-        # We now use UDP for main data, but keep a slow poll for auth check
-        print(f"MainWidget: Status polling started (interval={self.polling_interval_ms}ms)")
+        """Kick off the poll chain - each completed poll schedules the next."""
+        print(f"MainWidget: Status polling started (min gap={self.polling_interval_ms}ms)")
         self.timer.start(self.polling_interval_ms)
-        # self.update_status()  # Don't force immediate HTTP update, wait for UDP
 
     def start_udp_listener(self):
         self.udp_running = True
@@ -518,11 +530,22 @@ class MainWidget(QWidget):
         self.firmware_path = None
 
     def update_status(self):
-        # Check if we should ignore status updates (e.g. while waiting for reboot)
+        # The timer is single-shot; every path re-arms it here except the
+        # fatal ones (auth failure, communication loss), which return None
+        # from _poll_once and end the chain.
+        delay_ms = self._poll_once()
+        if delay_ms is not None:
+            self.timer.start(delay_ms)
+
+    def _poll_once(self):
+        """One status poll. Returns the delay in ms before the next poll,
+        or None to stop polling."""
+        # While a reboot is expected, retry gently instead of hammering a
+        # dead IP with connection attempts.
         if time.time() < self.status_ignore_deadline:
             if self.waiting_for_reset:
                 print("[GUI] Ignoring status (waiting for reboot)...")
-            return
+            return 250
 
         # Ask only for the sections whose boxes are checked. With all four
         # checked (the default) the "groups" field is omitted entirely -
@@ -536,12 +559,13 @@ class MainWidget(QWidget):
             # If waiting for reset, this is expected - don't show error
             if self.waiting_for_reset:
                 print("[GUI] Board is resetting, waiting for reconnection...")
-                return
+                return 250
             self.timer.stop()
             self._poll_history.clear()
             self.http_rate_label.setText("HTTP: -")
             QMessageBox.warning(self, "Authentication Error", "Invalid session token. Please log in again.")
             self.reconnect_requested.emit()
+            return None
         elif status:
             # Successfully got status - reset the waiting flag
             if self.waiting_for_reset:
@@ -575,22 +599,20 @@ class MainWidget(QWidget):
                 index = self.led_combo.findText(current_led_status)
                 if index != -1:
                     self.led_combo.setCurrentIndex(index)
-            
-            # Add small jitter to prevent collision with other clients
-            # Random jitter of ±10% of polling interval
-            jitter = random.randint(-self.polling_interval_ms // 10, self.polling_interval_ms // 10)
-            next_interval = self.polling_interval_ms + jitter
-            # Keep interval at least 50ms (board can handle ~20 RPS) and at most double the configured interval
-            next_interval = max(50, min(self.polling_interval_ms * 2, next_interval))
-            self.timer.setInterval(next_interval)
+
+            # The old fixed-cadence jitter ("board can handle ~20 RPS") is
+            # gone: the gap starts when the poll ends, so clients cannot lock
+            # into phase with each other, and the board now serves 30-65
+            # req/s depending on the sections requested.
+            return self.polling_interval_ms
 
         else:
             # Communication lost
             if self.waiting_for_reset:
                 # This is expected during reset - just wait
                 print("[GUI] Waiting for board to come back online...")
-                return
-            
+                return 250
+
             # Unexpected communication loss - show error
             self.timer.stop()
             self._poll_history.clear()
@@ -598,6 +620,7 @@ class MainWidget(QWidget):
             QMessageBox.critical(self, "Error", "Failed to communicate with device.")
             self.reconnect_requested.emit()
             self.clear_status_labels()
+            return None
 
     def toggle_led_controls(self, state):
         # Enable/disable LED combo and button based on checkbox state
