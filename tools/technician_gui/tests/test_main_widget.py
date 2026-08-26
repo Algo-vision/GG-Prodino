@@ -24,12 +24,15 @@ class DummyApiClient:
         self.set_imu_axis_map_return = (True, "ok")
         self.set_imu_axis_map_calls = []
         self.set_imu_axis_map_inverts = []
+        self.get_status_calls = []
+        self.get_status_return = None
 
     def get_config(self):
         return self.get_config_return
 
-    def get_status(self):
-        return None
+    def get_status(self, groups=None):
+        self.get_status_calls.append(groups)
+        return self.get_status_return
 
     def set_imu_axis_map(self, pitch_axis, roll_axis, yaw_axis,
                          pitch_invert=False, roll_invert=False, yaw_invert=False):

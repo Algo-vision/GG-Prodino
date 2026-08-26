@@ -48,8 +48,19 @@ class ApiClient:
             return success
         return False
 
-    def get_status(self):
+    def get_status(self, groups=None):
+        """Fetch the status document.
+
+        groups: optional list of section names ("config", "overview", "imu",
+        "gps") - the board then builds and serialises only those sections,
+        which is measurably cheaper for it (full document ~23 ms of its loop,
+        imu-only ~14 ms). None requests everything, with a payload
+        byte-identical to the pre-groups protocol - older firmware ignores
+        the field entirely, so passing a list is also safe against it.
+        """
         payload = {"type": "get_status", "token": self.token}
+        if groups is not None:
+            payload["groups"] = list(groups)
 
         try:
             response = self.session.post(self.base_url, data=json.dumps(payload), timeout=5)

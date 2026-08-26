@@ -1,1 +1,1 @@
-GUI_VERSION = "1.5.0"
+GUI_VERSION = "1.6.0"

@@ -286,6 +286,17 @@ class MainWidget(QWidget):
         self.status_labels = {}
         for section, title, fields in STATUS_SECTIONS:
             group = QGroupBox(title)
+            # Each box doubles as that section's data toggle. Unchecking it
+            # drops the section from the get_status poll ("groups" field), so
+            # the board never builds or serialises those fields - polling gets
+            # measurably faster and the box greys out. All four checked (the
+            # default) sends the exact pre-groups request, so older firmware
+            # is unaffected.
+            group.setCheckable(True)
+            group.setChecked(True)
+            group.setToolTip("Uncheck to stop requesting this section from the"
+                             " board. Polling gets faster; the section greys"
+                             " out until re-checked.")
             group_layout = QGridLayout()
             self.status_labels[section] = {}
             for i, field in enumerate(fields):
@@ -476,7 +487,13 @@ class MainWidget(QWidget):
                 print("[GUI] Ignoring status (waiting for reboot)...")
             return
 
-        status = self.api_client.get_status()
+        # Ask only for the sections whose boxes are checked. With all four
+        # checked (the default) the "groups" field is omitted entirely -
+        # byte-identical to the old request.
+        enabled = [s for s, _title, _fields in STATUS_SECTIONS
+                   if self.status_groups[s].isChecked()]
+        groups = None if len(enabled) == len(STATUS_SECTIONS) else enabled
+        status = self.api_client.get_status(groups)
         if status and status.get("error") == "AUTH_ERROR":
             # If waiting for reset, this is expected - don't show error
             if self.waiting_for_reset:
@@ -492,18 +509,24 @@ class MainWidget(QWidget):
                 self.waiting_for_reset = False
 
             self.apply_status_labels(status)
-            self.apply_calibration_state(status)
-            # Enable technician mode section if in technician mode
-            self.technician_mode = self.config_field(status, "technicianMode", False)
-            self.tech_mode_box.setEnabled(self.technician_mode)
-            self.fw_upload_btn.setEnabled(self.technician_mode and self.firmware_path is not None)
+            # Sections we did not ask for are absent from the response, and
+            # absence must not be interpreted - an unchecked IMU box would
+            # otherwise read as "firmware without calibration commands", and
+            # an unchecked Config box would drop technician mode.
+            if self.status_groups["imu"].isChecked():
+                self.apply_calibration_state(status)
+            if self.status_groups["config"].isChecked():
+                # Enable technician mode section if in technician mode
+                self.technician_mode = self.config_field(status, "technicianMode", False)
+                self.tech_mode_box.setEnabled(self.technician_mode)
+                self.fw_upload_btn.setEnabled(self.technician_mode and self.firmware_path is not None)
 
-            # Update IP configuration fields only if not editing
-            if not self.is_editing_ip:
-                self.controller_ip_edit.setText(self.config_field(status, "controllerIp", self.base_ip))
-                whitelist = self.config_field(status, "whitelistIps", []) or []
-                self.whitelist_ip1_edit.setText(whitelist[0] if len(whitelist) > 0 else "")
-                self.whitelist_ip2_edit.setText(whitelist[1] if len(whitelist) > 1 else "")
+                # Update IP configuration fields only if not editing
+                if not self.is_editing_ip:
+                    self.controller_ip_edit.setText(self.config_field(status, "controllerIp", self.base_ip))
+                    whitelist = self.config_field(status, "whitelistIps", []) or []
+                    self.whitelist_ip1_edit.setText(whitelist[0] if len(whitelist) > 0 else "")
+                    self.whitelist_ip2_edit.setText(whitelist[1] if len(whitelist) > 1 else "")
 
             # If manual override is not active, update LED combo from status
             if not self.led_override_checkbox.isChecked():
