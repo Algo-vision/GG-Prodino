@@ -8,6 +8,7 @@ import random
 import socket
 import threading
 import json
+from collections import deque
 
 # Which sensor axis each angle rotates about. Firmware default is
 # pitch=X, roll=Y, yaw=Z - see lib/GG/src/imu_mount_orientation.hpp.
@@ -186,6 +187,27 @@ class MainWidget(QWidget):
         except Exception as e:
             print(f"UDP Setup Error: {e}")
 
+    def record_poll(self, duration_s):
+        """Fold one completed get_status round trip into the HTTP rate label.
+
+        Rate over the polls of the last 3 seconds; duration as their mean.
+        Client-side on purpose: this is the rate the technician's machine is
+        actually achieving, network included, not what the board could do.
+        """
+        now = time.time()
+        self._poll_history.append((now, duration_s))
+        recent = [(t, d) for t, d in self._poll_history if now - t <= 3.0]
+        if len(recent) < 2:
+            self.http_rate_label.setText("HTTP: measuring...")
+            return
+        span = recent[-1][0] - recent[0][0]
+        mean_ms = sum(d for _t, d in recent) / len(recent) * 1000.0
+        if span > 1e-6:
+            self.http_rate_label.setText(
+                "HTTP: %.1f Hz, %.0f ms/poll" % ((len(recent) - 1) / span, mean_ms))
+        else:
+            self.http_rate_label.setText("HTTP: %.0f ms/poll" % mean_ms)
+
     def config_field(self, status, key, default=None):
         """Read a field that now lives only under the "config" category.
 
@@ -278,6 +300,21 @@ class MainWidget(QWidget):
         # Create a container widget for all content
         container = QWidget()
         layout = QVBoxLayout()
+
+        # Live HTTP poll rate, measured client-side over the last few seconds.
+        # The Hz is capped by the poll timer (polling_interval_ms), so the
+        # ms/request number is where a section toggle shows its effect even
+        # when the timer is the bottleneck.
+        self.http_rate_label = QLabel("HTTP: -")
+        self.http_rate_label.setToolTip(
+            "Completed get_status polls per second, and one poll's round-trip "
+            "time. Fewer checked sections = cheaper polls.")
+        self._poll_history = deque(maxlen=60)   # (end_time, duration_s)
+        rate_row = QHBoxLayout()
+        rate_row.addStretch()
+        rate_row.addWidget(self.http_rate_label)
+        layout.addLayout(rate_row)
+
         # Status groups - one box per firmware command (get_overview / get_imu /
         # get_gps / get_config), laid out side by side. self.status_labels is
         # keyed by section, then by field name.
@@ -493,6 +530,7 @@ class MainWidget(QWidget):
         enabled = [s for s, _title, _fields in STATUS_SECTIONS
                    if self.status_groups[s].isChecked()]
         groups = None if len(enabled) == len(STATUS_SECTIONS) else enabled
+        poll_start = time.time()
         status = self.api_client.get_status(groups)
         if status and status.get("error") == "AUTH_ERROR":
             # If waiting for reset, this is expected - don't show error
@@ -500,6 +538,8 @@ class MainWidget(QWidget):
                 print("[GUI] Board is resetting, waiting for reconnection...")
                 return
             self.timer.stop()
+            self._poll_history.clear()
+            self.http_rate_label.setText("HTTP: -")
             QMessageBox.warning(self, "Authentication Error", "Invalid session token. Please log in again.")
             self.reconnect_requested.emit()
         elif status:
@@ -508,6 +548,7 @@ class MainWidget(QWidget):
                 print("[GUI] Board is back online.")
                 self.waiting_for_reset = False
 
+            self.record_poll(time.time() - poll_start)
             self.apply_status_labels(status)
             # Sections we did not ask for are absent from the response, and
             # absence must not be interpreted - an unchecked IMU box would
@@ -552,6 +593,8 @@ class MainWidget(QWidget):
             
             # Unexpected communication loss - show error
             self.timer.stop()
+            self._poll_history.clear()
+            self.http_rate_label.setText("HTTP: -")
             QMessageBox.critical(self, "Error", "Failed to communicate with device.")
             self.reconnect_requested.emit()
             self.clear_status_labels()
@@ -697,6 +740,8 @@ class MainWidget(QWidget):
         ok, data = self.api_client.burn_zero_calibration()
         if data.get("error") == "AUTH_ERROR":
             self.timer.stop()
+            self._poll_history.clear()
+            self.http_rate_label.setText("HTTP: -")
             QMessageBox.warning(self, "Authentication Error", "Invalid session token. Please log in again.")
             self.reconnect_requested.emit()
             return
@@ -723,6 +768,8 @@ class MainWidget(QWidget):
         ok, data = self.api_client.calibrate_now()
         if data.get("error") == "AUTH_ERROR":
             self.timer.stop()
+            self._poll_history.clear()
+            self.http_rate_label.setText("HTTP: -")
             QMessageBox.warning(self, "Authentication Error", "Invalid session token. Please log in again.")
             self.reconnect_requested.emit()
             return

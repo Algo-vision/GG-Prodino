@@ -113,3 +113,42 @@ def test_api_client_sends_groups_when_given():
     sent = json.loads(client.session.post.call_args.kwargs["data"])
     assert sent == {"type": "get_status", "token": "fake-token",
                     "groups": ["imu", "gps"]}
+
+
+# --- HTTP rate label ---
+
+def test_rate_label_starts_blank():
+    widget, _client = make_widget()
+    assert widget.http_rate_label.text() == "HTTP: -"
+
+
+def test_rate_label_updates_after_polls():
+    widget, _client = make_widget()
+    # Feed synthetic round trips directly - update_status in a tight test
+    # loop would measure the mock, not the mechanism.
+    t = [1000.0]
+    import main_widget as mw
+    real_time = mw.time.time
+    mw.time.time = lambda: t[0]
+    try:
+        for _ in range(5):
+            widget.record_poll(0.030)
+            t[0] += 0.05
+    finally:
+        mw.time.time = real_time
+    text = widget.http_rate_label.text()
+    assert "Hz" in text and "ms/poll" in text
+    # 5 polls, 50 ms apart -> 20 Hz; 30 ms mean round trip
+    assert "20.0 Hz" in text and "30 ms" in text
+
+
+def test_rate_label_resets_on_comm_loss(monkeypatch):
+    widget, client = make_widget()
+    widget.update_status()
+    assert widget.http_rate_label.text() != "HTTP: -"
+    client.get_status_return = None
+    # Comm-loss path pops a modal QMessageBox - neutralize it for the test.
+    from PyQt5.QtWidgets import QMessageBox
+    monkeypatch.setattr(QMessageBox, "critical", staticmethod(lambda *a, **k: None))
+    widget.update_status()
+    assert widget.http_rate_label.text() == "HTTP: -"
