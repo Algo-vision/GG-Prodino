@@ -52,8 +52,13 @@ bool          s_skipNext = false;
 IntervalStats s_dt;
 BlockStats    s_blocks[TP_BLOCK_COUNT];
 
-const char* const kBlockNames[TP_BLOCK_COUNT] = {
+// NO explicit array size. With one, sizeof(kBlockNames)/sizeof(...) equals
+// TP_BLOCK_COUNT whatever is written here - the array just pads with
+// nullptr - and the assert below becomes tautologically true. Unsized, the
+// assert actually counts the names.
+const char* const kBlockNames[] = {
     "sensors", "filter", "gps_read", "power", "sanity",
+    "h_read", "h_parse", "h_handle", "h_send", "h_ser", "h_write", "h_close",
     "status", "http", "ocu", "serial", "loop"
 };
 static_assert(sizeof(kBlockNames) / sizeof(kBlockNames[0]) == TP_BLOCK_COUNT,

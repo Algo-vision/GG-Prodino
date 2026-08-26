@@ -54,6 +54,13 @@ enum TimingBlock : uint8_t {
     TP_GPSREAD,      ///< _gg_hal.get_gps_data() - the read alone
     TP_POWER,        ///< the INA219 bus voltage + current read
     TP_SANITY,       ///< the checkSane() block at the end
+    TP_H_READ,       ///< pulling the request off the socket
+    TP_H_PARSE,      ///< deserializeJson on the body
+    TP_H_HANDLE,     ///< the command itself, building the response document
+    TP_H_SEND,       ///< serialising and writing the response
+    TP_H_SER,        ///< just the JSON -> bytes conversion
+    TP_H_WRITE,      ///< just the socket write
+    TP_H_CLOSE,      ///< client.stop()
     TP_STATUS,       ///< all of statusUpdate()
     TP_HTTP,         ///< httpServerLoop() - one client's request lands here
     TP_OCU,          ///< ocuMonitorUpdate() - the ARP probe, a known stall

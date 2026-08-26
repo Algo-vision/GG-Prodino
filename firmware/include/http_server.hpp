@@ -39,20 +39,6 @@ void httpServerInit(EthernetServer& server);
 void httpServerLoop();
 
 /**
- * @brief Read complete HTTP request
- * @param client Client connection
- * @return Complete HTTP request string
- */
-String httpReadRequest(EthernetClient& client);
-
-/**
- * @brief Extract body from HTTP request
- * @param request Complete HTTP request
- * @return Request body (after headers)
- */
-String httpExtractBody(const String& request);
-
-/**
  * @brief Send HTTP response
  * @param client Client connection
  * @param statusCode HTTP status code

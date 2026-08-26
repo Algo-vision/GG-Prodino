@@ -29,6 +29,21 @@ constexpr unsigned long RELAY_AUTO_RESET_DURATION = 5000;
  *  the next request). The default library value is 1000ms - far too long here. */
 constexpr uint16_t HTTP_CLIENT_CLOSE_TIMEOUT_MS = 20;
 
+/** Response staging buffer. get_status is the largest document - 1494 bytes
+ *  measured live with three whitelist entries and no GPS fix. A full
+ *  whitelist and a real fix (full-precision lat/lng in every GPS float) add
+ *  a few hundred bytes more, so 2432 bytes of body room keeps ~35% margin.
+ *  Static rather than stack - the SAMD21's stack is nowhere near this size. */
+constexpr size_t HTTP_RESP_BUF_SIZE = 2560;
+
+/** Gap left ahead of the body for the status line and headers, which can
+ *  only be formatted once Content-Length is known. */
+constexpr size_t HTTP_RESP_HDR_RESERVE = 128;
+
+/** Request staging buffer. The largest inbound request is set_ip_config
+ *  with a full whitelist, well under 512 B; 1 kB is generous. */
+constexpr size_t HTTP_REQ_BUF_SIZE = 1024;
+
 // ============================================================================
 // INTERNAL STATE
 // ============================================================================
@@ -137,55 +152,78 @@ int httpGetActiveIPs(IPAddress* outIPs, int maxCount) {
     return count;
 }
 
-String httpReadRequest(EthernetClient& client) {
-    String req = "";
+/**
+ * @brief Pull one request off the socket into a fixed buffer.
+ *
+ * The previous version did client.read() ONE BYTE AT A TIME and appended each
+ * to a String. Every one of those reads is a separate SPI transaction to the
+ * W5500 - address phase included - and every append reallocates the String to
+ * its exact new size. A 250 byte request therefore cost 250 SPI round trips
+ * and 250 reallocations, measured at 10.1 ms.
+ *
+ * Reading in blocks costs one SPI transaction per chunk instead of per byte,
+ * and the buffer never moves.
+ *
+ * @return bytes read; the buffer is always NUL terminated.
+ */
+size_t httpReadRequestBuf(EthernetClient& client, char* buf, size_t bufSize) {
+    size_t len = 0;
     unsigned long startTime = millis();
+    unsigned long lastDataTime = startTime;
     int contentLength = -1;
     bool headersComplete = false;
-    int bodyBytesRead = 0;
-    
-    // Read with 50ms idle timeout (stop if no data for 50ms)
-    unsigned long lastDataTime = millis();
-    while (client.connected() && (millis() - startTime < 500) && (millis() - lastDataTime < 50)) {
-        if (client.available()) {
-            char c = client.read();
-            req += c;
-            lastDataTime = millis();
-            
-            // Check for end of headers
-            if (!headersComplete && req.endsWith("\r\n\r\n")) {
+    size_t bodyBytesRead = 0;
+    size_t headerEnd = 0;
+
+    while (client.connected() && (millis() - startTime < 500) &&
+           (millis() - lastDataTime < 50) && len < bufSize - 1) {
+        int avail = client.available();
+        if (avail <= 0) {
+            continue;
+        }
+
+        size_t room = (bufSize - 1) - len;
+        size_t want = ((size_t)avail < room) ? (size_t)avail : room;
+        int got = client.read((uint8_t*)(buf + len), want);
+        if (got <= 0) {
+            continue;
+        }
+        len += (size_t)got;
+        buf[len] = '\0';
+        lastDataTime = millis();
+
+        // The header terminator can straddle two chunks, so rescan from a
+        // little before the new data rather than only within it.
+        if (!headersComplete) {
+            size_t from = (len > (size_t)got + 3) ? len - got - 3 : 0;
+            const char* hit = strstr(buf + from, "\r\n\r\n");
+            if (hit) {
                 headersComplete = true;
-                
-                // Parse Content-Length from headers
-                int clIdx = req.indexOf("Content-Length:");
-                if (clIdx != -1) {
-                    int clEnd = req.indexOf("\r\n", clIdx);
-                    String clValue = req.substring(clIdx + 15, clEnd);
-                    clValue.trim();
-                    contentLength = clValue.toInt();
+                headerEnd = (size_t)(hit - buf) + 4;
+                const char* cl = strstr(buf, "Content-Length:");
+                if (cl) {
+                    contentLength = atoi(cl + 15);
                 }
-                bodyBytesRead = 0;
+                bodyBytesRead = len - headerEnd;
             }
-            
-            // Count body bytes after headers
-            if (headersComplete) {
-                bodyBytesRead++;
-                // Stop when we've read the full body
-                if (contentLength >= 0 && bodyBytesRead >= contentLength) {
-                    break;  // Got all data, exit early!
-                }
-            }
+        } else {
+            bodyBytesRead += (size_t)got;
+        }
+
+        if (headersComplete && contentLength >= 0 &&
+            bodyBytesRead >= (size_t)contentLength) {
+            break;   // whole body in hand
         }
     }
-    return req;
+
+    buf[len] = '\0';
+    return len;
 }
 
-String httpExtractBody(const String& req) {
-    int idx = req.indexOf("\r\n\r\n");
-    if (idx != -1) {
-        return req.substring(idx + 4);
-    }
-    return "";
+/** @brief Body of a request already in a buffer, or "" if there is none. */
+const char* httpFindBody(const char* buf) {
+    const char* hit = strstr(buf, "\r\n\r\n");
+    return hit ? hit + 4 : "";
 }
 
 void httpSendResponse(EthernetClient& client, int statusCode, 
@@ -220,6 +258,76 @@ void httpSendResponse(EthernetClient& client, int statusCode,
     resp += "\r\n\r\n";
     resp += content;
     client.print(resp);
+}
+
+/**
+ * @brief Send a JSON document without the heap touching it.
+ *
+ * The previous path was serializeJson(doc, String) followed by building the
+ * headers into a second String. ArduinoJson's String writer appends ONE
+ * CHARACTER AT A TIME, and Arduino's String::concat reallocates to the exact
+ * new size on every one - so a 1.4 kB get_status response meant ~1400
+ * reallocations, each copying the whole buffer so far. Measured at 18.5 ms per
+ * request, against ~1.5 ms of actual SPI time for those bytes at 8 MHz.
+ *
+ * Here the body is serialised straight into a fixed buffer, and the headers -
+ * whose length is only known once Content-Length is known - are formatted into
+ * the gap reserved ahead of it and positioned to end exactly where the body
+ * begins. That keeps the single write() the previous code was careful to
+ * achieve, with no allocation and no copy beyond the header itself.
+ */
+static char s_respBuf[HTTP_RESP_BUF_SIZE];
+static char s_reqBuf[HTTP_REQ_BUF_SIZE];
+
+static void httpSendJson(EthernetClient& client, int statusCode, JsonDocument& doc) {
+    const char* statusText;
+    switch (statusCode) {
+        case 200: statusText = "OK"; break;
+        case 401: statusText = "Unauthorized"; break;
+        case 403: statusText = "Forbidden"; break;
+        case 404: statusText = "Not Found"; break;
+        case 409: statusText = "Conflict"; break;
+        case 500: statusText = "Internal Server Error"; break;
+        default:  statusText = "Unknown"; break;
+    }
+
+    char* body = s_respBuf + HTTP_RESP_HDR_RESERVE;
+    constexpr size_t bodyCap = HTTP_RESP_BUF_SIZE - HTTP_RESP_HDR_RESERVE;
+    TP_BEGIN(TP_H_SER);
+    size_t bodyLen = serializeJson(doc, body, bodyCap);
+    TP_END(TP_H_SER);
+
+    // A document that filled the buffer was almost certainly cut mid-JSON.
+    // A clean 500 tells the client the truth; a truncated 200 hands it a
+    // parse error on data whose Content-Length claimed it was whole.
+    if (bodyLen >= bodyCap - 1) {
+        Serial.println("HTTP: response document exceeds HTTP_RESP_BUF_SIZE, dropped");
+        httpSendResponse(client, 500,
+            "{\"type\":\"error\",\"code\":\"E-104\",\"message\":\"Response too large\"}");
+        return;
+    }
+
+    char hdr[HTTP_RESP_HDR_RESERVE];
+    int hdrLen = snprintf(hdr, sizeof(hdr),
+                          "HTTP/1.1 %d %s\r\n"
+                          "Content-Type: application/json\r\n"
+                          "Connection: close\r\n"
+                          "Content-Length: %u\r\n\r\n",
+                          statusCode, statusText, (unsigned)bodyLen);
+
+    // Should not happen - the reserve is far larger than any header this
+    // produces - but a negative or truncated length would index off the front
+    // of the buffer, so fall back rather than trust it.
+    if (hdrLen <= 0 || (size_t)hdrLen > HTTP_RESP_HDR_RESERVE) {
+        client.write((const uint8_t*)body, bodyLen);
+        return;
+    }
+
+    char* start = body - hdrLen;
+    memcpy(start, hdr, hdrLen);
+    TP_BEGIN(TP_H_WRITE);
+    client.write((const uint8_t*)start, hdrLen + bodyLen);
+    TP_END(TP_H_WRITE);
 }
 
 JsonDocument httpHandleLogin(JsonDocument& doc) {
@@ -293,6 +401,7 @@ void httpServerLoop() {
         ocuMonitorNotifyActivity(remoteIP);
 
     // Read first line of request
+    TP_BEGIN(TP_H_READ);
     String req = client.readStringUntil('\r');
     client.flush();
 
@@ -314,12 +423,17 @@ void httpServerLoop() {
         }
 
         // Read full request
-        String request = httpReadRequest(client);
-        String body = httpExtractBody(request);
+        size_t reqLen = httpReadRequestBuf(client, s_reqBuf, HTTP_REQ_BUF_SIZE);
+        (void)reqLen;
+        const char* body = httpFindBody(s_reqBuf);
+        TP_END(TP_H_READ);
 
         // Parse JSON
+        TP_BEGIN(TP_H_PARSE);
         JsonDocument doc;
-        deserializeJson(doc, body.c_str());
+        deserializeJson(doc, body);
+        TP_END(TP_H_PARSE);
+        TP_BEGIN(TP_H_HANDLE);
 
         String msgType = doc["type"];
         JsonDocument resp;
@@ -709,22 +823,30 @@ void httpServerLoop() {
                 }
             }
         }
-        
-        
+
+
+        TP_END(TP_H_HANDLE);
+
         // Send response (unless a handler already streamed its own raw body)
+        TP_BEGIN(TP_H_SEND);
         if (!rawResponseSent) {
-            String out;
-            serializeJson(resp, out);
-            httpSendResponse(client, httpStatusCode, out);
+            httpSendJson(client, httpStatusCode, resp);
         }
+        TP_END(TP_H_SEND);
 
         if (msgType == "login") {
             Serial.println(resp["success"] ? "Client logged in" : "Client login failed");
         }
     }
 
-    delay(1);
+    TP_BEGIN(TP_H_CLOSE);
+    // No delay() before stop(). EthernetClient::write() does not return until
+    // the W5500 reports SEND_OK, so the response is already on the wire by the
+    // time we get here - the wait was insurance against a problem that the
+    // blocking write already prevents, and it cost a guaranteed millisecond on
+    // every single request.
     client.stop();
+    TP_END(TP_H_CLOSE);
 
     }  // End of while loop
 }
