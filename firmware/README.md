@@ -1,4 +1,4 @@
-# GG-GRK Firmware - V1.5.1.1
+# GG-GRK Firmware - V1.5.1.2
 
 V1.5.1 with Priority 2 on top, and nothing else. Level is burned once by a
 technician instead of being guessed at every power-on, the gyro's zero is
@@ -114,7 +114,7 @@ Payloads are JSON objects. Responses are JSON. Every request except `login` must
 | # | `type` | Purpose |
 | :-- | :-- | :-- |
 | 1 | `login` | Authenticate, obtain a token |
-| 2 | `get_status` | Everything, grouped into `config` / `overview` / `imu` / `gps` |
+| 2 | `get_status` | Everything, grouped into `config` / `overview` / `imu` / `gps`; an optional `groups` field selects which |
 | 3 | `get_overview` | Power, relays, opto inputs, safety, OCU |
 | 4 | `get_imu` | Both IMUs and the calculated orientation |
 | 5 | `get_gps` | GPS fix, velocity, heading |
@@ -236,6 +236,50 @@ Returns everything the board knows, as the union of the four `get_*` commands be
 ```
 
 **Every field appears exactly once.** `firmwareVersion`, `controllerIp`, `whitelistIps` and `technicianMode` live under `config` only - they are no longer repeated at the top level.
+
+#### Toggling sections on and off (`groups`)
+
+Since V1.5.1.2, `get_status` accepts an optional `groups` array naming which
+of the four sections to return - `"config"`, `"overview"`, `"imu"`, `"gps"`,
+in any combination:
+
+```json
+{ "type": "get_status", "token": "<token>", "groups": ["imu"] }
+```
+
+The response is still `"type": "status"` with the top-level basics (LEDs,
+technician button, motor hours), but contains **only** the requested section
+objects. Omitting `groups` returns all four - byte-for-byte the document the
+field-less request always produced, so existing clients need no change.
+
+Rules:
+
+- Unknown names are ignored; that section is simply absent from the reply.
+- A `groups` that is not an array is ignored entirely (full document).
+- An empty array returns just the top-level fields (~120 B) - the cheapest
+  possible poll, usable as a pure auth/keep-alive check.
+- **There is no stored state.** Every request chooses for itself, so two
+  clients polling with different `groups` can never affect each other.
+- Commands that answer with the status document (`set_relay`,
+  `set_internal_led`, `set_io_led`, `reset_led_control`) honor a `groups`
+  field in their own request the same way.
+
+Why it pays: building and serialising the document is most of a request's
+cost on this board (a SAMD21 has no FPU, so every float is formatted in
+software), and sections not requested are never built. Measured on V1.5.1.2
+with one flat-out client:
+
+| request | response body | board cost per request | achievable rate |
+| :-- | :-- | :-- | :-- |
+| full (no `groups`) | ~1.5 kB | 22.9 ms | ~33 req/s |
+| without `gps` | ~1.25 kB | 20.0 ms | ~37 req/s |
+| `["imu"]` | ~620 B | 13.9 ms | ~49 req/s |
+| `["overview"]` | ~400 B | 9.2 ms | ~65 req/s |
+
+Slim polls also leave the control loop more room: under flat-out full-status
+polling the orientation filter runs at ~33 Hz, under imu-only polling ~48 Hz
+(idle, no clients: ~95 Hz). A client that needs IMU fast and GPS occasionally
+can interleave - poll `["imu"]` at speed and ask for the rest once a second.
 
 ### 3. Get Overview
 **Request:** `{"type": "get_overview", "token": "<token>"}`
