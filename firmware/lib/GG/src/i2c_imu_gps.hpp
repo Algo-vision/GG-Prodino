@@ -74,12 +74,17 @@ bool readGyroscope(float &gx, float &gy, float &gz);
 /** Read the on-chip die temperature in degrees C. Not ambient - it reads a
  *  few degrees above it due to self-heating. */
 bool readImuTemperature(float &tempC);
+/** Temperature, gyro and accel in ONE bus transaction - see the .cpp. */
+bool readImuAll(float &ax, float &ay, float &az,
+                float &gx, float &gy, float &gz, float &tempC);
 void initIMU();
 
 // IMU2 helper functions
 bool readAccelerometer_2(float &ax, float &ay, float &az);
 bool readGyroscope_2(float &gx, float &gy, float &gz);
 bool readImuTemperature_2(float &tempC);
+bool readImuAll_2(float &ax, float &ay, float &az,
+                  float &gx, float &gy, float &gz, float &tempC);
 void initIMU_2();
 
 // GPS helper function

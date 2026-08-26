@@ -189,6 +189,58 @@ bool readImuTemperature(float &tempC)
     return true;
 }
 
+/** Decode one 14-byte OUT_TEMP_L..OUTZ_H_XL burst: temp (2), gyro (6), accel (6). */
+static void decodeImuBurst(const uint8_t *raw,
+                           float &ax, float &ay, float &az,
+                           float &gx, float &gy, float &gz, float &tempC)
+{
+    int16_t t = (int16_t)(raw[1] << 8 | raw[0]);
+    tempC = LSM6DS3_TEMP_REFERENCE_C + (t / LSM6DS3_TEMP_SENSITIVITY_LSB_PER_C);
+
+    // ±500 dps: 17.50 mdps/LSB
+    gx = (int16_t)(raw[3] << 8 | raw[2]) * 0.0175;
+    gy = (int16_t)(raw[5] << 8 | raw[4]) * 0.0175;
+    gz = (int16_t)(raw[7] << 8 | raw[6]) * 0.0175;
+
+    // ±8g: 0.244 mg/LSB
+    ax = (int16_t)(raw[9]  << 8 | raw[8])  * 0.000244;
+    ay = (int16_t)(raw[11] << 8 | raw[10]) * 0.000244;
+    az = (int16_t)(raw[13] << 8 | raw[12]) * 0.000244;
+}
+
+/**
+ * @brief Temperature, gyro and accel in ONE bus transaction.
+ *
+ * OUT_TEMP_L (0x20) through OUTZ_H_XL (0x2D) are contiguous on the LSM6DS3,
+ * and IF_INC is set at init, so a single auto-incremented 14-byte read
+ * returns all three. Read separately they cost three transactions - each
+ * with its own START, two address bytes and a register byte - which at
+ * 100 kHz is ~2.2 ms per IMU per update, ~45% of the controller's entire
+ * second across both IMUs. The burst is ~1.5 ms for the same registers.
+ *
+ * The three sensors are also sampled from the SAME instant this way, where
+ * the split reads gave the filter an accel and a gyro from readings up to
+ * a millisecond apart.
+ */
+bool readImuAll(float &ax, float &ay, float &az,
+                float &gx, float &gy, float &gz, float &tempC)
+{
+    if (!ensureImuInit(imu_initialized, s_lastImu1InitAttempt, initIMU))
+    {
+        ax = ay = az = gx = gy = gz = tempC = 0.0f;
+        return false; // not initialized and too soon to retry
+    }
+
+    uint8_t rawData[14] = {0};
+    if (!imuReadBytes(LSM6DS3_OUT_TEMP_L, rawData, 14)) {
+        ax = ay = az = gx = gy = gz = tempC = 0.0f;
+        imu_initialized = false;
+        return false;
+    }
+    decodeImuBurst(rawData, ax, ay, az, gx, gy, gz, tempC);
+    return true;
+}
+
 // ---- Helper functions for IMU2 (0x6B) - mounted 180 deg rotated from IMU1 ----
 void imu2WriteByte(uint8_t reg, uint8_t value)
 {
@@ -304,6 +356,26 @@ bool readImuTemperature_2(float &tempC)
 
     int16_t raw = (int16_t)(rawData[1] << 8 | rawData[0]);
     tempC = LSM6DS3_TEMP_REFERENCE_C + (raw / LSM6DS3_TEMP_SENSITIVITY_LSB_PER_C);
+    return true;
+}
+
+/** See readImuAll() - the same single-transaction read, for IMU2. */
+bool readImuAll_2(float &ax, float &ay, float &az,
+                  float &gx, float &gy, float &gz, float &tempC)
+{
+    if (!ensureImuInit(imu2_initialized, s_lastImu2InitAttempt, initIMU_2))
+    {
+        ax = ay = az = gx = gy = gz = tempC = 0.0f;
+        return false; // not initialized and too soon to retry
+    }
+
+    uint8_t rawData[14] = {0};
+    if (!imu2ReadBytes(LSM6DS3_OUT_TEMP_L, rawData, 14)) {
+        ax = ay = az = gx = gy = gz = tempC = 0.0f;
+        imu2_initialized = false;
+        return false;
+    }
+    decodeImuBurst(rawData, ax, ay, az, gx, gy, gz, tempC);
     return true;
 }
 

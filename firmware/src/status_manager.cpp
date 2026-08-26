@@ -190,17 +190,20 @@ void statusUpdate() {
     TP_BEGIN(TP_STATUS);
     TP_BEGIN(TP_SENSORS);
 
-    // Read IMU1 Accelerometer
-    float ax, ay, az;
-    bool imuValid = readAccelerometer(ax, ay, az);
+    // One burst per IMU. Temperature, gyro and accel are contiguous registers
+    // read in a single auto-incremented transaction (see readImuAll) - as
+    // three separate reads this block cost 4.7 ms of every 10 ms update, the
+    // controller's single largest expense. The values, their scaling, and the
+    // axis-map/bias handling below are unchanged.
+    float ax, ay, az, gx, gy, gz, temp1 = 0.0f;
+    bool imuValid = readImuAll(ax, ay, az, gx, gy, gz, temp1);
+    bool temp1Ok = imuValid;
+
     applyImuAxisMap(ax, ay, az, g_imuAxisMap);
     g_status.imuX = ax;
     g_status.imuY = ay;
     g_status.imuZ = az;
 
-    // Read IMU1 Gyroscope
-    float gx, gy, gz;
-    _gg_hal.get_gyro_data(gx, gy, gz);
     applyImuAxisMap(gx, gy, gz, g_imuAxisMap);
     g_status.imuGx = gx - s_bias1.x;
     g_status.imuGy = gy - s_bias1.y;
@@ -208,17 +211,15 @@ void statusUpdate() {
 
     g_status.imuValid = imuValid;
 
-    // Read IMU2 Accelerometer
-    float ax2, ay2, az2;
-    bool imu2Valid = readAccelerometer_2(ax2, ay2, az2);
+    float ax2, ay2, az2, gx2, gy2, gz2, temp2 = 0.0f;
+    bool imu2Valid = readImuAll_2(ax2, ay2, az2, gx2, gy2, gz2, temp2);
+    bool temp2Ok = imu2Valid;
+
     applyImuAxisMap(ax2, ay2, az2, g_imuAxisMap);
     g_status.imu2X = ax2;
     g_status.imu2Y = ay2;
     g_status.imu2Z = az2;
 
-    // Read IMU2 Gyroscope
-    float gx2, gy2, gz2;
-    _gg_hal.get_gyro_data_2(gx2, gy2, gz2);
     applyImuAxisMap(gx2, gy2, gz2, g_imuAxisMap);
     g_status.imu2Gx = gx2 - s_bias2.x;
     g_status.imu2Gy = gy2 - s_bias2.y;
@@ -226,11 +227,8 @@ void statusUpdate() {
 
     g_status.imu2Valid = imu2Valid;
 
-    // Read on-chip die temperature, averaged over whichever IMUs answer. Used
+    // On-chip die temperature, averaged over whichever IMUs answered. Used
     // to interpret gyro bias drift (0.05 dps/degC) - see imuLimitations.md.
-    float temp1 = 0.0f, temp2 = 0.0f;
-    bool temp1Ok = readImuTemperature(temp1);
-    bool temp2Ok = readImuTemperature_2(temp2);
     if (temp1Ok && temp2Ok) {
         g_status.imuTemp = (temp1 + temp2) * 0.5f;
     } else if (temp1Ok) {
