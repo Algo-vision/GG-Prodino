@@ -601,6 +601,31 @@ JsonDocument statusGenerateJson(JsonDocument* requestDoc) {
     JsonDocument resp;
     resp["type"] = "status";
 
+    // Optional group selection. A request carrying "groups": ["imu", ...]
+    // gets only those groups; no "groups" field means all four, byte-for-byte
+    // what this always returned. Deliberately STATELESS - each request says
+    // what it wants, so two clients polling differently can never fight over
+    // a stored toggle. Serialising and building only the asked-for groups is
+    // where a slim poll gets its speed; the SAMD21 formats every float in
+    // software, so fields not built are the main cost not paid.
+    // Unknown names are ignored (the group is simply absent from the reply);
+    // a "groups" that is not an array is ignored entirely.
+    bool wantConfig = true, wantOverview = true, wantImu = true, wantGps = true;
+    if (requestDoc) {
+        JsonVariant g = (*requestDoc)["groups"];
+        if (g.is<JsonArray>()) {
+            wantConfig = wantOverview = wantImu = wantGps = false;
+            for (JsonVariant v : g.as<JsonArray>()) {
+                const char* name = v.as<const char*>();
+                if (!name) continue;
+                if      (strcmp(name, "config") == 0)   wantConfig   = true;
+                else if (strcmp(name, "overview") == 0) wantOverview = true;
+                else if (strcmp(name, "imu") == 0)      wantImu      = true;
+                else if (strcmp(name, "gps") == 0)      wantGps      = true;
+            }
+        }
+    }
+
     // Top level carries only what belongs to no category. Anything also
     // reported inside "config" (firmwareVersion, controllerIp, whitelistIps,
     // technicianMode) is deliberately NOT repeated here - every field appears
@@ -623,6 +648,7 @@ JsonDocument statusGenerateJson(JsonDocument* requestDoc) {
     // there. Every field appears exactly once in the document.
 
     // Config fields (see "get_config" in http_server.cpp)
+    if (wantConfig) {
     JsonObject config = resp["config"].to<JsonObject>();
     config["firmwareVersion"] = FIRMWARE_VERSION;
     config["controllerIp"] = g_controllerIP.toString();
@@ -646,8 +672,10 @@ JsonDocument statusGenerateJson(JsonDocument* requestDoc) {
     config["imuPitchInvert"] = (bool)g_imuAxisMap.pitchInvert;
     config["imuRollInvert"]  = (bool)g_imuAxisMap.rollInvert;
     config["imuYawInvert"]   = (bool)g_imuAxisMap.yawInvert;
+    }
 
     // Overview fields (see "get_overview" in http_server.cpp)
+    if (wantOverview) {
     JsonObject overview = resp["overview"].to<JsonObject>();
     overview["powerConnected"] = g_status.powerConnected;
     overview["powerSane"] = g_status.powerSane;
@@ -665,8 +693,10 @@ JsonDocument statusGenerateJson(JsonDocument* requestDoc) {
     overview["safetyModeDurationMs"] = g_status.safetyModeUnsafeDurationMs;
     overview["ocuConnected"] = ocuMonitorIsConnected();
     overview["ocuDisconnectedDurationMs"] = ocuMonitorDisconnectedDurationMs();
+    }
 
     // IMU fields (see "get_imu" in http_server.cpp)
+    if (wantImu) {
     JsonObject imu = resp["imu"].to<JsonObject>();
     imu["angleSane"] = g_status.angleSane;
     imu["imusAgree"] = g_status.imusAgree;
@@ -709,8 +739,10 @@ JsonDocument statusGenerateJson(JsonDocument* requestDoc) {
     imu["restSeconds"] = statusRestSeconds();
     imu["atRest"] = statusRestSeconds() >= REST_SECONDS_FOR_CALIBRATION;
     imu["imuTemp"] = g_status.imuTemp;
+    }
 
     // GPS fields (see "get_gps" in http_server.cpp)
+    if (wantGps) {
     JsonObject gps = resp["gps"].to<JsonObject>();
     gps["gpsConnected"] = g_status.gpsConnected;
     gps["gpsSane"] = g_status.gpsSane;
@@ -727,6 +759,7 @@ JsonDocument statusGenerateJson(JsonDocument* requestDoc) {
     gps["lastGpsLat"] = g_status.lastGpsLat;
     gps["lastGpsLng"] = g_status.lastGpsLng;
     gps["lastGpsAlt"] = g_status.lastGpsAlt;
+    }
 
     return resp;
 }
