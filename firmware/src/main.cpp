@@ -12,7 +12,7 @@
  * - led_controller: Status LED blink patterns
  * - relay_controller: Relay auto-reset functionality
  *
- * @version 1.5.1.1
+ * @version 1.5.1.2
  */
 
 // ============================================================================
@@ -47,7 +47,7 @@
 // FIRMWARE VERSION
 // ============================================================================
 
-#define FIRMWARE_VERSION "1.5.1.1"
+#define FIRMWARE_VERSION "1.5.1.2"
 
 // ============================================================================
 // NETWORK CONFIGURATION
