@@ -33,6 +33,7 @@ struct IntervalStats {
 
 struct BlockStats {
     uint32_t count;
+    uint32_t minUs;
     uint32_t maxUs;
     uint64_t sumUs;
 };
@@ -75,6 +76,7 @@ void clearStats() {
     }
     for (uint8_t b = 0; b < TP_BLOCK_COUNT; b++) {
         s_blocks[b].count = 0;
+        s_blocks[b].minUs = 0xFFFFFFFFu;
         s_blocks[b].maxUs = 0;
         s_blocks[b].sumUs = 0;
     }
@@ -145,6 +147,7 @@ void timingProbeBlock(uint8_t block, uint32_t us) {
     BlockStats &b = s_blocks[block];
     b.count++;
     b.sumUs += us;
+    if (us < b.minUs) b.minUs = us;
     if (us > b.maxUs) b.maxUs = us;
 }
 
@@ -182,6 +185,7 @@ void timingProbeToJson(JsonDocument &resp) {
     for (uint8_t b = 0; b < TP_BLOCK_COUNT; b++) {
         JsonObject o = blocks[kBlockNames[b]].to<JsonObject>();
         o["count"]  = s_blocks[b].count;
+        o["minUs"]  = s_blocks[b].count ? s_blocks[b].minUs : 0;
         o["maxUs"]  = s_blocks[b].maxUs;
         o["meanUs"] = meanUs(s_blocks[b].sumUs, s_blocks[b].count);
         o["totalMs"] = (uint32_t)(s_blocks[b].sumUs / 1000ULL);

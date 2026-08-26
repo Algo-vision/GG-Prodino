@@ -363,8 +363,8 @@ JsonDocument httpHandleLogin(JsonDocument& doc) {
     return resp;
 }
 
-void httpServerLoop() {
-    if (!s_server) return;
+int httpServerLoop() {
+    if (!s_server) return 0;
     
     // Process ALL available clients (up to 4 per loop iteration)
     // This ensures we handle multiple simultaneous requests efficiently
@@ -849,6 +849,8 @@ void httpServerLoop() {
     TP_END(TP_H_CLOSE);
 
     }  // End of while loop
+
+    return clientsProcessed;
 }
 
 bool httpIsUserConnected() {

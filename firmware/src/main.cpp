@@ -239,8 +239,15 @@ void loop() {
   // Send/check OCU heartbeat
   { TP_BEGIN(TP_OCU); ocuMonitorUpdate(); TP_END(TP_OCU); }
 
-  // 2. Handle HTTP requests
-  { TP_BEGIN(TP_HTTP); httpServerLoop(); TP_END(TP_HTTP); }
+  // 2. Handle HTTP requests. The probe records only iterations that served a
+  // client - the empty socket scan runs thousands of times a second and would
+  // otherwise drown the per-request statistics in ~30us samples.
+  {
+    TP_BEGIN(TP_HTTP);
+    int served = httpServerLoop();
+    if (served > 0) { TP_END(TP_HTTP); }
+    (void)served;
+  }
 
   // 3. Regular maintenance tasks
   static unsigned long lastSerialOutput = 0;

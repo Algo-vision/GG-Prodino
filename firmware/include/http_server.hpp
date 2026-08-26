@@ -32,11 +32,15 @@ void httpServerInit(EthernetServer& server);
 
 /**
  * @brief Process HTTP requests
- * 
+ *
  * Call in loop() to handle incoming HTTP requests.
  * This is the main HTTP request handling function.
+ *
+ * @return Number of client connections handled this call (0 when the
+ *         socket scan found nothing waiting - the overwhelmingly common
+ *         case, and ~30us against ~20ms for a real request).
  */
-void httpServerLoop();
+int httpServerLoop();
 
 /**
  * @brief Send HTTP response
